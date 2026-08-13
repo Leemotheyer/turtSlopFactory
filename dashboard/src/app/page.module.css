@@ -140,6 +140,32 @@
   margin-bottom: 0.3rem;
 }
 
+.projectMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.previewLink {
+  font-size: 0.7rem;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  line-height: 1.2;
+}
+
+.previewLink:hover {
+  background: var(--bg);
+}
+
+.parallelHint {
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+}
+
 .stateTag {
   display: inline-block;
   font-size: 0.6rem;

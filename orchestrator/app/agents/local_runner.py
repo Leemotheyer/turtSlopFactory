@@ -7,7 +7,14 @@ from uuid import UUID
 from app.agents.base import AgentRun, AgentRunner
 from app.models import AgentRole
 from app.workspace.manager import WorkspaceManager
-from app.workspace.scaffolder import scaffold_web_app
+from app.workspace.scaffolder import (
+    apply_incremental_fix,
+    scaffold_backend,
+    scaffold_base,
+    scaffold_feature,
+    scaffold_frontend,
+    scaffold_web_app,
+)
 
 
 _ENV_KEY_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
@@ -66,7 +73,15 @@ class LocalAgentRunner(AgentRunner):
             run.output = await self._architect(project_id, name, description, context)
             run.success = True
         elif role == AgentRole.DEVELOPER:
-            run.output = await self._developer(project_id, name, description, context, task_id, agent_id)
+            stream = context.get("work_stream")
+            if stream:
+                run.output = await self._developer_stream(
+                    project_id, name, description, context, stream, task_id, agent_id
+                )
+            else:
+                run.output = await self._developer(
+                    project_id, name, description, context, task_id, agent_id
+                )
             run.success = True
         elif role == AgentRole.TESTER:
             run.success, run.output = await self._tester(project_id, context)
@@ -154,6 +169,63 @@ class LocalAgentRunner(AgentRunner):
         self.workspace.append_log(project_id, "pipeline.log", f"[architect] Planned {name}")
         return f"Created requirements.md and architecture.md for {name}"
 
+    def _format_input_section(self, responses: list[dict]) -> str:
+        if not responses:
+            return ""
+        lines = ["\n## Supervisor decisions (apply these)"]
+        for r in responses:
+            decision = r.get("resolved_decision") or r.get("default_decision", "")
+            lines.append(f"- Q: {r.get('question', '')}")
+            lines.append(f"  A: {decision}")
+        return "\n".join(lines) + "\n"
+
+    async def _developer_stream(
+        self,
+        project_id: UUID,
+        name: str,
+        description: str,
+        context: dict,
+        stream: str,
+        task_id: UUID,
+        agent_id: str,
+    ) -> str:
+        repo = self.workspace.repo_dir(project_id)
+        incremental = context.get("incremental", False)
+
+        if not incremental and not (repo / "requirements.txt").exists():
+            scaffold_base(repo, name, description)
+
+        input_section = self._format_input_section(context.get("input_responses", []))
+        if input_section:
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[{stream}] Applying {len(context.get('input_responses', []))} supervisor decisions",
+            )
+
+        if stream == "backend":
+            if context.get("fix_attempt", 0) > 0 and context.get("last_failure"):
+                apply_incremental_fix(repo, context["last_failure"])
+            files = scaffold_backend(repo, name, description + input_section)
+            label = "backend API"
+        elif stream == "frontend":
+            files = scaffold_frontend(repo, name, description)
+            label = "frontend UI"
+        elif stream == "feature":
+            feature_id = context.get("feature_id") or "feature"
+            content = context.get("feature_content") or context.get("work_description", "")
+            files = scaffold_feature(repo, feature_id, content)
+            label = f"feature {feature_id}"
+        else:
+            return f"Unknown work stream: {stream}"
+
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[{stream}] Wrote {len(files)} files ({label})",
+        )
+        return f"[{stream}] Updated {len(files)} files"
+
     async def _developer(
         self,
         project_id: UUID,
@@ -174,6 +246,21 @@ class LocalAgentRunner(AgentRunner):
 
         await self._detect_env_requirements(project_id, description, context)
 
+        incremental = context.get("incremental", False)
+        repo = self.workspace.repo_dir(project_id)
+        if incremental or (repo / "app" / "main.py").exists():
+            if context.get("fix_attempt", 0) > 0 and context.get("last_failure"):
+                apply_incremental_fix(repo, context["last_failure"])
+            files = []
+            files.extend(scaffold_backend(repo, name, description))
+            files.extend(scaffold_frontend(repo, name, description))
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[developer] Incremental update ({len(files)} files)",
+            )
+            return f"Incremental update applied ({len(files)} files, {len(notes)} notes)"
+
         request_input = context.get("request_input")
         if request_input:
             default = "Use in-memory storage for v1; defer PostgreSQL to a follow-up task"
@@ -190,6 +277,14 @@ class LocalAgentRunner(AgentRunner):
                 project_id,
                 "pipeline.log",
                 f"[developer] Proceeded with default: {default}",
+            )
+
+        input_responses = context.get("input_responses", [])
+        for resp in input_responses:
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[developer] Supervisor decision: {resp.get('resolved_decision', '')[:80]}",
             )
 
         repo = self.workspace.reset_repo(project_id)
@@ -302,12 +397,13 @@ class LocalAgentRunner(AgentRunner):
                 f"[reviewer] Proceeded with default: {rate_limit_default}",
             )
 
+        notes_applied = len([n for n in context.get("notes", []) if n.get("type") != "scope_out"])
         checklist = {
             "requirements_documented": has_req,
             "architecture_documented": has_arch,
             "all_tests_passed": tests_passed,
             "dockerfile_present": (self.workspace.repo_dir(project_id) / "Dockerfile").exists(),
-            "supervisor_notes_applied": True,
+            "supervisor_notes_applied": notes_applied == 0 or has_req,
         }
         approved = all(checklist.values())
         concerns = [k for k, v in checklist.items() if not v]

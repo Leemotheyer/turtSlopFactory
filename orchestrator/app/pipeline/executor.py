@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import datetime
 from uuid import UUID
@@ -13,10 +14,12 @@ from app.db_models import DeploymentRow, EventRow, ProjectRow, TaskRow
 from app.events import event_bus
 from app.models import AgentRole, EventType, FactoryEvent, NotificationType, ProjectState, TaskStatus
 from app.services.discovery import get_discovery
+from app.services.input_requests import create_input_request, get_input_responses_for_agents
 from app.services.notifications import create_notification
 from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
 from app.services.secrets import get_env_status_for_agents, get_secrets_for_runtime, request_env_var
+from app.services.work_planner import plan_parallel_work, work_plan_to_dict
 from app.state_machine import advance_project, block_autonomous, fail_project
 from app.services.preview import (
     allocate_preview_port,
@@ -117,8 +120,11 @@ class PipelineExecutor:
 
     async def _refresh_context(self, session: AsyncSession, project: ProjectRow, context: dict) -> None:
         context["notes"] = await get_notes_for_agents(session, project.id)
+        context["input_responses"] = await get_input_responses_for_agents(session, project.id)
         context["project_state"] = project.state
         context["env_status"] = await get_env_status_for_agents(session, project.id)
+        repo = self.workspace.repo_dir(project.id)
+        context["incremental"] = context.get("fix_attempt", 0) > 0 or (repo / "app" / "main.py").exists()
 
     async def _log_progress(
         self,
@@ -305,6 +311,14 @@ class PipelineExecutor:
                     await self.transition(
                         session, project, ProjectState.AUTONOMOUSLY_BLOCKED, reason="exception"
                     )
+                    await create_notification(
+                        session,
+                        project.id,
+                        NotificationType.PIPELINE_BLOCKED,
+                        "Pipeline blocked",
+                        f"{project.name} hit an unexpected error and needs review.",
+                        action="guidance",
+                    )
         finally:
             self._running.discard(project_id)
 
@@ -327,6 +341,14 @@ class PipelineExecutor:
 
         if attempt >= settings.max_fix_attempts:
             await self.transition(session, project, block_autonomous())
+            await create_notification(
+                session,
+                project.id,
+                NotificationType.PIPELINE_BLOCKED,
+                "Pipeline blocked",
+                f"{project.name} needs your attention after {attempt} failed fix attempts.",
+                action="guidance",
+            )
             return
 
         await self.transition(session, project, ProjectState.FIXING)
@@ -350,8 +372,9 @@ class PipelineExecutor:
             ):
                 break
             success = await stage_fn(session, project, context)
+            await self._refresh_context(session, project, context)
             if not success:
-                await self.transition(session, project, block_autonomous())
+                await self._handle_failure(session, project, context)
                 break
 
     async def _stage_planning(self, session, project, context) -> bool:
@@ -364,43 +387,105 @@ class PipelineExecutor:
         )
         await self.complete_task(session, task, run.success, run.output)
         if run.success:
+            units = plan_parallel_work(context.get("notes", []), project.description)
+            plan = work_plan_to_dict(units)
+            self.workspace.write_artifact(
+                project.id, "work-plan.json", json.dumps(plan, indent=2)
+            )
+            context["work_plan"] = plan
             await self._log_progress(
                 session,
                 project.id,
                 "planning",
                 "Architecture planned",
-                "Requirements and architecture documents created",
+                f"Requirements ready — {len(units)} parallel work streams planned",
             )
             await self.transition(session, project, advance_project(ProjectState.PLANNING))
         return run.success
 
-    async def _stage_implementing(self, session, project, context) -> bool:
-        await self._refresh_context(session, project, context)
-        task = await self.create_task(
-            session, project.id, "Implement application", project.description, AgentRole.DEVELOPER
-        )
-        run = await self.runner.run(
-            AgentRole.DEVELOPER, project.id, task.id, str(self.workspace.repo_dir(project.id)), context
-        )
-        await self.complete_task(session, task, run.success, run.output)
-        if run.success:
-            await self._log_progress(
+    async def _run_parallel_developers(
+        self, session, project, context: dict
+    ) -> tuple[bool, str]:
+        units = plan_parallel_work(context.get("notes", []), project.description)
+        context["work_plan"] = work_plan_to_dict(units)
+
+        task_rows: list[tuple] = []
+        for unit in units:
+            task = await self.create_task(
                 session,
                 project.id,
-                "implementation",
-                "Application implemented",
-                run.output[:200],
+                unit.title,
+                unit.description,
+                AgentRole.DEVELOPER,
             )
-            first_preview = get_preview_port(self.workspace.load_metadata(project.id)) is None
-            await self._deploy_live_preview(
-                session,
-                project,
-                context,
-                preview_type="dev",
-                notify=first_preview,
+            task_rows.append((unit, task))
+
+        await self.emit(
+            session,
+            EventType.AGENT_COMMAND_STARTED,
+            project.id,
+            payload={
+                "command": "parallel_implement",
+                "streams": [u.stream for u in units],
+                "count": len(units),
+            },
+        )
+
+        async def run_unit(unit, task_row: TaskRow) -> tuple[TaskRow, bool, str]:
+            unit_context = {
+                **context,
+                "work_stream": unit.stream,
+                "work_description": unit.description,
+                "feature_id": unit.feature_id,
+                "feature_content": unit.feature_content,
+            }
+            run = await self.runner.run(
+                AgentRole.DEVELOPER,
+                project.id,
+                task_row.id,
+                str(self.workspace.repo_dir(project.id)),
+                unit_context,
             )
-            await self.transition(session, project, advance_project(ProjectState.PLANNING))
-        return run.success
+            return task_row, run.success, run.output
+
+        results = await asyncio.gather(*[run_unit(u, t) for u, t in task_rows])
+
+        outputs: list[str] = []
+        all_ok = True
+        for task_row, success, output in results:
+            await self.complete_task(session, task_row, success, output)
+            outputs.append(output)
+            if not success:
+                all_ok = False
+
+        combined = "; ".join(outputs)
+        return all_ok, combined
+
+    async def _stage_implementing(self, session, project, context) -> bool:
+        await self._refresh_context(session, project, context)
+        success, output = await self._run_parallel_developers(session, project, context)
+        if not success:
+            context["last_failure"] = output
+            return False
+
+        stream_count = len(context.get("work_plan", []))
+        await self._log_progress(
+            session,
+            project.id,
+            "implementation",
+            f"Parallel implementation ({stream_count} agents)",
+            output[:300],
+        )
+        first_preview = get_preview_port(self.workspace.load_metadata(project.id)) is None
+        await self._deploy_live_preview(
+            session,
+            project,
+            context,
+            preview_type="dev",
+            notify=first_preview,
+        )
+        await self.transition(session, project, advance_project(ProjectState.PLANNING))
+        return True
 
     async def _stage_unit_testing(self, session, project, context) -> bool:
         task = await self.create_task(
@@ -420,6 +505,8 @@ class PipelineExecutor:
                 output[:200] if output else "All unit tests green",
             )
             await self.transition(session, project, advance_project(ProjectState.IMPLEMENTING))
+        else:
+            context["last_failure"] = output
         return success
 
     async def _stage_integration_testing(self, session, project, context) -> bool:
@@ -447,6 +534,8 @@ class PipelineExecutor:
                 "API workflow validated end-to-end",
             )
             await self.transition(session, project, advance_project(ProjectState.UNIT_TESTING))
+        else:
+            context["last_failure"] = output
         return success
 
     async def _stage_docker_build(self, session, project, context) -> bool:
@@ -535,6 +624,8 @@ class PipelineExecutor:
                 output[:200] if output else "Health check OK on staging",
             )
             await self.transition(session, project, advance_project(ProjectState.STAGING_DEPLOY))
+        else:
+            context["last_failure"] = output
         return success
 
     async def _stage_review(self, session, project, context) -> bool:

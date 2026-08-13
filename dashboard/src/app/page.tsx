@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   addNote,
   createProject,
@@ -116,6 +116,8 @@ export default function DashboardPage() {
   const [secretValue, setSecretValue] = useState("");
   const [secretDesc, setSecretDesc] = useState("");
 
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const refresh = useCallback(async () => {
     try {
       const p = await fetchProjects();
@@ -184,9 +186,13 @@ export default function DashboardPage() {
       const data = JSON.parse(msg.data);
       if (data.type === "ping") return;
       setEvents((prev) => [...prev.slice(-199), data]);
-      refresh();
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => refresh(), 400);
     };
-    return () => ws.close();
+    return () => {
+      ws.close();
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
   }, [refresh]);
 
   async function handleCreate(e: React.FormEvent) {
@@ -351,6 +357,7 @@ export default function DashboardPage() {
       case "intake_ready": return "📋";
       case "review_ready": return "👀";
       case "preview_ready": return "🌐";
+      case "pipeline_blocked": return "🛑";
       default: return "🔔";
     }
   }
@@ -416,6 +423,7 @@ export default function DashboardPage() {
   }
 
   const openInputs = inputRequests.filter((r) => r.status === "open");
+  const runningTasks = tasks.filter((t) => t.status === "RUNNING");
   const pendingSecrets = secrets?.pending_requirements.length ?? 0;
   const livePreviewUrl = detail?.preview_url ?? detail?.staging_url;
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
@@ -527,11 +535,25 @@ export default function DashboardPage() {
                   }}
                 >
                   <span className={styles.projectName}>{p.name}</span>
-                  <span
-                    className={styles.stateTag}
-                    style={{ background: STATE_COLORS[p.state] ?? "#6b7280" }}
-                  >
-                    {p.state.replace(/_/g, " ")}
+                  <span className={styles.projectMeta}>
+                    <span
+                      className={styles.stateTag}
+                      style={{ background: STATE_COLORS[p.state] ?? "#6b7280" }}
+                    >
+                      {p.state.replace(/_/g, " ")}
+                    </span>
+                    {p.preview_url && (
+                      <a
+                        href={p.preview_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={styles.previewLink}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Open live preview"
+                      >
+                        ↗
+                      </a>
+                    )}
                   </span>
                 </button>
               </li>
@@ -667,6 +689,8 @@ export default function DashboardPage() {
                         ? `Notes & Input${openInputs.length ? ` (${openInputs.length})` : ""}`
                         : t === "secrets"
                           ? `Secrets${pendingSecrets ? ` (${pendingSecrets})` : ""}`
+                          : t === "tasks"
+                            ? `Tasks${runningTasks.length ? ` (${runningTasks.length} active)` : ""}`
                           : t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
@@ -913,6 +937,11 @@ export default function DashboardPage() {
 
               {tab === "tasks" && (
                 <div className={styles.table}>
+                  {runningTasks.length > 0 && (
+                    <p className={styles.parallelHint}>
+                      {runningTasks.length} agent{runningTasks.length > 1 ? "s" : ""} running in parallel
+                    </p>
+                  )}
                   {tasks.length === 0 ? (
                     <p className={styles.emptyHint}>No tasks yet — start the pipeline</p>
                   ) : (

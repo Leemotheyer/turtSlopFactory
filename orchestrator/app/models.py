@@ -54,6 +54,7 @@ class Project(BaseModel):
     state: ProjectState = ProjectState.REQUESTED
     branch: str = "main"
     image_tag: str | None = None
+    preview_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

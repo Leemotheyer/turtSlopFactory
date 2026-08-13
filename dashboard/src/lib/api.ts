@@ -27,6 +27,7 @@ export interface Project {
   state: ProjectState;
   branch: string;
   image_tag: string | null;
+  preview_url: string | null;
   created_at: string;
   updated_at: string;
 }

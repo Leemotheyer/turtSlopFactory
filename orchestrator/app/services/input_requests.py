@@ -172,6 +172,28 @@ async def expire_stale_requests(session: AsyncSession) -> int:
     return count
 
 
+async def get_input_responses_for_agents(session: AsyncSession, project_id: UUID) -> list[dict]:
+    """Recent input Q&A for agents — includes human overrides when provided."""
+    result = await session.execute(
+        select(InputRequestRow)
+        .where(InputRequestRow.project_id == project_id)
+        .order_by(InputRequestRow.created_at.desc())
+        .limit(20)
+    )
+    rows = list(result.scalars())
+    return [
+        {
+            "question": row.question,
+            "default_decision": row.default_decision,
+            "resolved_decision": row.resolved_decision,
+            "human_response": row.human_response,
+            "status": row.status,
+            "role": row.role,
+        }
+        for row in rows
+    ]
+
+
 async def list_input_requests(
     session: AsyncSession,
     project_id: UUID,

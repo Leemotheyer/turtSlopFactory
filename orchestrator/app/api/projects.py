@@ -22,11 +22,13 @@ from app.models import (
 )
 from app.worker import pipeline_queue
 from app.state_machine import StateMachineError, advance_project, fail_project
+from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+workspace = WorkspaceManager()
 
 
-def _project_from_row(row: ProjectRow) -> Project:
+def _project_from_row(row: ProjectRow, preview_url: str | None = None) -> Project:
     return Project(
         id=row.id,
         name=row.name,
@@ -35,6 +37,7 @@ def _project_from_row(row: ProjectRow) -> Project:
         state=ProjectState(row.state),
         branch=row.branch,
         image_tag=row.image_tag,
+        preview_url=preview_url,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -58,7 +61,12 @@ def _task_from_row(row: TaskRow) -> Task:
 @router.get("", response_model=list[Project])
 async def list_projects(db: AsyncSession = Depends(get_db)) -> list[Project]:
     result = await db.execute(select(ProjectRow).order_by(ProjectRow.created_at.desc()))
-    return [_project_from_row(row) for row in result.scalars()]
+    projects = []
+    for row in result.scalars():
+        meta = workspace.load_metadata(row.id)
+        preview_url = meta.get("preview_url") or meta.get("staging_url")
+        projects.append(_project_from_row(row, preview_url=preview_url))
+    return projects
 
 
 @router.post("", response_model=Project, status_code=201)
