@@ -546,6 +546,247 @@
   color: var(--warning);
 }
 
+/* Notifications */
+.notifWrapper {
+  position: relative;
+}
+
+.notifBell {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.notifCount {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: var(--danger);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notifDropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: 360px;
+  max-height: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 100;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.notifHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.notifHeader h3 {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.notifMarkAll {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.notifList {
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.notifEmpty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.notifItem {
+  display: flex;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.notifItem:hover {
+  background: var(--bg);
+}
+
+.notifUnread {
+  background: rgba(91, 141, 239, 0.08);
+}
+
+.notifIcon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.notifBody strong {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.2rem;
+}
+
+.notifBody p {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 0.25rem;
+  line-height: 1.4;
+}
+
+.notifBody time {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* Secrets panel */
+.secretsPanel {
+  max-width: 640px;
+}
+
+.pendingSecrets {
+  padding: 1rem;
+  background: rgba(245, 166, 35, 0.1);
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.pendingSecrets h4 {
+  color: var(--warning);
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.pendingSecrets ul {
+  list-style: none;
+}
+
+.pendingSecretItem {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(245, 166, 35, 0.2);
+}
+
+.pendingSecretItem:last-child {
+  border-bottom: none;
+}
+
+.pendingSecretItem p {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.2rem 0;
+}
+
+.pendingMeta {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.secretForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.secretFormRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.secretForm input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.secretsList {
+  list-style: none;
+}
+
+.secretItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.secretItem strong {
+  display: block;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.secretItem code {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.secretItem p {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+
+.btnDanger {
+  background: rgba(245, 101, 101, 0.15);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.btnDanger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Guidance panel */
 .guidancePanel {
   display: grid;

@@ -18,9 +18,11 @@ from app.models import (
     IntakeField,
     IntakeSubmit,
     NoteType,
+    NotificationType,
     ProjectNoteCreate,
     ProjectState,
 )
+from app.services.notifications import create_notification
 from app.services.notes import add_note
 from app.services.progress import record_progress
 from app.workspace.manager import WorkspaceManager
@@ -101,6 +103,15 @@ async def run_discovery(session: AsyncSession, project_id: UUID) -> DiscoverySes
         "discovery",
         "Discovery complete",
         f"Loose plan ready — {len(form_fields)} intake questions for you",
+    )
+
+    await create_notification(
+        session,
+        project_id,
+        NotificationType.INTAKE_READY,
+        "Intake form ready",
+        f"Discovery complete for your project. Fill out the scope form to continue.",
+        action="intake",
     )
 
     return _session_from_row(row)

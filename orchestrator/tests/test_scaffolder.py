@@ -21,3 +21,12 @@ def test_scaffold_health_in_code():
         main_py = (repo / "app" / "main.py").read_text()
         assert "/health" in main_py
         assert "Health App" in main_py
+
+
+def test_scaffold_env_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        scaffold_web_app(repo, "Env App", "App with env")
+        assert (repo / ".env.example").exists()
+        gitignore = (repo / ".gitignore").read_text()
+        assert ".env" in gitignore

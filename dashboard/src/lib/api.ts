@@ -129,6 +129,47 @@ export interface ProgressDigest {
 
 export type InputRequestStatus = "open" | "answered" | "auto_resolved";
 
+export type NotificationType =
+  | "env_required"
+  | "agent_question"
+  | "project_finished"
+  | "intake_ready"
+  | "review_ready"
+  | "pipeline_blocked";
+
+export interface Notification {
+  id: string;
+  project_id: string | null;
+  type: NotificationType;
+  title: string;
+  message: string;
+  action: string | null;
+  reference_id: string | null;
+  read: boolean;
+  created_at: string;
+}
+
+export interface EnvRequirement {
+  id: string;
+  key_name: string;
+  description: string;
+  requested_by: string;
+  status: string;
+}
+
+export interface ProjectSecret {
+  key_name: string;
+  masked_value: string;
+  description: string;
+  configured: boolean;
+}
+
+export interface ProjectSecrets {
+  secrets: ProjectSecret[];
+  pending_requirements: EnvRequirement[];
+  configured_keys: string[];
+}
+
 export interface InputRequest {
   id: string;
   project_id: string;
@@ -315,6 +356,78 @@ export async function respondToInput(
   });
   if (!res.ok) throw new Error("Failed to respond");
   return res.json();
+}
+
+export async function fetchNotifications(unreadOnly = false): Promise<Notification[]> {
+  const params = new URLSearchParams();
+  if (unreadOnly) params.set("unread_only", "true");
+  const res = await fetch(`${API_URL}/api/notifications?${params}`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch notifications");
+  return res.json();
+}
+
+export async function fetchUnreadCount(): Promise<number> {
+  const res = await fetch(`${API_URL}/api/notifications/unread-count`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch unread count");
+  const data = await res.json();
+  return data.count;
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/notifications/${notificationId}/read`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to mark notification read");
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  const res = await fetch(`${API_URL}/api/notifications/read-all`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to mark all read");
+}
+
+export async function fetchSecrets(projectId: string): Promise<ProjectSecrets> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/secrets`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch secrets");
+  return res.json();
+}
+
+export async function setSecret(
+  projectId: string,
+  keyName: string,
+  value: string,
+  description = ""
+): Promise<ProjectSecret> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/secrets`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ key_name: keyName, value, description }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to set secret");
+  }
+  return res.json();
+}
+
+export async function deleteSecret(projectId: string, keyName: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/secrets/${encodeURIComponent(keyName)}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to delete secret");
 }
 
 export function getWebSocketUrl(): string {

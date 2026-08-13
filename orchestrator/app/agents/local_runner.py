@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import subprocess
 from uuid import UUID
 
@@ -9,11 +10,44 @@ from app.workspace.manager import WorkspaceManager
 from app.workspace.scaffolder import scaffold_web_app
 
 
+_ENV_KEY_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
+    (re.compile(r"\bopenai\b", re.I), "OPENAI_API_KEY", "OpenAI API key for LLM features"),
+    (re.compile(r"\banthropic\b|\bclaude\b", re.I), "ANTHROPIC_API_KEY", "Anthropic API key"),
+    (re.compile(r"\bstripe\b", re.I), "STRIPE_SECRET_KEY", "Stripe secret key for payments"),
+    (re.compile(r"\bsendgrid\b", re.I), "SENDGRID_API_KEY", "SendGrid API key for email"),
+    (re.compile(r"\btwilio\b", re.I), "TWILIO_AUTH_TOKEN", "Twilio auth token for SMS/voice"),
+    (re.compile(r"\baws\b|\bs3\b", re.I), "AWS_SECRET_ACCESS_KEY", "AWS secret access key"),
+    (re.compile(r"\bgithub\b.*\btoken\b|\bgh[_\s]?token\b", re.I), "GITHUB_TOKEN", "GitHub personal access token"),
+    (re.compile(r"\bapi[_\s]?key\b", re.I), "API_KEY", "Generic API key referenced in project spec"),
+]
+
+
 class LocalAgentRunner(AgentRunner):
     """Deterministic agent that scaffolds, tests, and reviews without external LLM APIs."""
 
     def __init__(self, workspace: WorkspaceManager | None = None) -> None:
         self.workspace = workspace or WorkspaceManager()
+
+    async def _detect_env_requirements(self, project_id: UUID, description: str, context: dict) -> None:
+        request_env = context.get("request_env_var")
+        if not request_env:
+            return
+
+        configured = set(context.get("env_status", {}).get("configured_keys", []))
+        text = description or ""
+        for note in context.get("notes", []):
+            text += " " + note.get("content", "")
+
+        requested: set[str] = set()
+        for pattern, key_name, desc in _ENV_KEY_PATTERNS:
+            if pattern.search(text) and key_name not in configured and key_name not in requested:
+                await request_env(key_name, desc, requested_by="developer")
+                requested.add(key_name)
+                self.workspace.append_log(
+                    project_id,
+                    "pipeline.log",
+                    f"[developer] Requested secret {key_name} (value hidden from agents)",
+                )
 
     async def run(
         self,
@@ -137,6 +171,8 @@ class LocalAgentRunner(AgentRunner):
                     "pipeline.log",
                     f"[developer] Noted feature request: {note['content'][:80]}",
                 )
+
+        await self._detect_env_requirements(project_id, description, context)
 
         request_input = context.get("request_input")
         if request_input:
@@ -319,7 +355,11 @@ class LocalAgentRunner(AgentRunner):
             return False
 
     async def deploy_staging(
-        self, project_id: UUID, image_tag: str, port: int
+        self,
+        project_id: UUID,
+        image_tag: str,
+        port: int,
+        env_vars: dict[str, str] | None = None,
     ) -> tuple[bool, str, str | None]:
         """Run container on host port. Returns (success, output, container_id)."""
         container_name = f"factory-staging-{str(project_id)[:8]}"
@@ -331,15 +371,13 @@ class LocalAgentRunner(AgentRunner):
             stderr=asyncio.subprocess.DEVNULL,
         )
 
+        cmd = ["docker", "run", "-d", "--name", container_name, "-p", f"{port}:8080"]
+        for key, value in (env_vars or {}).items():
+            cmd.extend(["-e", f"{key}={value}"])
+        cmd.append(image_tag)
+
         proc = await asyncio.create_subprocess_exec(
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container_name,
-            "-p",
-            f"{port}:8080",
-            image_tag,
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   addNote,
   createProject,
+  deleteSecret,
   fetchArtifact,
   fetchDeployments,
   fetchDiscovery,
@@ -11,14 +12,20 @@ import {
   fetchInputRequests,
   fetchLog,
   fetchNotes,
+  fetchNotifications,
   fetchProgress,
   fetchProjectDetail,
   fetchProjectTasks,
   fetchProjects,
+  fetchSecrets,
+  fetchUnreadCount,
   getWebSocketUrl,
+  markAllNotificationsRead,
+  markNotificationRead,
   promoteProject,
   respondToInput,
   runPipeline,
+  setSecret,
   submitIntake,
   type Deployment,
   type DiscoverySession,
@@ -26,10 +33,12 @@ import {
   type InputRequest,
   type IntakeField,
   type NoteType,
+  type Notification,
   type ProgressDigest,
   type Project,
   type ProjectDetail,
   type ProjectNote,
+  type ProjectSecrets,
   type Task,
 } from "@/lib/api";
 import styles from "./page.module.css";
@@ -67,7 +76,7 @@ const STATE_COLORS: Record<string, string> = {
   AUTONOMOUSLY_BLOCKED: "#f56565",
 };
 
-type Tab = "overview" | "intake" | "guidance" | "tasks" | "artifacts" | "deployments" | "logs";
+type Tab = "overview" | "intake" | "guidance" | "secrets" | "tasks" | "artifacts" | "deployments" | "logs";
 
 const NOTE_TYPES: { value: NoteType; label: string }[] = [
   { value: "instruction", label: "Instruction" },
@@ -99,6 +108,13 @@ export default function DashboardPage() {
   const [inputResponses, setInputResponses] = useState<Record<string, string>>({});
   const [discovery, setDiscovery] = useState<DiscoverySession | null>(null);
   const [intakeAnswers, setIntakeAnswers] = useState<Record<string, string | string[]>>({});
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [secrets, setSecrets] = useState<ProjectSecrets | null>(null);
+  const [secretKey, setSecretKey] = useState("");
+  const [secretValue, setSecretValue] = useState("");
+  const [secretDesc, setSecretDesc] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -106,8 +122,15 @@ export default function DashboardPage() {
       setProjects(p);
       if (!selectedId && p.length > 0) setSelectedId(p[0].id);
 
+      const [notifs, unread] = await Promise.all([
+        fetchNotifications(),
+        fetchUnreadCount(),
+      ]);
+      setNotifications(notifs);
+      setUnreadCount(unread);
+
       if (selectedId) {
-        const [d, t, dep, e, prog, n, inputs, disc] = await Promise.all([
+        const [d, t, dep, e, prog, n, inputs, disc, sec] = await Promise.all([
           fetchProjectDetail(selectedId),
           fetchProjectTasks(selectedId),
           fetchDeployments(selectedId),
@@ -116,6 +139,7 @@ export default function DashboardPage() {
           fetchNotes(selectedId),
           fetchInputRequests(selectedId),
           fetchDiscovery(selectedId),
+          fetchSecrets(selectedId),
         ]);
         setDetail(d);
         setTasks(t);
@@ -125,6 +149,7 @@ export default function DashboardPage() {
         setNotes(n);
         setInputRequests(inputs);
         setDiscovery(disc);
+        setSecrets(sec);
         if (disc?.form_fields && Object.keys(intakeAnswers).length === 0) {
           const defaults: Record<string, string | string[]> = {};
           disc.form_fields.forEach((f) => {
@@ -265,6 +290,69 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleSetSecret(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId || !secretKey.trim() || !secretValue.trim()) return;
+    setLoading(true);
+    try {
+      await setSecret(selectedId, secretKey, secretValue, secretDesc);
+      setSecretKey("");
+      setSecretValue("");
+      setSecretDesc("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save secret");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteSecret(keyName: string) {
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await deleteSecret(selectedId, keyName);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete secret");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleNotificationClick(notif: Notification) {
+    if (!notif.read) {
+      await markNotificationRead(notif.id);
+      setUnreadCount((c) => Math.max(0, c - 1));
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notif.id ? { ...n, read: true } : n))
+      );
+    }
+    setShowNotifications(false);
+    if (notif.project_id) setSelectedId(notif.project_id);
+    if (notif.action === "secrets") setTab("secrets");
+    else if (notif.action === "guidance") setTab("guidance");
+    else if (notif.action === "intake") setTab("intake");
+    else setTab("overview");
+  }
+
+  async function handleMarkAllRead() {
+    await markAllNotificationsRead();
+    setUnreadCount(0);
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  }
+
+  function notificationIcon(type: Notification["type"]): string {
+    switch (type) {
+      case "env_required": return "🔐";
+      case "agent_question": return "❓";
+      case "project_finished": return "✅";
+      case "intake_ready": return "📋";
+      case "review_ready": return "👀";
+      default: return "🔔";
+    }
+  }
+
   function renderIntakeField(field: IntakeField) {
     const value = intakeAnswers[field.id] ?? "";
     const setValue = (v: string | string[]) =>
@@ -326,6 +414,7 @@ export default function DashboardPage() {
   }
 
   const openInputs = inputRequests.filter((r) => r.status === "open");
+  const pendingSecrets = secrets?.pending_requirements.length ?? 0;
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
 
   return (
@@ -344,8 +433,59 @@ export default function DashboardPage() {
             {connected ? "Live" : "Offline"}
           </span>
           <span className={styles.badge}>{projects.length} projects</span>
-          {openInputs.length > 0 && (
-            <span className={styles.alertBadge}>{openInputs.length} agent question{openInputs.length > 1 ? "s" : ""}</span>
+          <div className={styles.notifWrapper}>
+            <button
+              type="button"
+              className={styles.notifBell}
+              onClick={() => setShowNotifications((v) => !v)}
+              aria-label="Notifications"
+            >
+              🔔
+              {unreadCount > 0 && (
+                <span className={styles.notifCount}>{unreadCount > 99 ? "99+" : unreadCount}</span>
+              )}
+            </button>
+            {showNotifications && (
+              <div className={styles.notifDropdown}>
+                <div className={styles.notifHeader}>
+                  <h3>Notifications</h3>
+                  {unreadCount > 0 && (
+                    <button type="button" className={styles.notifMarkAll} onClick={handleMarkAllRead}>
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+                <ul className={styles.notifList}>
+                  {notifications.length === 0 ? (
+                    <li className={styles.notifEmpty}>No notifications yet</li>
+                  ) : (
+                    notifications.slice(0, 20).map((n) => (
+                      <li key={n.id}>
+                        <button
+                          type="button"
+                          className={`${styles.notifItem} ${!n.read ? styles.notifUnread : ""}`}
+                          onClick={() => handleNotificationClick(n)}
+                        >
+                          <span className={styles.notifIcon}>{notificationIcon(n.type)}</span>
+                          <div className={styles.notifBody}>
+                            <strong>{n.title}</strong>
+                            <p>{n.message}</p>
+                            <time>{new Date(n.created_at).toLocaleString()}</time>
+                          </div>
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </div>
+            )}
+          </div>
+          {(openInputs.length > 0 || pendingSecrets > 0) && (
+            <span className={styles.alertBadge}>
+              {openInputs.length > 0 && `${openInputs.length} question${openInputs.length > 1 ? "s" : ""}`}
+              {openInputs.length > 0 && pendingSecrets > 0 && " · "}
+              {pendingSecrets > 0 && `${pendingSecrets} secret${pendingSecrets > 1 ? "s" : ""} needed`}
+            </span>
           )}
         </div>
       </header>
@@ -477,7 +617,7 @@ export default function DashboardPage() {
               )}
 
               <div className={styles.tabs}>
-                {(["overview", "intake", "guidance", "tasks", "artifacts", "deployments", "logs"] as Tab[]).map((t) => (
+                {(["overview", "intake", "guidance", "secrets", "tasks", "artifacts", "deployments", "logs"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     className={tab === t ? styles.tabActive : styles.tab}
@@ -487,7 +627,9 @@ export default function DashboardPage() {
                       ? `Intake${detail.state === "INTAKE_PENDING" ? " •" : ""}`
                       : t === "guidance"
                         ? `Notes & Input${openInputs.length ? ` (${openInputs.length})` : ""}`
-                        : t.charAt(0).toUpperCase() + t.slice(1)}
+                        : t === "secrets"
+                          ? `Secrets${pendingSecrets ? ` (${pendingSecrets})` : ""}`
+                          : t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
               </div>
@@ -654,6 +796,83 @@ export default function DashboardPage() {
                 </div>
               )}
 
+              {tab === "secrets" && (
+                <div className={styles.secretsPanel}>
+                  <section className={styles.guidanceSection}>
+                    <h3>Environment variables</h3>
+                    <p className={styles.guidanceHint}>
+                      Secrets are encrypted at rest. Agents see key names only — never values.
+                      Set variables here; they are injected at staging deploy time.
+                    </p>
+
+                    {(secrets?.pending_requirements.length ?? 0) > 0 && (
+                      <div className={styles.pendingSecrets}>
+                        <h4>Action required</h4>
+                        <ul>
+                          {secrets!.pending_requirements.map((req) => (
+                            <li key={req.id} className={styles.pendingSecretItem}>
+                              <strong>{req.key_name}</strong>
+                              <p>{req.description}</p>
+                              <span className={styles.pendingMeta}>Requested by {req.requested_by}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <form className={styles.secretForm} onSubmit={handleSetSecret}>
+                      <div className={styles.secretFormRow}>
+                        <input
+                          placeholder="KEY_NAME (e.g. OPENAI_API_KEY)"
+                          value={secretKey}
+                          onChange={(e) => setSecretKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+                          required
+                        />
+                        <input
+                          type="password"
+                          placeholder="Secret value"
+                          value={secretValue}
+                          onChange={(e) => setSecretValue(e.target.value)}
+                          required
+                          autoComplete="off"
+                        />
+                      </div>
+                      <input
+                        placeholder="Description (optional)"
+                        value={secretDesc}
+                        onChange={(e) => setSecretDesc(e.target.value)}
+                      />
+                      <button type="submit" className={styles.btnPrimary} disabled={loading}>
+                        Save secret
+                      </button>
+                    </form>
+
+                    <ul className={styles.secretsList}>
+                      {(secrets?.secrets ?? []).map((s) => (
+                        <li key={s.key_name} className={styles.secretItem}>
+                          <div>
+                            <strong>{s.key_name}</strong>
+                            <code>{s.masked_value}</code>
+                            {s.description && <p>{s.description}</p>}
+                          </div>
+                          <button
+                            type="button"
+                            className={styles.btnDanger}
+                            onClick={() => handleDeleteSecret(s.key_name)}
+                            disabled={loading}
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                      {(secrets?.secrets.length ?? 0) === 0 && (
+                        <p className={styles.emptyHint}>No secrets configured yet</p>
+                      )}
+                    </ul>
+                  </section>
+                </div>
+              )}
+
               {tab === "tasks" && (
                 <div className={styles.table}>
                   {tasks.length === 0 ? (
@@ -800,5 +1019,7 @@ function formatEvent(ev: FactoryEvent): string {
   if (ev.type === "discovery.started") return "Discovery agent started";
   if (ev.type === "discovery.completed") return `Intake form ready (${p.field_count} questions)`;
   if (ev.type === "intake.submitted") return "Scope locked in";
+  if (ev.type === "notification.created") return String(p.title ?? "");
+  if (ev.type === "env.required") return `Secret needed: ${p.key_name ?? ""}`;
   return JSON.stringify(p).slice(0, 80);
 }

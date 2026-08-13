@@ -272,11 +272,22 @@ gates:
     )
 
     write(
+        ".env.example",
+        """# Copy to .env and fill in values — never commit .env
+# Configure secrets via the turtSlopFactory dashboard; agents never see values.
+
+# API_KEY=
+# OPENAI_API_KEY=
+""",
+    )
+
+    write(
         ".gitignore",
         """__pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+.env
 """,
     )
 

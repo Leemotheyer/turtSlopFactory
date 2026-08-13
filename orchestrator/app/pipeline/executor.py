@@ -11,11 +11,12 @@ from app.config import settings
 from app.database import SessionLocal
 from app.db_models import DeploymentRow, EventRow, ProjectRow, TaskRow
 from app.events import event_bus
-from app.models import AgentRole, EventType, FactoryEvent, ProjectState, TaskStatus
+from app.models import AgentRole, EventType, FactoryEvent, NotificationType, ProjectState, TaskStatus
 from app.services.discovery import get_discovery
-from app.services.input_requests import create_input_request
+from app.services.notifications import create_notification
 from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
+from app.services.secrets import get_env_status_for_agents, get_secrets_for_runtime, request_env_var
 from app.state_machine import advance_project, block_autonomous, fail_project
 from app.workspace.manager import WorkspaceManager
 
@@ -124,6 +125,7 @@ class PipelineExecutor:
     async def _refresh_context(self, session: AsyncSession, project: ProjectRow, context: dict) -> None:
         context["notes"] = await get_notes_for_agents(session, project.id)
         context["project_state"] = project.state
+        context["env_status"] = await get_env_status_for_agents(session, project.id)
 
     async def _log_progress(
         self,
@@ -163,7 +165,11 @@ class PipelineExecutor:
                 async def request_input(**kwargs):
                     return await create_input_request(session, project_id, **kwargs)
 
+                async def request_env(key_name: str, description: str = "", requested_by: str = "agent"):
+                    return await request_env_var(session, project_id, key_name, description, requested_by)
+
                 context["request_input"] = request_input
+                context["request_env_var"] = request_env
                 meta = self.workspace.load_metadata(project_id)
                 meta["pipeline_started_at"] = datetime.utcnow().isoformat()
                 self.workspace.save_metadata(project_id, meta)
@@ -390,8 +396,12 @@ class PipelineExecutor:
             session, EventType.DEPLOYMENT_STARTED, project.id, payload={"environment": "staging", "port": port}
         )
 
+        runtime_env = await get_secrets_for_runtime(session, project.id)
+
         if self.runner.docker_available() and tag != "none":
-            success, output, container_id = await self.runner.deploy_staging(project.id, tag, port)
+            success, output, container_id = await self.runner.deploy_staging(
+                project.id, tag, port, env_vars=runtime_env
+            )
         else:
             success = True
             output = f"Simulated staging deploy at {staging_url}"
@@ -482,6 +492,14 @@ class PipelineExecutor:
                 "All acceptance criteria met — ready for production promotion",
             )
             await self.transition(session, project, advance_project(ProjectState.SMOKE_TESTING))
+            await create_notification(
+                session,
+                project.id,
+                NotificationType.REVIEW_READY,
+                "Ready for production",
+                f"{project.name} passed review. Promote to production when ready.",
+                action="overview",
+            )
         return run.success
 
     async def _stage_production(self, session, project, context) -> bool:
@@ -510,6 +528,14 @@ class PipelineExecutor:
             payload={"environment": "production", "url": prod_url},
         )
         await self.transition(session, project, advance_project(ProjectState.REVIEW))
+        await create_notification(
+            session,
+            project.id,
+            NotificationType.PROJECT_FINISHED,
+            "Project deployed to production",
+            f"{project.name} is live at {prod_url or 'production'}",
+            action="overview",
+        )
         return True
 
     async def promote_to_production(self, project_id: UUID) -> bool:

@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db_models import InputRequestRow
 from app.events import event_bus
-from app.models import EventType, FactoryEvent, InputRequest, InputRequestStatus
+from app.models import EventType, FactoryEvent, InputRequest, InputRequestStatus, NotificationType
+from app.services.notifications import create_notification
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,16 @@ async def create_input_request(
                 "non_blocking": True,
             },
         ),
+    )
+
+    await create_notification(
+        session,
+        project_id,
+        NotificationType.AGENT_QUESTION,
+        f"Agent question ({role})",
+        question,
+        action="guidance",
+        reference_id=row.id,
     )
 
     return _to_model(row)

@@ -93,6 +93,50 @@ class EventType(StrEnum):
     DISCOVERY_STARTED = "discovery.started"
     DISCOVERY_COMPLETED = "discovery.completed"
     INTAKE_SUBMITTED = "intake.submitted"
+    NOTIFICATION_CREATED = "notification.created"
+    ENV_REQUIRED = "env.required"
+
+
+class NotificationType(StrEnum):
+    ENV_REQUIRED = "env_required"
+    AGENT_QUESTION = "agent_question"
+    PROJECT_FINISHED = "project_finished"
+    INTAKE_READY = "intake_ready"
+    REVIEW_READY = "review_ready"
+    PIPELINE_BLOCKED = "pipeline_blocked"
+
+
+class Notification(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID | None = None
+    type: NotificationType
+    title: str
+    message: str
+    action: str | None = None
+    reference_id: UUID | None = None
+    read: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SecretSet(BaseModel):
+    key_name: str
+    value: str
+    description: str = ""
+
+
+class SecretPublic(BaseModel):
+    key_name: str
+    masked_value: str
+    description: str
+    configured: bool
+
+
+class EnvRequirementPublic(BaseModel):
+    id: str
+    key_name: str
+    description: str
+    requested_by: str
+    status: str
 
 
 class DiscoveryStatus(StrEnum):

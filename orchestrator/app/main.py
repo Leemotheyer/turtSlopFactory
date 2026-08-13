@@ -8,8 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import discovery as discovery_api
 from app.api import events as events_api
 from app.api import feedback as feedback_api
+from app.api import notifications as notifications_api
 from app.api import pipeline as pipeline_api
 from app.api import projects as projects_api
+from app.api import secrets as secrets_api
 from app.api import tasks as tasks_api
 from app.config import settings
 from app.database import SessionLocal, init_db
@@ -112,6 +114,8 @@ def create_app() -> FastAPI:
     app.include_router(pipeline_api.router, prefix="/api")
     app.include_router(feedback_api.router, prefix="/api")
     app.include_router(discovery_api.router, prefix="/api")
+    app.include_router(secrets_api.router, prefix="/api")
+    app.include_router(notifications_api.router, prefix="/api")
 
     return app
 
