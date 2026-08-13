@@ -1,0 +1,276 @@
+import asyncio
+import os
+import subprocess
+from uuid import UUID
+
+from app.agents.base import AgentRun, AgentRunner
+from app.models import AgentRole
+from app.workspace.manager import WorkspaceManager
+from app.workspace.scaffolder import scaffold_web_app
+
+
+class LocalAgentRunner(AgentRunner):
+    """Deterministic agent that scaffolds, tests, and reviews without external LLM APIs."""
+
+    def __init__(self, workspace: WorkspaceManager | None = None) -> None:
+        self.workspace = workspace or WorkspaceManager()
+
+    async def run(
+        self,
+        role: AgentRole,
+        project_id: UUID,
+        task_id: UUID,
+        workspace: str,
+        context: dict,
+    ) -> AgentRun:
+        agent_id = f"{role.value}-{str(task_id)[:8]}"
+        run = AgentRun(task_id=task_id, role=role, agent_id=agent_id)
+        name = context.get("name", "app")
+        description = context.get("description", "")
+
+        if role == AgentRole.ARCHITECT:
+            run.output = await self._architect(project_id, name, description)
+            run.success = True
+        elif role == AgentRole.DEVELOPER:
+            run.output = await self._developer(project_id, name, description)
+            run.success = True
+        elif role == AgentRole.TESTER:
+            run.success, run.output = await self._tester(project_id, context)
+        elif role == AgentRole.REVIEWER:
+            run.success, run.output = await self._reviewer(project_id, context)
+        else:
+            run.output = f"Unknown role: {role}"
+            run.success = False
+
+        return run
+
+    async def stream_events(self, run_id: UUID):
+        return
+        yield  # pragma: no cover
+
+    async def _architect(self, project_id: UUID, name: str, description: str) -> str:
+        requirements = f"""# Requirements: {name}
+
+## Overview
+{description}
+
+## Functional requirements
+1. Expose a `/health` endpoint returning JSON status
+2. Provide a REST API for item management (create, list, get)
+3. Serve a web UI for browser interaction
+4. Run in Docker with healthcheck support
+
+## Non-functional requirements
+- Python 3.12 + FastAPI
+- Unit and integration test coverage
+- Containerized deployment on port 8080
+"""
+        architecture = f"""# Architecture: {name}
+
+## Stack
+- **Backend:** FastAPI
+- **Frontend:** Static HTML/JS served by FastAPI
+- **Storage:** In-memory (demo); swap for PostgreSQL in production
+- **Deployment:** Docker + docker-compose
+
+## API
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /health | Health check |
+| GET | /api/info | Service metadata |
+| GET | /api/items | List items |
+| POST | /api/items | Create item |
+| GET | /api/items/{{id}} | Get item |
+
+## Testing strategy
+- Unit tests via pytest + TestClient
+- Integration tests for full API workflow
+- Container smoke test on /health
+"""
+        self.workspace.write_artifact(project_id, "requirements.md", requirements)
+        self.workspace.write_artifact(project_id, "architecture.md", architecture)
+        self.workspace.append_log(project_id, "pipeline.log", f"[architect] Planned {name}")
+        return f"Created requirements.md and architecture.md for {name}"
+
+    async def _developer(self, project_id: UUID, name: str, description: str) -> str:
+        repo = self.workspace.reset_repo(project_id)
+        files = scaffold_web_app(repo, name, description)
+        self.workspace.append_log(
+            project_id, "pipeline.log", f"[developer] Scaffolded {len(files)} files"
+        )
+        return f"Scaffolded application with {len(files)} files: {', '.join(files[:5])}..."
+
+    async def _tester(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        stage = context.get("test_stage", "unit")
+        repo = self.workspace.repo_dir(project_id)
+
+        if stage == "unit":
+            return await self._run_pytest(repo, project_id, "tests/test_app.py")
+        if stage == "integration":
+            return await self._run_pytest(repo, project_id, "tests/")
+        if stage == "smoke":
+            return await self._run_smoke(project_id, context)
+        return False, f"Unknown test stage: {stage}"
+
+    async def _run_pytest(self, repo, project_id: UUID, target: str) -> tuple[bool, str]:
+        self.workspace.append_log(project_id, "pipeline.log", f"[tester] Running pytest {target}")
+
+        # Install project dependencies first
+        req = repo / "requirements.txt"
+        if req.exists():
+            install = await asyncio.create_subprocess_exec(
+                "pip",
+                "install",
+                "-q",
+                "-r",
+                str(req),
+                "pytest",
+                cwd=str(repo),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            await install.communicate()
+
+        proc = await asyncio.create_subprocess_exec(
+            "python3",
+            "-m",
+            "pytest",
+            target,
+            "-v",
+            "--tb=short",
+            cwd=str(repo),
+            env={**os.environ, "PYTHONPATH": str(repo)},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode()
+        self.workspace.write_log(project_id, f"pytest-{target.replace('/', '-')}.log", output)
+        success = proc.returncode == 0
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[tester] pytest {'PASSED' if success else 'FAILED'} (exit {proc.returncode})",
+        )
+        return success, output
+
+    async def _run_smoke(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        port = context.get("staging_port")
+        if not port:
+            return False, "No staging port configured"
+
+        import httpx
+
+        url = f"http://127.0.0.1:{port}/health"
+        self.workspace.append_log(project_id, "pipeline.log", f"[tester] Smoke test {url}")
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                for _ in range(10):
+                    try:
+                        r = await client.get(url)
+                        if r.status_code == 200 and r.json().get("status") == "ok":
+                            return True, f"Smoke test passed: {r.json()}"
+                    except httpx.HTTPError:
+                        await asyncio.sleep(1)
+                return False, f"Health check failed at {url}"
+        except Exception as exc:
+            return False, str(exc)
+
+    async def _reviewer(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        artifacts = self.workspace.list_artifacts(project_id)
+        has_req = "requirements.md" in artifacts
+        has_arch = "architecture.md" in artifacts
+        tests_passed = context.get("tests_passed", False)
+
+        checklist = {
+            "requirements_documented": has_req,
+            "architecture_documented": has_arch,
+            "all_tests_passed": tests_passed,
+            "dockerfile_present": (self.workspace.repo_dir(project_id) / "Dockerfile").exists(),
+        }
+        approved = all(checklist.values())
+        concerns = [k for k, v in checklist.items() if not v]
+
+        report = {
+            "decision": "approve" if approved else "reject",
+            "checklist": checklist,
+            "concerns": concerns,
+            "severity": "low" if approved else "high",
+        }
+        import json
+
+        self.workspace.write_artifact(project_id, "review.json", json.dumps(report, indent=2))
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[reviewer] {'APPROVED' if approved else 'REJECTED'}: {checklist}",
+        )
+        return approved, json.dumps(report, indent=2)
+
+    async def docker_build(self, project_id: UUID, tag: str) -> tuple[bool, str]:
+        repo = self.workspace.repo_dir(project_id)
+        self.workspace.append_log(project_id, "pipeline.log", f"[build] docker build -t {tag}")
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "build",
+            "-t",
+            tag,
+            ".",
+            cwd=str(repo),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode()
+        self.workspace.write_log(project_id, "docker-build.log", output)
+        return proc.returncode == 0, output
+
+    def docker_available(self) -> bool:
+        try:
+            subprocess.run(["docker", "info"], capture_output=True, check=True, timeout=5)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    async def deploy_staging(
+        self, project_id: UUID, image_tag: str, port: int
+    ) -> tuple[bool, str, str | None]:
+        """Run container on host port. Returns (success, output, container_id)."""
+        container_name = f"factory-staging-{str(project_id)[:8]}"
+
+        # Stop existing
+        await asyncio.create_subprocess_exec(
+            "docker", "rm", "-f", container_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-p",
+            f"{port}:8080",
+            image_tag,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode().strip()
+        container_id = output[:12] if proc.returncode == 0 else None
+        self.workspace.append_log(
+            project_id, "pipeline.log", f"[deploy] staging on :{port} -> {container_id}"
+        )
+        return proc.returncode == 0, output, container_id
+
+    async def stop_staging(self, project_id: UUID) -> None:
+        container_name = f"factory-staging-{str(project_id)[:8]}"
+        await asyncio.create_subprocess_exec(
+            "docker", "rm", "-f", container_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )

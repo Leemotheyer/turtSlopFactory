@@ -51,3 +51,17 @@ class EventRow(Base):
     agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DeploymentRow(Base):
+    __tablename__ = "deployments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_tag: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    container_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -95,6 +95,25 @@ class FactoryEvent(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Deployment(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    environment: str
+    image_tag: str
+    url: str | None = None
+    port: int | None = None
+    container_id: str | None = None
+    status: str = "pending"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProjectDetail(Project):
+    staging_url: str | None = None
+    production_url: str | None = None
+    artifacts: list[str] = Field(default_factory=list)
+    pipeline_running: bool = False
+
+
 # Valid forward transitions for the happy path
 FORWARD_TRANSITIONS: dict[ProjectState, ProjectState] = {
     ProjectState.REQUESTED: ProjectState.PLANNING,

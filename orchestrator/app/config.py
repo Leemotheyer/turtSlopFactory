@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,23 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
     max_fix_attempts: int = 5
     workspace_root: str = "/data/workspaces"
+    api_key: str | None = None  # Set in production to require X-API-Key header
+    worker_enabled: bool = True
+
+    @field_validator("worker_enabled", mode="before")
+    @classmethod
+    def parse_bool(cls, v):
+        if isinstance(v, str):
+            return v.lower() in ("1", "true", "yes")
+        return v
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors(cls, v):
+        if isinstance(v, str):
+            import json
+            return json.loads(v)
+        return v
 
 
 settings = Settings()
