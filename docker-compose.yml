@@ -57,10 +57,13 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     command: ["python", "worker_main.py"]
+    ports:
+      - "8081-8099:8081-8099"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-factory}:${POSTGRES_PASSWORD:-factory}@postgres:5432/${POSTGRES_DB:-factory}
       REDIS_URL: redis://redis:6379/0
       WORKSPACE_ROOT: /data/workspaces
+      PREVIEW_HOST: ${PREVIEW_HOST:-localhost}
     depends_on:
       postgres:
         condition: service_healthy

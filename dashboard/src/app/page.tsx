@@ -333,6 +333,7 @@ export default function DashboardPage() {
     if (notif.action === "secrets") setTab("secrets");
     else if (notif.action === "guidance") setTab("guidance");
     else if (notif.action === "intake") setTab("intake");
+    else if (notif.action === "preview") setTab("overview");
     else setTab("overview");
   }
 
@@ -349,6 +350,7 @@ export default function DashboardPage() {
       case "project_finished": return "✅";
       case "intake_ready": return "📋";
       case "review_ready": return "👀";
+      case "preview_ready": return "🌐";
       default: return "🔔";
     }
   }
@@ -415,7 +417,18 @@ export default function DashboardPage() {
 
   const openInputs = inputRequests.filter((r) => r.status === "open");
   const pendingSecrets = secrets?.pending_requirements.length ?? 0;
+  const livePreviewUrl = detail?.preview_url ?? detail?.staging_url;
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
+
+  function previewTypeLabel(type: string | null | undefined): string {
+    switch (type) {
+      case "dev": return "Development build";
+      case "docker": return "Docker image";
+      case "production": return "Production";
+      case "simulated": return "Simulated";
+      default: return "Live preview";
+    }
+  }
 
   return (
     <div className={styles.layout}>
@@ -584,17 +597,42 @@ export default function DashboardPage() {
 
               <div className={styles.meta}>
                 {detail.image_tag && <span>Image: <code>{detail.image_tag}</code></span>}
-                {detail.staging_url && (
-                  <a href={detail.staging_url} target="_blank" rel="noreferrer">
-                    Staging ↗
-                  </a>
-                )}
                 {detail.production_url && (
                   <a href={detail.production_url} target="_blank" rel="noreferrer" className={styles.prodLink}>
                     Production ↗
                   </a>
                 )}
               </div>
+
+              {livePreviewUrl && (
+                <div className={styles.livePreview}>
+                  <div className={styles.livePreviewInfo}>
+                    <span className={styles.livePreviewBadge}>
+                      {detail.preview_status === "running" ? "● Live" : detail.preview_status ?? "Preview"}
+                    </span>
+                    <div>
+                      <h3>Live preview</h3>
+                      <p>
+                        {previewTypeLabel(detail.preview_type)}
+                        {detail.pipeline_running ? " — updating as agents work" : ""}
+                      </p>
+                    </div>
+                  </div>
+                  <div className={styles.livePreviewActions}>
+                    <a
+                      href={livePreviewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={styles.btnPrimary}
+                    >
+                      Open web app ↗
+                    </a>
+                    {detail.preview_port && (
+                      <span className={styles.previewPort}>Port {detail.preview_port}</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {progress && (
                 <div className={styles.progressDigest}>
@@ -1010,7 +1048,11 @@ function formatEvent(ev: FactoryEvent): string {
   if (ev.type === "state.transition") return `${p.from ?? "—"} → ${p.to}`;
   if (ev.type === "task.status.changed") return String(p.title ?? p.status);
   if (ev.type === "test.completed") return `${p.stage}: ${p.passed ? "PASS" : "FAIL"}`;
-  if (ev.type === "deployment.finished") return `${p.environment} ${p.url ?? ""}`;
+  if (ev.type === "deployment.finished") {
+    const env = String(p.environment ?? "");
+    const url = String(p.url ?? "");
+    return url ? `${env} preview: ${url}` : `${env} deploy`;
+  }
   if (ev.type === "agent.command.finished") return String(p.output ?? p.command ?? "").slice(0, 80);
   if (ev.type === "progress.updated") return `${p.title}: ${p.summary}`;
   if (ev.type === "note.added") return String(p.content ?? "").slice(0, 80);

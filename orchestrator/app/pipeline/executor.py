@@ -18,23 +18,16 @@ from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
 from app.services.secrets import get_env_status_for_agents, get_secrets_for_runtime, request_env_var
 from app.state_machine import advance_project, block_autonomous, fail_project
+from app.services.preview import (
+    allocate_preview_port,
+    build_preview_url,
+    get_preview_port,
+    preview_from_metadata,
+    update_preview_metadata,
+)
 from app.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
-
-# Port allocation for staging containers (8081+)
-_port_counter = 8081
-_port_lock = asyncio.Lock()
-
-
-async def _next_staging_port() -> int:
-    global _port_counter
-    async with _port_lock:
-        port = _port_counter
-        _port_counter += 1
-        if _port_counter > 8999:
-            _port_counter = 8081
-        return port
 
 
 class PipelineExecutor:
@@ -137,6 +130,102 @@ class PipelineExecutor:
         detail: str | None = None,
     ) -> None:
         await record_progress(session, project_id, category, title, summary, detail)
+
+    async def _deploy_live_preview(
+        self,
+        session: AsyncSession,
+        project: ProjectRow,
+        context: dict,
+        *,
+        preview_type: str,
+        image_tag: str | None = None,
+        notify: bool = False,
+    ) -> bool:
+        """Deploy or replace the live preview container. Reuses the same port per project."""
+        meta = self.workspace.load_metadata(project.id)
+        port = await allocate_preview_port(meta)
+        context["staging_port"] = port
+        context["preview_port"] = port
+
+        runtime_env = await get_secrets_for_runtime(session, project.id)
+        preview_url = build_preview_url(port)
+
+        if self.runner.docker_available():
+            if preview_type == "dev":
+                repo = self.workspace.repo_dir(project.id)
+                success, output, container_id = await self.runner.deploy_dev_preview(
+                    project.id, port, repo, env_vars=runtime_env
+                )
+            else:
+                tag = image_tag or project.image_tag or context.get("image_tag", "none")
+                if tag == "none":
+                    success, output, container_id = False, "No image tag", None
+                else:
+                    success, output, container_id = await self.runner.deploy_staging(
+                        project.id, tag, port, env_vars=runtime_env
+                    )
+            status = "running" if success else "failed"
+        else:
+            success = True
+            output = f"Docker unavailable — simulated preview at {preview_url}"
+            container_id = None
+            status = "simulated"
+            self.workspace.append_log(project.id, "pipeline.log", f"[preview] simulated {preview_url}")
+
+        update_preview_metadata(
+            meta,
+            port=port,
+            preview_type=preview_type,
+            status=status,
+            container_id=container_id,
+        )
+        self.workspace.save_metadata(project.id, meta)
+
+        dep = DeploymentRow(
+            project_id=project.id,
+            environment="preview" if preview_type == "dev" else "staging",
+            image_tag=image_tag or project.image_tag or "dev",
+            url=preview_url,
+            port=port,
+            container_id=container_id,
+            status=status,
+        )
+        session.add(dep)
+        await session.commit()
+
+        await self.emit(
+            session,
+            EventType.DEPLOYMENT_FINISHED,
+            project.id,
+            payload={
+                "environment": preview_type,
+                "url": preview_url,
+                "success": success,
+                "preview_type": preview_type,
+            },
+        )
+
+        if success:
+            await self._log_progress(
+                session,
+                project.id,
+                "deploy",
+                "Live preview updated",
+                f"Open {preview_url} ({preview_type})",
+                output[:200] if output else None,
+            )
+
+        if notify and success:
+            await create_notification(
+                session,
+                project.id,
+                NotificationType.PREVIEW_READY,
+                "Live preview ready",
+                f"{project.name} is running at {preview_url}. Check it while agents iterate.",
+                action="preview",
+            )
+
+        return success
 
     async def run_pipeline(self, project_id: UUID) -> None:
         if project_id in self._running:
@@ -302,6 +391,14 @@ class PipelineExecutor:
                 "Application implemented",
                 run.output[:200],
             )
+            first_preview = get_preview_port(self.workspace.load_metadata(project.id)) is None
+            await self._deploy_live_preview(
+                session,
+                project,
+                context,
+                preview_type="dev",
+                notify=first_preview,
+            )
             await self.transition(session, project, advance_project(ProjectState.PLANNING))
         return run.success
 
@@ -387,58 +484,24 @@ class PipelineExecutor:
         return success
 
     async def _stage_staging_deploy(self, session, project, context) -> bool:
-        port = await _next_staging_port()
-        context["staging_port"] = port
         tag = context.get("image_tag", project.image_tag or "none")
-        staging_url = f"http://localhost:{port}"
-
-        await self.emit(
-            session, EventType.DEPLOYMENT_STARTED, project.id, payload={"environment": "staging", "port": port}
-        )
-
-        runtime_env = await get_secrets_for_runtime(session, project.id)
-
-        if self.runner.docker_available() and tag != "none":
-            success, output, container_id = await self.runner.deploy_staging(
-                project.id, tag, port, env_vars=runtime_env
-            )
-        else:
-            success = True
-            output = f"Simulated staging deploy at {staging_url}"
-            container_id = None
-
-        dep = DeploymentRow(
-            project_id=project.id,
-            environment="staging",
-            image_tag=tag,
-            url=staging_url,
-            port=port,
-            container_id=container_id,
-            status="running" if success else "failed",
-        )
-        session.add(dep)
-        await session.commit()
-
-        meta = self.workspace.load_metadata(project.id)
-        meta["staging_url"] = staging_url
-        meta["staging_port"] = port
-        self.workspace.save_metadata(project.id, meta)
 
         await self.emit(
             session,
-            EventType.DEPLOYMENT_FINISHED,
+            EventType.DEPLOYMENT_STARTED,
             project.id,
-            payload={"environment": "staging", "url": staging_url, "success": success},
+            payload={"environment": "staging", "image_tag": tag},
+        )
+
+        success = await self._deploy_live_preview(
+            session,
+            project,
+            context,
+            preview_type="docker",
+            image_tag=tag,
         )
 
         if success:
-            await self._log_progress(
-                session,
-                project.id,
-                "deploy",
-                "Deployed to staging",
-                f"Available at {staging_url}",
-            )
             await self.transition(session, project, advance_project(ProjectState.DOCKER_BUILD))
         return success
 
@@ -503,22 +566,24 @@ class PipelineExecutor:
         return run.success
 
     async def _stage_production(self, session, project, context) -> bool:
-        staging_url = self.workspace.load_metadata(project.id).get("staging_url", "")
-        prod_url = staging_url  # Same host for self-hosted demo
+        meta = self.workspace.load_metadata(project.id)
+        preview = preview_from_metadata(meta)
+        prod_url = preview["preview_url"] or ""
+        port = preview.get("preview_port") or context.get("staging_port")
 
         dep = DeploymentRow(
             project_id=project.id,
             environment="production",
             image_tag=project.image_tag or context.get("image_tag", ""),
             url=prod_url,
-            port=context.get("staging_port"),
+            port=port,
             status="running",
         )
         session.add(dep)
         await session.commit()
 
-        meta = self.workspace.load_metadata(project.id)
         meta["production_url"] = prod_url
+        meta["preview_type"] = "production"
         self.workspace.save_metadata(project.id, meta)
 
         await self.emit(

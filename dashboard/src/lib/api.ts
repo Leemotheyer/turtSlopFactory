@@ -34,6 +34,10 @@ export interface Project {
 export interface ProjectDetail extends Project {
   staging_url: string | null;
   production_url: string | null;
+  preview_url: string | null;
+  preview_port: number | null;
+  preview_type: string | null;
+  preview_status: string | null;
   artifacts: string[];
   pipeline_running: boolean;
   discovery_status: string | null;
@@ -135,7 +139,8 @@ export type NotificationType =
   | "project_finished"
   | "intake_ready"
   | "review_ready"
-  | "pipeline_blocked";
+  | "pipeline_blocked"
+  | "preview_ready";
 
 export interface Notification {
   id: string;

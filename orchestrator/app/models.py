@@ -104,6 +104,7 @@ class NotificationType(StrEnum):
     INTAKE_READY = "intake_ready"
     REVIEW_READY = "review_ready"
     PIPELINE_BLOCKED = "pipeline_blocked"
+    PREVIEW_READY = "preview_ready"
 
 
 class Notification(BaseModel):
@@ -271,6 +272,10 @@ class Deployment(BaseModel):
 class ProjectDetail(Project):
     staging_url: str | None = None
     production_url: str | None = None
+    preview_url: str | None = None
+    preview_port: int | None = None
+    preview_type: str | None = None
+    preview_status: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     pipeline_running: bool = False
     discovery_status: str | None = None

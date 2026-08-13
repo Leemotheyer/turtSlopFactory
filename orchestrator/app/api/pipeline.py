@@ -9,6 +9,7 @@ from app.db_models import DeploymentRow, ProjectRow
 from app.models import Deployment, ProjectState
 from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
+from app.services.preview import preview_from_metadata
 from app.worker import pipeline_queue
 from app.workspace.manager import WorkspaceManager
 
@@ -24,6 +25,7 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
 
     meta = workspace.load_metadata(project_id)
     discovery = await get_discovery(db, project_id)
+    preview = preview_from_metadata(meta)
     return {
         "id": str(row.id),
         "name": row.name,
@@ -31,8 +33,12 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
         "state": row.state,
         "branch": row.branch,
         "image_tag": row.image_tag,
-        "staging_url": meta.get("staging_url"),
+        "staging_url": preview["staging_url"],
         "production_url": meta.get("production_url"),
+        "preview_url": preview["preview_url"],
+        "preview_port": preview["preview_port"],
+        "preview_type": preview["preview_type"],
+        "preview_status": preview["preview_status"],
         "artifacts": workspace.list_artifacts(project_id),
         "pipeline_running": pipeline_executor.is_running(project_id),
         "discovery_status": discovery.status.value if discovery else None,

@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     input_request_timeout_seconds: int = 300  # Auto-resolve after 5 min without human response
     intake_form_timeout_hours: int = 72  # Auto-submit intake with defaults after 72h
     secrets_encryption_key: str | None = None  # Fernet key or passphrase; required in production
+    preview_host: str = "localhost"  # Hostname used in live preview URLs shown in the dashboard
+    preview_port_start: int = 8081
+    preview_port_end: int = 8999
 
     @field_validator("worker_enabled", mode="before")
     @classmethod

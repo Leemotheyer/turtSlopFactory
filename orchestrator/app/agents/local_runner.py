@@ -354,6 +354,73 @@ class LocalAgentRunner(AgentRunner):
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
             return False
 
+    def _live_container_name(self, project_id: UUID) -> str:
+        return f"factory-live-{str(project_id)[:8]}"
+
+    async def _remove_container(self, container_name: str) -> None:
+        await asyncio.create_subprocess_exec(
+            "docker",
+            "rm",
+            "-f",
+            container_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+    async def deploy_dev_preview(
+        self,
+        project_id: UUID,
+        port: int,
+        repo_path,
+        env_vars: dict[str, str] | None = None,
+    ) -> tuple[bool, str, str | None]:
+        """Run the app from source in Docker so the user can preview while tests iterate."""
+        container_name = self._live_container_name(project_id)
+        await self._remove_container(container_name)
+
+        env_flags: list[str] = []
+        for key, value in (env_vars or {}).items():
+            env_flags.extend(["-e", f"{key}={value}"])
+
+        startup = (
+            "pip install -q -r requirements.txt && "
+            "uvicorn app.main:app --host 0.0.0.0 --port 8080"
+        )
+        cmd = [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-p",
+            f"{port}:8080",
+            "-v",
+            f"{repo_path}:/app",
+            "-w",
+            "/app",
+            *env_flags,
+            "python:3.12-slim",
+            "bash",
+            "-c",
+            startup,
+        ]
+
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[preview] dev container on :{port} from {repo_path}",
+        )
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode().strip()
+        container_id = output[:12] if proc.returncode == 0 else None
+        return proc.returncode == 0, output, container_id
+
     async def deploy_staging(
         self,
         project_id: UUID,
@@ -361,15 +428,9 @@ class LocalAgentRunner(AgentRunner):
         port: int,
         env_vars: dict[str, str] | None = None,
     ) -> tuple[bool, str, str | None]:
-        """Run container on host port. Returns (success, output, container_id)."""
-        container_name = f"factory-staging-{str(project_id)[:8]}"
-
-        # Stop existing
-        await asyncio.create_subprocess_exec(
-            "docker", "rm", "-f", container_name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
+        """Replace the live preview container with a built Docker image."""
+        container_name = self._live_container_name(project_id)
+        await self._remove_container(container_name)
 
         cmd = ["docker", "run", "-d", "--name", container_name, "-p", f"{port}:8080"]
         for key, value in (env_vars or {}).items():
@@ -385,14 +446,9 @@ class LocalAgentRunner(AgentRunner):
         output = stdout.decode().strip()
         container_id = output[:12] if proc.returncode == 0 else None
         self.workspace.append_log(
-            project_id, "pipeline.log", f"[deploy] staging on :{port} -> {container_id}"
+            project_id, "pipeline.log", f"[preview] docker image on :{port} -> {container_id}"
         )
         return proc.returncode == 0, output, container_id
 
-    async def stop_staging(self, project_id: UUID) -> None:
-        container_name = f"factory-staging-{str(project_id)[:8]}"
-        await asyncio.create_subprocess_exec(
-            "docker", "rm", "-f", container_name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
+    async def stop_live_preview(self, project_id: UUID) -> None:
+        await self._remove_container(self._live_container_name(project_id))
