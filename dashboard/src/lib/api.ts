@@ -444,7 +444,13 @@ export interface CursorConnectionStatus {
   enterprise_billing?: boolean;
   connected_at?: string;
   last_synced_at?: string | null;
+  agent_backend?: AgentBackend;
+  default_agent_backend?: AgentBackend;
+  valid_backends?: AgentBackend[];
+  cursor_model?: string;
 }
+
+export type AgentBackend = "cursor_cloud" | "cursor_local" | "local";
 
 export interface CursorTokenUsage {
   input_tokens: number;
@@ -510,6 +516,35 @@ export async function fetchCursorUsage(): Promise<CursorUsage> {
   const res = await fetch(`${API_URL}/api/cursor/usage`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch Cursor usage");
   return res.json();
+}
+
+export async function updateAgentBackend(agentBackend: AgentBackend): Promise<{
+  agent_backend: AgentBackend;
+  valid_backends: AgentBackend[];
+}> {
+  const res = await fetch(`${API_URL}/api/settings/factory/agent-backend`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({ agent_backend: agentBackend }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update agent backend");
+  }
+  return res.json();
+}
+
+export function agentBackendLabel(backend: AgentBackend): string {
+  switch (backend) {
+    case "cursor_cloud":
+      return "Cursor Cloud Agents";
+    case "cursor_local":
+      return "Cursor Local Agents";
+    case "local":
+      return "Local scaffold (no API)";
+    default:
+      return backend;
+  }
 }
 
 export function getWebSocketUrl(): string {

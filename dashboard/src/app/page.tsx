@@ -31,6 +31,9 @@ import {
   runPipeline,
   setSecret,
   submitIntake,
+  updateAgentBackend,
+  agentBackendLabel,
+  type AgentBackend,
   type CursorConnectionStatus,
   type CursorUsage,
   type Deployment,
@@ -408,6 +411,18 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleAgentBackendChange(backend: AgentBackend) {
+    setCursorLoading(true);
+    try {
+      const result = await updateAgentBackend(backend);
+      setCursorStatus((prev) => (prev ? { ...prev, agent_backend: result.agent_backend } : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update agent backend");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
   function formatTokens(n: number | undefined): string {
     return (n ?? 0).toLocaleString();
   }
@@ -553,6 +568,26 @@ export default function DashboardPage() {
                       Refresh
                     </button>
                   )}
+                </div>
+                <div className={styles.cursorBackend}>
+                  <label htmlFor="agent-backend">Agent backend</label>
+                  <select
+                    id="agent-backend"
+                    value={cursorStatus?.agent_backend ?? "cursor_cloud"}
+                    onChange={(e) => handleAgentBackendChange(e.target.value as AgentBackend)}
+                    disabled={cursorLoading}
+                  >
+                    {(cursorStatus?.valid_backends ?? ["cursor_cloud", "cursor_local", "local"]).map(
+                      (b) => (
+                        <option key={b} value={b}>
+                          {agentBackendLabel(b)}
+                        </option>
+                      )
+                    )}
+                  </select>
+                  <p className={styles.cursorBackendHint}>
+                    Default is Cursor Cloud Agents. Local Cursor runs in your workspace; scaffold mode needs no API key.
+                  </p>
                 </div>
                 {!cursorStatus?.connected ? (
                   <div className={styles.cursorConnect}>

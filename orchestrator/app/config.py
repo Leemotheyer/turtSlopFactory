@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     preview_host: str = "localhost"  # Hostname used in live preview URLs shown in the dashboard
     preview_port_start: int = 8081
     preview_port_end: int = 8999
+    # Agent backend: cursor_cloud (default), cursor_local, or local (deterministic scaffold)
+    agent_backend: str = "cursor_cloud"
+    cursor_api_key: str | None = None  # Fallback when no dashboard connection
+    cursor_agent_model: str = "composer-2"
+    cursor_cloud_poll_seconds: float = 5.0
+    cursor_cloud_timeout_seconds: int = 3600
 
     @field_validator("worker_enabled", mode="before")
     @classmethod

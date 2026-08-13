@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.local_runner import LocalAgentRunner
+from app.agents.factory import create_agent_runner
 from app.config import settings
 from app.database import SessionLocal
 from app.db_models import DeploymentRow, EventRow, ProjectRow, TaskRow
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class PipelineExecutor:
     def __init__(self) -> None:
         self.workspace = WorkspaceManager()
-        self.runner = LocalAgentRunner(self.workspace)
+        self.runner = create_agent_runner(self.workspace)
         self._running: set[UUID] = set()
 
     def is_running(self, project_id: UUID) -> bool:
@@ -123,6 +123,8 @@ class PipelineExecutor:
         context["input_responses"] = await get_input_responses_for_agents(session, project.id)
         context["project_state"] = project.state
         context["env_status"] = await get_env_status_for_agents(session, project.id)
+        context["repo_url"] = project.repo_url
+        context["branch"] = project.branch
         repo = self.workspace.repo_dir(project.id)
         context["incremental"] = context.get("fix_attempt", 0) > 0 or (repo / "app" / "main.py").exists()
 
@@ -247,6 +249,8 @@ class PipelineExecutor:
                 context = {
                     "name": project.name,
                     "description": project.description,
+                    "repo_url": project.repo_url,
+                    "branch": project.branch,
                     "tests_passed": False,
                     "notes": [],
                 }

@@ -88,6 +88,14 @@ class NotificationRow(Base):
     project: Mapped[ProjectRow | None] = relationship(back_populates="notifications")
 
 
+class FactorySettingsRow(Base):
+    __tablename__ = "factory_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    agent_backend: Mapped[str] = mapped_column(String(32), nullable=False, default="cursor_cloud")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class CursorConnectionRow(Base):
     __tablename__ = "cursor_connection"
 

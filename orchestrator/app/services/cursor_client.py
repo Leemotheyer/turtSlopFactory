@@ -114,6 +114,59 @@ class CursorClient:
             },
         )
 
+    async def create_agent(
+        self,
+        prompt_text: str,
+        *,
+        name: str | None = None,
+        repos: list[dict[str, str]] | None = None,
+        starting_ref: str | None = None,
+        model_id: str | None = None,
+        mode: str = "agent",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "prompt": {"text": prompt_text},
+            "mode": mode,
+        }
+        if name:
+            body["name"] = name[:100]
+        if model_id:
+            body["model"] = {"id": model_id}
+        if repos:
+            body["repos"] = repos
+        return await self._request("POST", "/v1/agents", json=body)
+
+    async def create_run(self, agent_id: str, prompt_text: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/agents/{agent_id}/runs",
+            json={"prompt": {"text": prompt_text}},
+        )
+
+    async def get_run(self, agent_id: str, run_id: str) -> dict[str, Any]:
+        return await self._request("GET", f"/v1/agents/{agent_id}/runs/{run_id}")
+
+    async def wait_for_run(
+        self,
+        agent_id: str,
+        run_id: str,
+        *,
+        poll_seconds: float = 5.0,
+        timeout_seconds: int = 3600,
+    ) -> dict[str, Any]:
+        import asyncio
+        import time
+
+        terminal = {"FINISHED", "ERROR", "CANCELLED", "EXPIRED"}
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            run = await self.get_run(agent_id, run_id)
+            status = (run.get("status") or "").upper()
+            if status in terminal:
+                return run
+            await asyncio.sleep(poll_seconds)
+        raise TimeoutError(f"Cursor run {run_id} did not finish within {timeout_seconds}s")
+
     async def build_usage_summary(self) -> CursorUsageSummary:
         summary = CursorUsageSummary(connected=True)
         me = await self.get_me()

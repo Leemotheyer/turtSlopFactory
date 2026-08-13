@@ -11,6 +11,7 @@ from app.services.cursor_connection import (
     get_connection_status,
     list_cursor_agents,
 )
+from app.services.factory_settings import get_factory_settings
 
 router = APIRouter(prefix="/cursor", tags=["cursor"])
 
@@ -21,7 +22,9 @@ class CursorConnectRequest(BaseModel):
 
 @router.get("/status")
 async def cursor_status(db: AsyncSession = Depends(get_db)) -> dict:
-    return await get_connection_status(db)
+    status = await get_connection_status(db)
+    settings = await get_factory_settings(db)
+    return {**status, **settings}
 
 
 @router.post("/connect")

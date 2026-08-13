@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import Any
 
@@ -10,10 +11,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db_models import CursorConnectionRow
+from app.config import settings
 from app.services.crypto import decrypt_value, encrypt_value, mask_value
 from app.services.cursor_client import CursorApiError, CursorClient, CursorUsageSummary
 
 logger = logging.getLogger(__name__)
+
+
+async def get_api_key(session: AsyncSession | None = None) -> str | None:
+    """Resolve Cursor API key from env or stored connection."""
+    env_key = os.environ.get("CURSOR_API_KEY") or settings.cursor_api_key
+    if env_key:
+        return env_key.strip() or None
+    if session is None:
+        return None
+    row = await get_connection_row(session)
+    if not row:
+        return None
+    return await _api_key_from_row(row)
 
 
 async def get_connection_row(session: AsyncSession) -> CursorConnectionRow | None:

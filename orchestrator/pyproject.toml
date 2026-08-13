@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cursor = [
+    "cursor-sdk>=0.1.3",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
