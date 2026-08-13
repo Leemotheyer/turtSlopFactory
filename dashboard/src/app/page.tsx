@@ -6,6 +6,7 @@ import {
   createProject,
   fetchArtifact,
   fetchDeployments,
+  fetchDiscovery,
   fetchEvents,
   fetchInputRequests,
   fetchLog,
@@ -18,9 +19,12 @@ import {
   promoteProject,
   respondToInput,
   runPipeline,
+  submitIntake,
   type Deployment,
+  type DiscoverySession,
   type FactoryEvent,
   type InputRequest,
+  type IntakeField,
   type NoteType,
   type ProgressDigest,
   type Project,
@@ -32,6 +36,8 @@ import styles from "./page.module.css";
 
 const PIPELINE = [
   "REQUESTED",
+  "DISCOVERY",
+  "INTAKE_PENDING",
   "PLANNING",
   "IMPLEMENTING",
   "UNIT_TESTING",
@@ -45,6 +51,8 @@ const PIPELINE = [
 
 const STATE_COLORS: Record<string, string> = {
   REQUESTED: "#6b7280",
+  DISCOVERY: "#5b8def",
+  INTAKE_PENDING: "#f5a623",
   PLANNING: "#5b8def",
   IMPLEMENTING: "#5b8def",
   UNIT_TESTING: "#f5a623",
@@ -59,7 +67,7 @@ const STATE_COLORS: Record<string, string> = {
   AUTONOMOUSLY_BLOCKED: "#f56565",
 };
 
-type Tab = "overview" | "guidance" | "tasks" | "artifacts" | "deployments" | "logs";
+type Tab = "overview" | "intake" | "guidance" | "tasks" | "artifacts" | "deployments" | "logs";
 
 const NOTE_TYPES: { value: NoteType; label: string }[] = [
   { value: "instruction", label: "Instruction" },
@@ -89,6 +97,8 @@ export default function DashboardPage() {
   const [noteText, setNoteText] = useState("");
   const [noteType, setNoteType] = useState<NoteType>("instruction");
   const [inputResponses, setInputResponses] = useState<Record<string, string>>({});
+  const [discovery, setDiscovery] = useState<DiscoverySession | null>(null);
+  const [intakeAnswers, setIntakeAnswers] = useState<Record<string, string | string[]>>({});
 
   const refresh = useCallback(async () => {
     try {
@@ -97,7 +107,7 @@ export default function DashboardPage() {
       if (!selectedId && p.length > 0) setSelectedId(p[0].id);
 
       if (selectedId) {
-        const [d, t, dep, e, prog, n, inputs] = await Promise.all([
+        const [d, t, dep, e, prog, n, inputs, disc] = await Promise.all([
           fetchProjectDetail(selectedId),
           fetchProjectTasks(selectedId),
           fetchDeployments(selectedId),
@@ -105,6 +115,7 @@ export default function DashboardPage() {
           fetchProgress(selectedId),
           fetchNotes(selectedId),
           fetchInputRequests(selectedId),
+          fetchDiscovery(selectedId),
         ]);
         setDetail(d);
         setTasks(t);
@@ -113,12 +124,26 @@ export default function DashboardPage() {
         setProgress(prog);
         setNotes(n);
         setInputRequests(inputs);
+        setDiscovery(disc);
+        if (disc?.form_fields && Object.keys(intakeAnswers).length === 0) {
+          const defaults: Record<string, string | string[]> = {};
+          disc.form_fields.forEach((f) => {
+            if (f.default) defaults[f.id] = f.default;
+          });
+          setIntakeAnswers(defaults);
+        }
       }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     }
   }, [selectedId]);
+
+  useEffect(() => {
+    if (detail?.state === "INTAKE_PENDING") {
+      setTab("intake");
+    }
+  }, [detail?.state]);
 
   useEffect(() => {
     refresh();
@@ -225,6 +250,81 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleSubmitIntake(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId || !discovery) return;
+    setLoading(true);
+    try {
+      await submitIntake(selectedId, intakeAnswers);
+      await refresh();
+      setTab("overview");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit intake");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderIntakeField(field: IntakeField) {
+    const value = intakeAnswers[field.id] ?? "";
+    const setValue = (v: string | string[]) =>
+      setIntakeAnswers((prev) => ({ ...prev, [field.id]: v }));
+
+    if (field.type === "textarea") {
+      return (
+        <textarea
+          value={typeof value === "string" ? value : ""}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={field.placeholder}
+          rows={4}
+          required={field.required}
+        />
+      );
+    }
+    if (field.type === "select") {
+      return (
+        <select
+          value={typeof value === "string" ? value : field.options[0] ?? ""}
+          onChange={(e) => setValue(e.target.value)}
+          required={field.required}
+        >
+          {field.options.map((opt) => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+      );
+    }
+    if (field.type === "multiselect") {
+      const selected = Array.isArray(value) ? value : value ? [value] : [];
+      return (
+        <div className={styles.multiSelect}>
+          {field.options.map((opt) => (
+            <label key={opt} className={styles.checkLabel}>
+              <input
+                type="checkbox"
+                checked={selected.includes(opt)}
+                onChange={(e) => {
+                  if (e.target.checked) setValue([...selected, opt]);
+                  else setValue(selected.filter((s) => s !== opt));
+                }}
+              />
+              {opt}
+            </label>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <input
+        type="text"
+        value={typeof value === "string" ? value : ""}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={field.placeholder}
+        required={field.required}
+      />
+    );
+  }
+
   const openInputs = inputRequests.filter((r) => r.status === "open");
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
 
@@ -319,11 +419,17 @@ export default function DashboardPage() {
                 <div className={styles.actions}>
                   {detail.pipeline_running ? (
                     <span className={styles.running}>Pipeline running…</span>
+                  ) : detail.state === "DISCOVERY" ? (
+                    <span className={styles.running}>Discovery agent thinking…</span>
+                  ) : detail.state === "INTAKE_PENDING" ? (
+                    <button className={styles.btnPrimary} onClick={() => setTab("intake")}>
+                      Complete intake form
+                    </button>
                   ) : (
                     <>
-                      {detail.state !== "PRODUCTION" && (
+                      {detail.state !== "PRODUCTION" && detail.state !== "REQUESTED" && (
                         <button className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
-                          {detail.state === "REQUESTED" ? "Start pipeline" : "Re-run pipeline"}
+                          {detail.state === "PLANNING" ? "Start pipeline" : "Re-run pipeline"}
                         </button>
                       )}
                       {detail.state === "REVIEW" && (
@@ -371,13 +477,17 @@ export default function DashboardPage() {
               )}
 
               <div className={styles.tabs}>
-                {(["overview", "guidance", "tasks", "artifacts", "deployments", "logs"] as Tab[]).map((t) => (
+                {(["overview", "intake", "guidance", "tasks", "artifacts", "deployments", "logs"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     className={tab === t ? styles.tabActive : styles.tab}
                     onClick={() => setTab(t)}
                   >
-                    {t === "guidance" ? `Notes & Input${openInputs.length ? ` (${openInputs.length})` : ""}` : t.charAt(0).toUpperCase() + t.slice(1)}
+                    {t === "intake"
+                      ? `Intake${detail.state === "INTAKE_PENDING" ? " •" : ""}`
+                      : t === "guidance"
+                        ? `Notes & Input${openInputs.length ? ` (${openInputs.length})` : ""}`
+                        : t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
               </div>
@@ -398,6 +508,53 @@ export default function DashboardPage() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {tab === "intake" && (
+                <div className={styles.intakePanel}>
+                  {detail.state === "DISCOVERY" || discovery?.status === "generating" ? (
+                    <div className={styles.intakeWaiting}>
+                      <h3>Discovery agent is working…</h3>
+                      <p>Analyzing your idea and preparing a loose plan with follow-up questions.</p>
+                    </div>
+                  ) : discovery ? (
+                    <>
+                      <div className={styles.loosePlan}>
+                        <h3>Loose plan</h3>
+                        <pre>{discovery.loose_plan}</pre>
+                      </div>
+                      {discovery.status === "awaiting_user" ? (
+                        <form className={styles.intakeForm} onSubmit={handleSubmitIntake}>
+                          <h3>Scope intake form</h3>
+                          <p className={styles.guidanceHint}>
+                            Help the factory understand what to build and what to skip. Required fields
+                            are marked with *.
+                          </p>
+                          {discovery.form_fields.map((field) => (
+                            <div key={field.id} className={styles.intakeField}>
+                              <label>
+                                {field.label}
+                                {field.required && <span className={styles.required}> *</span>}
+                              </label>
+                              {field.help && <span className={styles.fieldHelp}>{field.help}</span>}
+                              {renderIntakeField(field)}
+                            </div>
+                          ))}
+                          <button type="submit" className={styles.btnPrimary} disabled={loading}>
+                            Lock scope & continue
+                          </button>
+                        </form>
+                      ) : (
+                        <div className={styles.intakeDone}>
+                          <h3>Intake complete</h3>
+                          <p>Scope locked in. You can start the build pipeline when ready.</p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className={styles.emptyHint}>Discovery not started yet.</p>
+                  )}
                 </div>
               )}
 
@@ -640,5 +797,8 @@ function formatEvent(ev: FactoryEvent): string {
   if (ev.type === "note.added") return String(p.content ?? "").slice(0, 80);
   if (ev.type === "input.requested") return String(p.question ?? "").slice(0, 80);
   if (ev.type === "input.resolved") return `${p.status}: ${p.decision ?? ""}`.slice(0, 80);
+  if (ev.type === "discovery.started") return "Discovery agent started";
+  if (ev.type === "discovery.completed") return `Intake form ready (${p.field_count} questions)`;
+  if (ev.type === "intake.submitted") return "Scope locked in";
   return JSON.stringify(p).slice(0, 80);
 }

@@ -12,6 +12,7 @@ from app.database import SessionLocal
 from app.db_models import DeploymentRow, EventRow, ProjectRow, TaskRow
 from app.events import event_bus
 from app.models import AgentRole, EventType, FactoryEvent, ProjectState, TaskStatus
+from app.services.discovery import get_discovery
 from app.services.input_requests import create_input_request
 from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
@@ -154,6 +155,11 @@ class PipelineExecutor:
                 }
                 await self._refresh_context(session, project, context)
 
+                discovery = await get_discovery(session, project_id)
+                if discovery and discovery.responses:
+                    context["intake"] = discovery.responses
+                    context["loose_plan"] = discovery.loose_plan
+
                 async def request_input(**kwargs):
                     return await create_input_request(session, project_id, **kwargs)
 
@@ -163,8 +169,8 @@ class PipelineExecutor:
                 self.workspace.save_metadata(project_id, meta)
 
                 stages = [
-                    (ProjectState.REQUESTED, self._stage_planning),
-                    (ProjectState.PLANNING, self._stage_implementing),
+                    (ProjectState.PLANNING, self._stage_planning),
+                    (ProjectState.IMPLEMENTING, self._stage_implementing),
                     (ProjectState.IMPLEMENTING, self._stage_unit_testing),
                     (ProjectState.UNIT_TESTING, self._stage_integration_testing),
                     (ProjectState.INTEGRATION_TESTING, self._stage_docker_build),
@@ -270,7 +276,7 @@ class PipelineExecutor:
                 "Architecture planned",
                 "Requirements and architecture documents created",
             )
-            await self.transition(session, project, advance_project(ProjectState.REQUESTED))
+            await self.transition(session, project, advance_project(ProjectState.PLANNING))
         return run.success
 
     async def _stage_implementing(self, session, project, context) -> bool:

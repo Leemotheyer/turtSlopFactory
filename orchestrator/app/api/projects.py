@@ -10,6 +10,7 @@ from app.db_models import ProjectRow, TaskRow
 from app.events import event_bus
 from app.models import (
     AgentRole,
+    DiscoveryStatus,
     EventType,
     FactoryEvent,
     Project,
@@ -19,6 +20,7 @@ from app.models import (
     TaskCreate,
     TaskStatus,
 )
+from app.worker import pipeline_queue
 from app.state_machine import StateMachineError, advance_project, fail_project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -79,6 +81,8 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
             payload={"from": None, "to": ProjectState.REQUESTED.value, "action": "created"},
         ),
     )
+
+    await pipeline_queue.enqueue_discovery(row.id)
 
     return _project_from_row(row)
 

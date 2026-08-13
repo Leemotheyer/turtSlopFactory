@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import discovery as discovery_api
 from app.api import events as events_api
 from app.api import feedback as feedback_api
 from app.api import pipeline as pipeline_api
@@ -15,6 +16,7 @@ from app.database import SessionLocal, init_db
 from app.events import event_bus
 from app.middleware import APIKeyMiddleware
 from app.models import FactoryEvent
+from app.services.discovery import auto_submit_expired_intake
 from app.services.input_requests import expire_stale_requests
 from app.worker import pipeline_queue
 
@@ -49,6 +51,7 @@ async def _expire_input_requests_loop() -> None:
         try:
             async with SessionLocal() as session:
                 await expire_stale_requests(session)
+                await auto_submit_expired_intake(session)
         except Exception:
             pass
 
@@ -108,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(events_api.router, prefix="/api")
     app.include_router(pipeline_api.router, prefix="/api")
     app.include_router(feedback_api.router, prefix="/api")
+    app.include_router(discovery_api.router, prefix="/api")
 
     return app
 

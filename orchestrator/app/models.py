@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 class ProjectState(StrEnum):
     REQUESTED = "REQUESTED"
+    DISCOVERY = "DISCOVERY"
+    INTAKE_PENDING = "INTAKE_PENDING"
     PLANNING = "PLANNING"
     IMPLEMENTING = "IMPLEMENTING"
     UNIT_TESTING = "UNIT_TESTING"
@@ -22,6 +24,7 @@ class ProjectState(StrEnum):
 
 
 class AgentRole(StrEnum):
+    DISCOVERY = "discovery"
     ARCHITECT = "architect"
     DEVELOPER = "developer"
     TESTER = "tester"
@@ -87,6 +90,50 @@ class EventType(StrEnum):
     NOTE_ADDED = "note.added"
     INPUT_REQUESTED = "input.requested"
     INPUT_RESOLVED = "input.resolved"
+    DISCOVERY_STARTED = "discovery.started"
+    DISCOVERY_COMPLETED = "discovery.completed"
+    INTAKE_SUBMITTED = "intake.submitted"
+
+
+class DiscoveryStatus(StrEnum):
+    GENERATING = "generating"
+    AWAITING_USER = "awaiting_user"
+    SUBMITTED = "submitted"
+    AUTO_SUBMITTED = "auto_submitted"
+
+
+class IntakeFieldType(StrEnum):
+    TEXT = "text"
+    TEXTAREA = "textarea"
+    SELECT = "select"
+    MULTISELECT = "multiselect"
+
+
+class IntakeField(BaseModel):
+    id: str
+    label: str
+    type: IntakeFieldType = IntakeFieldType.TEXT
+    help: str = ""
+    placeholder: str = ""
+    options: list[str] = Field(default_factory=list)
+    required: bool = True
+    default: str | None = None
+
+
+class DiscoverySession(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    status: DiscoveryStatus = DiscoveryStatus.GENERATING
+    loose_plan: str = ""
+    form_fields: list[IntakeField] = Field(default_factory=list)
+    responses: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    submitted_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class IntakeSubmit(BaseModel):
+    responses: dict[str, str | list[str]]
 
 
 class NoteType(StrEnum):
@@ -182,11 +229,15 @@ class ProjectDetail(Project):
     production_url: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     pipeline_running: bool = False
+    discovery_status: str | None = None
+    intake_ready: bool = False
 
 
 # Valid forward transitions for the happy path
 FORWARD_TRANSITIONS: dict[ProjectState, ProjectState] = {
-    ProjectState.REQUESTED: ProjectState.PLANNING,
+    ProjectState.REQUESTED: ProjectState.DISCOVERY,
+    ProjectState.DISCOVERY: ProjectState.INTAKE_PENDING,
+    ProjectState.INTAKE_PENDING: ProjectState.PLANNING,
     ProjectState.PLANNING: ProjectState.IMPLEMENTING,
     ProjectState.IMPLEMENTING: ProjectState.UNIT_TESTING,
     ProjectState.UNIT_TESTING: ProjectState.INTEGRATION_TESTING,

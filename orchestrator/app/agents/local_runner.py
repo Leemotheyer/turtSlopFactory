@@ -62,11 +62,23 @@ class LocalAgentRunner(AgentRunner):
         scope_out = [n for n in context.get("notes", []) if n.get("type") == "scope_out"]
         excluded = "\n".join(f"- OUT OF SCOPE: {n['content']}" for n in scope_out) if scope_out else ""
 
+        intake = context.get("intake", {})
+        intake_section = ""
+        if intake:
+            intake_section = "\n## Intake form answers\n"
+            for key, val in intake.items():
+                if isinstance(val, list):
+                    val = ", ".join(val)
+                intake_section += f"- **{key.replace('_', ' ').title()}:** {val}\n"
+
+        loose_plan = context.get("loose_plan", "")
+        plan_ref = f"\n## Discovery plan\nSee discovery-plan.md artifact.\n" if loose_plan else ""
+
         requirements = f"""# Requirements: {name}
 
 ## Overview
 {description}
-{notes_section}
+{notes_section}{intake_section}{plan_ref}
 ## Functional requirements
 1. Expose a `/health` endpoint returning JSON status
 2. Provide a REST API for item management (create, list, get)

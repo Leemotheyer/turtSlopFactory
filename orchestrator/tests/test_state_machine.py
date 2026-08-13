@@ -3,7 +3,9 @@ from app.state_machine import StateMachineError, advance_project, fail_project
 
 
 def test_advance_happy_path():
-    assert advance_project(ProjectState.REQUESTED) == ProjectState.PLANNING
+    assert advance_project(ProjectState.REQUESTED) == ProjectState.DISCOVERY
+    assert advance_project(ProjectState.DISCOVERY) == ProjectState.INTAKE_PENDING
+    assert advance_project(ProjectState.INTAKE_PENDING) == ProjectState.PLANNING
     assert advance_project(ProjectState.PLANNING) == ProjectState.IMPLEMENTING
 
 

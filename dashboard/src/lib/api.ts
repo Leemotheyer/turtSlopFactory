@@ -1,5 +1,7 @@
 export type ProjectState =
   | "REQUESTED"
+  | "DISCOVERY"
+  | "INTAKE_PENDING"
   | "PLANNING"
   | "IMPLEMENTING"
   | "UNIT_TESTING"
@@ -34,6 +36,33 @@ export interface ProjectDetail extends Project {
   production_url: string | null;
   artifacts: string[];
   pipeline_running: boolean;
+  discovery_status: string | null;
+  intake_ready: boolean;
+}
+
+export type IntakeFieldType = "text" | "textarea" | "select" | "multiselect";
+
+export interface IntakeField {
+  id: string;
+  label: string;
+  type: IntakeFieldType;
+  help: string;
+  placeholder: string;
+  options: string[];
+  required: boolean;
+  default: string | null;
+}
+
+export interface DiscoverySession {
+  id: string;
+  project_id: string;
+  status: "generating" | "awaiting_user" | "submitted" | "auto_submitted";
+  loose_plan: string;
+  form_fields: IntakeField[];
+  responses: Record<string, string | string[]>;
+  created_at: string;
+  submitted_at: string | null;
+  expires_at: string | null;
 }
 
 export interface Task {
@@ -148,6 +177,33 @@ export async function createProject(name: string, description: string): Promise<
     body: JSON.stringify({ name, description }),
   });
   if (!res.ok) throw new Error("Failed to create project");
+  return res.json();
+}
+
+export async function fetchDiscovery(projectId: string): Promise<DiscoverySession | null> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/discovery`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("Failed to fetch discovery");
+  const data = await res.json();
+  return data;
+}
+
+export async function submitIntake(
+  projectId: string,
+  responses: Record<string, string | string[]>
+): Promise<DiscoverySession> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/discovery/submit`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ responses }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to submit intake");
+  }
   return res.json();
 }
 

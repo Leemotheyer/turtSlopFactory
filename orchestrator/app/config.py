@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     api_key: str | None = None  # Set in production to require X-API-Key header
     worker_enabled: bool = True
     input_request_timeout_seconds: int = 300  # Auto-resolve after 5 min without human response
+    intake_form_timeout_hours: int = 72  # Auto-submit intake with defaults after 72h
 
     @field_validator("worker_enabled", mode="before")
     @classmethod

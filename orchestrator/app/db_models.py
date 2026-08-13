@@ -29,6 +29,27 @@ class ProjectRow(Base):
     input_requests: Mapped[list["InputRequestRow"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    discovery: Mapped["DiscoverySessionRow | None"] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class DiscoverySessionRow(Base):
+    __tablename__ = "discovery_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, unique=True
+    )
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="generating")
+    loose_plan: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    form_fields: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    responses: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    project: Mapped[ProjectRow] = relationship(back_populates="discovery")
 
 
 class TaskRow(Base):

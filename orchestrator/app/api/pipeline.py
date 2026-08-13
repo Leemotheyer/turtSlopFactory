@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.db_models import DeploymentRow, ProjectRow
-from app.models import Deployment
+from app.models import Deployment, ProjectState
+from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
 from app.worker import pipeline_queue
 from app.workspace.manager import WorkspaceManager
@@ -22,6 +23,7 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=404, detail="Project not found")
 
     meta = workspace.load_metadata(project_id)
+    discovery = await get_discovery(db, project_id)
     return {
         "id": str(row.id),
         "name": row.name,
@@ -33,6 +35,8 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
         "production_url": meta.get("production_url"),
         "artifacts": workspace.list_artifacts(project_id),
         "pipeline_running": pipeline_executor.is_running(project_id),
+        "discovery_status": discovery.status.value if discovery else None,
+        "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }
@@ -47,7 +51,35 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
     if pipeline_executor.is_running(project_id):
         return {"status": "already_running", "project_id": str(project_id)}
 
-    await pipeline_queue.enqueue(project_id)
+    allowed_states = {
+        ProjectState.PLANNING.value,
+        ProjectState.IMPLEMENTING.value,
+        ProjectState.UNIT_TESTING.value,
+        ProjectState.INTEGRATION_TESTING.value,
+        ProjectState.DOCKER_BUILD.value,
+        ProjectState.STAGING_DEPLOY.value,
+        ProjectState.SMOKE_TESTING.value,
+        ProjectState.REVIEW.value,
+        ProjectState.DIAGNOSING.value,
+        ProjectState.FIXING.value,
+    }
+    if row.state == ProjectState.INTAKE_PENDING.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Complete the intake form before starting the build pipeline",
+        )
+    if row.state in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value):
+        raise HTTPException(
+            status_code=400,
+            detail="Discovery is still in progress — wait for the intake form",
+        )
+    if row.state not in allowed_states and row.state != ProjectState.PRODUCTION.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot run pipeline from state {row.state}",
+        )
+
+    await pipeline_queue.enqueue_pipeline(project_id)
     return {"status": "queued", "project_id": str(project_id)}
 
 

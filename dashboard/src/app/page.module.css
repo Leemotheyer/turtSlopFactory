@@ -686,6 +686,124 @@
   }
 }
 
+/* Intake form */
+.intakePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.intakeWaiting {
+  padding: 2rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.intakeWaiting h3 {
+  margin-bottom: 0.5rem;
+}
+
+.loosePlan {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.loosePlan h3 {
+  font-size: 0.875rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.75rem;
+}
+
+.loosePlan pre {
+  font-size: 0.8rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.intakeForm {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.intakeForm h3 {
+  margin-bottom: 0.25rem;
+}
+
+.intakeField {
+  margin-bottom: 1.25rem;
+}
+
+.intakeField label {
+  display: block;
+  font-weight: 500;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.required {
+  color: var(--danger);
+}
+
+.fieldHelp {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.intakeField input,
+.intakeField textarea,
+.intakeField select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.multiSelect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.checkLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.intakeDone {
+  padding: 1.5rem;
+  background: rgba(61, 214, 140, 0.1);
+  border: 1px solid var(--success);
+  border-radius: 10px;
+}
+
+.intakeDone h3 {
+  color: var(--success);
+  margin-bottom: 0.35rem;
+}
+
+@media (max-width: 900px) {
+  .guidancePanel {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1100px) {
   .body { grid-template-columns: 1fr; }
   .sidebar, .events { border: none; border-bottom: 1px solid var(--border); max-height: 300px; }
