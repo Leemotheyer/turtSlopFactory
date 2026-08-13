@@ -1,0 +1,108 @@
+# Production deployment using pre-built images from GitHub Container Registry.
+# Images are published on every push to main by .github/workflows/docker-publish.yml
+#
+# Usage:
+#   cp .env.example .env
+#   # Edit .env (passwords, API_KEY, SECRETS_ENCRYPTION_KEY, etc.)
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-factory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-factory}
+      POSTGRES_DB: ${POSTGRES_DB:-factory}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-factory} -d ${POSTGRES_DB:-factory}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - factory
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - factory
+
+  orchestrator:
+    image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-factory}:${POSTGRES_PASSWORD:-factory}@postgres:5432/${POSTGRES_DB:-factory}
+      REDIS_URL: redis://redis:6379/0
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:${DASHBOARD_PORT:-3000}"]'
+      WORKSPACE_ROOT: /data/workspaces
+      WORKER_ENABLED: "false"
+      API_KEY: ${API_KEY:-}
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
+      PREVIEW_HOST: ${PREVIEW_HOST:-localhost}
+      AGENT_BACKEND: ${AGENT_BACKEND:-cursor_cloud}
+      CURSOR_API_KEY: ${CURSOR_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - workspace_data:/data/workspaces
+    networks:
+      - factory
+
+  worker:
+    image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["python", "worker_main.py"]
+    ports:
+      - "8081-8099:8081-8099"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-factory}:${POSTGRES_PASSWORD:-factory}@postgres:5432/${POSTGRES_DB:-factory}
+      REDIS_URL: redis://redis:6379/0
+      WORKSPACE_ROOT: /data/workspaces
+      PREVIEW_HOST: ${PREVIEW_HOST:-localhost}
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
+      AGENT_BACKEND: ${AGENT_BACKEND:-cursor_cloud}
+      CURSOR_API_KEY: ${CURSOR_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+    volumes:
+      - workspace_data:/data/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - factory
+
+  dashboard:
+    image: ghcr.io/leemotheyer/turtslopfactory-dashboard:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    depends_on:
+      - orchestrator
+    networks:
+      - factory
+
+volumes:
+  pgdata:
+  workspace_data:
+
+networks:
+  factory:
+    driver: bridge
