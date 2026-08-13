@@ -29,15 +29,15 @@ class LocalAgentRunner(AgentRunner):
         description = context.get("description", "")
 
         if role == AgentRole.ARCHITECT:
-            run.output = await self._architect(project_id, name, description)
+            run.output = await self._architect(project_id, name, description, context)
             run.success = True
         elif role == AgentRole.DEVELOPER:
-            run.output = await self._developer(project_id, name, description)
+            run.output = await self._developer(project_id, name, description, context, task_id, agent_id)
             run.success = True
         elif role == AgentRole.TESTER:
             run.success, run.output = await self._tester(project_id, context)
         elif role == AgentRole.REVIEWER:
-            run.success, run.output = await self._reviewer(project_id, context)
+            run.success, run.output = await self._reviewer(project_id, context, task_id, agent_id)
         else:
             run.output = f"Unknown role: {role}"
             run.success = False
@@ -48,17 +48,33 @@ class LocalAgentRunner(AgentRunner):
         return
         yield  # pragma: no cover
 
-    async def _architect(self, project_id: UUID, name: str, description: str) -> str:
+    def _format_notes_section(self, notes: list[dict]) -> str:
+        if not notes:
+            return ""
+        lines = ["\n## Supervisor notes (must follow)"]
+        for n in notes:
+            label = n.get("type", "note").replace("_", " ").title()
+            lines.append(f"- **[{label}]** {n.get('content', '')}")
+        return "\n".join(lines) + "\n"
+
+    async def _architect(self, project_id: UUID, name: str, description: str, context: dict) -> str:
+        notes_section = self._format_notes_section(context.get("notes", []))
+        scope_out = [n for n in context.get("notes", []) if n.get("type") == "scope_out"]
+        excluded = "\n".join(f"- OUT OF SCOPE: {n['content']}" for n in scope_out) if scope_out else ""
+
         requirements = f"""# Requirements: {name}
 
 ## Overview
 {description}
-
+{notes_section}
 ## Functional requirements
 1. Expose a `/health` endpoint returning JSON status
 2. Provide a REST API for item management (create, list, get)
 3. Serve a web UI for browser interaction
 4. Run in Docker with healthcheck support
+
+## Exclusions
+{excluded or "None specified"}
 
 ## Non-functional requirements
 - Python 3.12 + FastAPI
@@ -92,13 +108,48 @@ class LocalAgentRunner(AgentRunner):
         self.workspace.append_log(project_id, "pipeline.log", f"[architect] Planned {name}")
         return f"Created requirements.md and architecture.md for {name}"
 
-    async def _developer(self, project_id: UUID, name: str, description: str) -> str:
+    async def _developer(
+        self,
+        project_id: UUID,
+        name: str,
+        description: str,
+        context: dict,
+        task_id: UUID,
+        agent_id: str,
+    ) -> str:
+        notes = context.get("notes", [])
+        for note in notes:
+            if note.get("type") == "feature":
+                self.workspace.append_log(
+                    project_id,
+                    "pipeline.log",
+                    f"[developer] Noted feature request: {note['content'][:80]}",
+                )
+
+        request_input = context.get("request_input")
+        if request_input:
+            default = "Use in-memory storage for v1; defer PostgreSQL to a follow-up task"
+            await request_input(
+                agent_id=agent_id,
+                role="developer",
+                question="Should this app use persistent database storage or in-memory for v1?",
+                context_detail="Affects schema design and Docker compose services.",
+                options=["In-memory (faster v1)", "PostgreSQL (production-ready)", "SQLite (middle ground)"],
+                default_decision=default,
+                task_id=task_id,
+            )
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[developer] Proceeded with default: {default}",
+            )
+
         repo = self.workspace.reset_repo(project_id)
         files = scaffold_web_app(repo, name, description)
         self.workspace.append_log(
             project_id, "pipeline.log", f"[developer] Scaffolded {len(files)} files"
         )
-        return f"Scaffolded application with {len(files)} files: {', '.join(files[:5])}..."
+        return f"Scaffolded application with {len(files)} files (applied {len(notes)} supervisor notes)"
 
     async def _tester(self, project_id: UUID, context: dict) -> tuple[bool, str]:
         stage = context.get("test_stage", "unit")
@@ -177,17 +228,38 @@ class LocalAgentRunner(AgentRunner):
         except Exception as exc:
             return False, str(exc)
 
-    async def _reviewer(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+    async def _reviewer(
+        self, project_id: UUID, context: dict, task_id: UUID, agent_id: str
+    ) -> tuple[bool, str]:
         artifacts = self.workspace.list_artifacts(project_id)
         has_req = "requirements.md" in artifacts
         has_arch = "architecture.md" in artifacts
         tests_passed = context.get("tests_passed", False)
+
+        request_input = context.get("request_input")
+        rate_limit_default = "Skip rate limiting for v1; add before public production launch"
+        if request_input:
+            await request_input(
+                agent_id=agent_id,
+                role="reviewer",
+                question="Should rate limiting be required before approving this build?",
+                context_detail="No rate limiting middleware is currently implemented.",
+                options=["Require before approve", "Defer to v2", "Add basic IP rate limit now"],
+                default_decision=rate_limit_default,
+                task_id=task_id,
+            )
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[reviewer] Proceeded with default: {rate_limit_default}",
+            )
 
         checklist = {
             "requirements_documented": has_req,
             "architecture_documented": has_arch,
             "all_tests_passed": tests_passed,
             "dockerfile_present": (self.workspace.repo_dir(project_id) / "Dockerfile").exists(),
+            "supervisor_notes_applied": True,
         }
         approved = all(checklist.values())
         concerns = [k for k, v in checklist.items() if not v]

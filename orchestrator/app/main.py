@@ -6,14 +6,16 @@ from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import events as events_api
+from app.api import feedback as feedback_api
 from app.api import pipeline as pipeline_api
 from app.api import projects as projects_api
 from app.api import tasks as tasks_api
 from app.config import settings
-from app.database import init_db
+from app.database import SessionLocal, init_db
 from app.events import event_bus
 from app.middleware import APIKeyMiddleware
 from app.models import FactoryEvent
+from app.services.input_requests import expire_stale_requests
 from app.worker import pipeline_queue
 
 router = APIRouter()
@@ -41,6 +43,16 @@ async def websocket_events(websocket: WebSocket) -> None:
         event_bus.unsubscribe(queue)
 
 
+async def _expire_input_requests_loop() -> None:
+    while True:
+        await asyncio.sleep(30)
+        try:
+            async with SessionLocal() as session:
+                await expire_stale_requests(session)
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await event_bus.connect()
@@ -48,6 +60,7 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     redis_task = asyncio.create_task(_relay_redis_events())
+    expire_task = asyncio.create_task(_expire_input_requests_loop())
     worker_task = None
     if settings.worker_enabled:
         worker_task = asyncio.create_task(pipeline_queue.process_loop())
@@ -56,10 +69,12 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         redis_task.cancel()
+        expire_task.cancel()
         if worker_task:
             worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await redis_task
+            await expire_task
             if worker_task:
                 await worker_task
         await pipeline_queue.close()
@@ -92,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(events_api.router, prefix="/api")
     app.include_router(pipeline_api.router, prefix="/api")
+    app.include_router(feedback_api.router, prefix="/api")
 
     return app
 

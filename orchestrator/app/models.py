@@ -83,6 +83,76 @@ class EventType(StrEnum):
     TASK_STATUS_CHANGED = "task.status.changed"
     DEPLOYMENT_STARTED = "deployment.started"
     DEPLOYMENT_FINISHED = "deployment.finished"
+    PROGRESS_UPDATED = "progress.updated"
+    NOTE_ADDED = "note.added"
+    INPUT_REQUESTED = "input.requested"
+    INPUT_RESOLVED = "input.resolved"
+
+
+class NoteType(StrEnum):
+    INSTRUCTION = "instruction"
+    FEATURE = "feature"
+    SCOPE_OUT = "scope_out"
+    GENERAL = "general"
+
+
+class InputRequestStatus(StrEnum):
+    OPEN = "open"
+    ANSWERED = "answered"
+    AUTO_RESOLVED = "auto_resolved"
+
+
+class ProjectNoteCreate(BaseModel):
+    content: str
+    note_type: NoteType = NoteType.INSTRUCTION
+
+
+class ProjectNote(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    content: str
+    note_type: NoteType
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProgressEntry(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    category: str
+    title: str
+    summary: str
+    detail: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProgressDigest(BaseModel):
+    project_id: UUID
+    current_state: str
+    pipeline_running: bool
+    entries: list[ProgressEntry] = Field(default_factory=list)
+    summary_lines: list[str] = Field(default_factory=list)
+
+
+class InputRequest(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    task_id: UUID | None = None
+    agent_id: str
+    role: str
+    question: str
+    context_detail: str = ""
+    options: list[str] = Field(default_factory=list)
+    default_decision: str
+    status: InputRequestStatus = InputRequestStatus.OPEN
+    human_response: str | None = None
+    resolved_decision: str | None = None
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    resolved_at: datetime | None = None
+
+
+class InputRequestRespond(BaseModel):
+    response: str
 
 
 class FactoryEvent(BaseModel):

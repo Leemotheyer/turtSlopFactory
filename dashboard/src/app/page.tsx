@@ -2,21 +2,30 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  addNote,
   createProject,
   fetchArtifact,
   fetchDeployments,
   fetchEvents,
+  fetchInputRequests,
   fetchLog,
+  fetchNotes,
+  fetchProgress,
   fetchProjectDetail,
   fetchProjectTasks,
   fetchProjects,
   getWebSocketUrl,
   promoteProject,
+  respondToInput,
   runPipeline,
   type Deployment,
   type FactoryEvent,
+  type InputRequest,
+  type NoteType,
+  type ProgressDigest,
   type Project,
   type ProjectDetail,
+  type ProjectNote,
   type Task,
 } from "@/lib/api";
 import styles from "./page.module.css";
@@ -50,7 +59,14 @@ const STATE_COLORS: Record<string, string> = {
   AUTONOMOUSLY_BLOCKED: "#f56565",
 };
 
-type Tab = "overview" | "tasks" | "artifacts" | "deployments" | "logs";
+type Tab = "overview" | "guidance" | "tasks" | "artifacts" | "deployments" | "logs";
+
+const NOTE_TYPES: { value: NoteType; label: string }[] = [
+  { value: "instruction", label: "Instruction" },
+  { value: "feature", label: "Add feature" },
+  { value: "scope_out", label: "Out of scope" },
+  { value: "general", label: "General" },
+];
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -67,6 +83,12 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [artifactView, setArtifactView] = useState<{ name: string; content: string } | null>(null);
   const [logView, setLogView] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ProgressDigest | null>(null);
+  const [notes, setNotes] = useState<ProjectNote[]>([]);
+  const [inputRequests, setInputRequests] = useState<InputRequest[]>([]);
+  const [noteText, setNoteText] = useState("");
+  const [noteType, setNoteType] = useState<NoteType>("instruction");
+  const [inputResponses, setInputResponses] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     try {
@@ -75,16 +97,22 @@ export default function DashboardPage() {
       if (!selectedId && p.length > 0) setSelectedId(p[0].id);
 
       if (selectedId) {
-        const [d, t, dep, e] = await Promise.all([
+        const [d, t, dep, e, prog, n, inputs] = await Promise.all([
           fetchProjectDetail(selectedId),
           fetchProjectTasks(selectedId),
           fetchDeployments(selectedId),
           fetchEvents(100, selectedId),
+          fetchProgress(selectedId),
+          fetchNotes(selectedId),
+          fetchInputRequests(selectedId),
         ]);
         setDetail(d);
         setTasks(t);
         setDeployments(dep);
         setEvents(e);
+        setProgress(prog);
+        setNotes(n);
+        setInputRequests(inputs);
       }
       setError(null);
     } catch (err) {
@@ -166,6 +194,38 @@ export default function DashboardPage() {
     setLogView(content);
   }
 
+  async function handleAddNote(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId || !noteText.trim()) return;
+    setLoading(true);
+    try {
+      await addNote(selectedId, noteText, noteType);
+      setNoteText("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add note");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRespondInput(requestId: string) {
+    if (!selectedId) return;
+    const response = inputResponses[requestId]?.trim();
+    if (!response) return;
+    setLoading(true);
+    try {
+      await respondToInput(selectedId, requestId, response);
+      setInputResponses((prev) => ({ ...prev, [requestId]: "" }));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to respond");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const openInputs = inputRequests.filter((r) => r.status === "open");
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
 
   return (
@@ -184,6 +244,9 @@ export default function DashboardPage() {
             {connected ? "Live" : "Offline"}
           </span>
           <span className={styles.badge}>{projects.length} projects</span>
+          {openInputs.length > 0 && (
+            <span className={styles.alertBadge}>{openInputs.length} agent question{openInputs.length > 1 ? "s" : ""}</span>
+          )}
         </div>
       </header>
 
@@ -287,14 +350,34 @@ export default function DashboardPage() {
                 )}
               </div>
 
+              {progress && (
+                <div className={styles.progressDigest}>
+                  <div className={styles.progressHeader}>
+                    <h3>What&apos;s done</h3>
+                    {detail.pipeline_running && (
+                      <span className={styles.running}>Building…</span>
+                    )}
+                  </div>
+                  {progress.summary_lines.length === 0 ? (
+                    <p className={styles.emptyHint}>Pipeline not started yet — progress will appear here as agents work.</p>
+                  ) : (
+                    <ul className={styles.progressList}>
+                      {progress.summary_lines.map((line, i) => (
+                        <li key={i}>{line}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               <div className={styles.tabs}>
-                {(["overview", "tasks", "artifacts", "deployments", "logs"] as Tab[]).map((t) => (
+                {(["overview", "guidance", "tasks", "artifacts", "deployments", "logs"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     className={tab === t ? styles.tabActive : styles.tab}
                     onClick={() => setTab(t)}
                   >
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
+                    {t === "guidance" ? `Notes & Input${openInputs.length ? ` (${openInputs.length})` : ""}` : t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
               </div>
@@ -315,6 +398,102 @@ export default function DashboardPage() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {tab === "guidance" && (
+                <div className={styles.guidancePanel}>
+                  <section className={styles.guidanceSection}>
+                    <h3>Your notes</h3>
+                    <p className={styles.guidanceHint}>
+                      Add instructions anytime — running or not. Agents read these on their next step.
+                      Use &quot;Out of scope&quot; to block features.
+                    </p>
+                    <form className={styles.noteForm} onSubmit={handleAddNote}>
+                      <select value={noteType} onChange={(e) => setNoteType(e.target.value as NoteType)}>
+                        {NOTE_TYPES.map((t) => (
+                          <option key={t.value} value={t.value}>{t.label}</option>
+                        ))}
+                      </select>
+                      <textarea
+                        placeholder="e.g. Don't add user auth — keep it simple. OR: Add export to CSV feature."
+                        value={noteText}
+                        onChange={(e) => setNoteText(e.target.value)}
+                        rows={3}
+                      />
+                      <button type="submit" className={styles.btnPrimary} disabled={loading || !noteText.trim()}>
+                        Add note
+                      </button>
+                    </form>
+                    <ul className={styles.notesList}>
+                      {notes.map((n) => (
+                        <li key={n.id} className={styles.noteItem}>
+                          <span className={styles.noteTypeBadge}>{n.note_type.replace("_", " ")}</span>
+                          <p>{n.content}</p>
+                          <time>{new Date(n.created_at).toLocaleString()}</time>
+                        </li>
+                      ))}
+                      {notes.length === 0 && <p className={styles.emptyHint}>No notes yet</p>}
+                    </ul>
+                  </section>
+
+                  <section className={styles.guidanceSection}>
+                    <h3>Agent questions</h3>
+                    <p className={styles.guidanceHint}>
+                      Agents never pause the pipeline. They proceed with a default decision after
+                      5 minutes if you don&apos;t respond. You can still override here.
+                    </p>
+                    {inputRequests.length === 0 ? (
+                      <p className={styles.emptyHint}>No agent questions yet</p>
+                    ) : (
+                      <ul className={styles.inputList}>
+                        {inputRequests.map((req) => (
+                          <li key={req.id} className={`${styles.inputCard} ${req.status === "open" ? styles.inputOpen : ""}`}>
+                            <div className={styles.inputHeader}>
+                              <span className={styles.roleBadge}>{req.role}</span>
+                              <span className={styles.inputStatus}>{req.status.replace("_", " ")}</span>
+                            </div>
+                            <p className={styles.inputQuestion}>{req.question}</p>
+                            {req.context_detail && (
+                              <p className={styles.inputContext}>{req.context_detail}</p>
+                            )}
+                            {req.options.length > 0 && (
+                              <div className={styles.inputOptions}>
+                                Options: {req.options.join(" · ")}
+                              </div>
+                            )}
+                            <p className={styles.inputDefault}>
+                              <strong>Proceeding with:</strong> {req.resolved_decision ?? req.default_decision}
+                            </p>
+                            {req.status === "open" && (
+                              <div className={styles.inputRespond}>
+                                <input
+                                  placeholder="Your preference (optional — overrides default)"
+                                  value={inputResponses[req.id] ?? ""}
+                                  onChange={(e) =>
+                                    setInputResponses((prev) => ({ ...prev, [req.id]: e.target.value }))
+                                  }
+                                />
+                                <button
+                                  className={styles.btnSecondary}
+                                  onClick={() => handleRespondInput(req.id)}
+                                  disabled={loading || !inputResponses[req.id]?.trim()}
+                                >
+                                  Send response
+                                </button>
+                                <span className={styles.inputExpiry}>
+                                  Auto-decides {new Date(req.expires_at).toLocaleTimeString()}
+                                </span>
+                              </div>
+                            )}
+                            {req.human_response && (
+                              <p className={styles.inputAnswer}>You said: {req.human_response}</p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
                 </div>
               )}
 
@@ -457,5 +636,9 @@ function formatEvent(ev: FactoryEvent): string {
   if (ev.type === "test.completed") return `${p.stage}: ${p.passed ? "PASS" : "FAIL"}`;
   if (ev.type === "deployment.finished") return `${p.environment} ${p.url ?? ""}`;
   if (ev.type === "agent.command.finished") return String(p.output ?? p.command ?? "").slice(0, 80);
+  if (ev.type === "progress.updated") return `${p.title}: ${p.summary}`;
+  if (ev.type === "note.added") return String(p.content ?? "").slice(0, 80);
+  if (ev.type === "input.requested") return String(p.question ?? "").slice(0, 80);
+  if (ev.type === "input.resolved") return `${p.status}: ${p.decision ?? ""}`.slice(0, 80);
   return JSON.stringify(p).slice(0, 80);
 }

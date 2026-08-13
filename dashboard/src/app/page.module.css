@@ -504,6 +504,188 @@
   padding: 1rem 0;
 }
 
+/* Progress digest */
+.progressDigest {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.progressHeader h3 {
+  font-size: 0.875rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.progressList {
+  list-style: none;
+  font-size: 0.875rem;
+  line-height: 1.8;
+}
+
+.progressList li {
+  color: var(--text);
+}
+
+.alertBadge {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  background: rgba(245, 166, 35, 0.2);
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  color: var(--warning);
+}
+
+/* Guidance panel */
+.guidancePanel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.guidanceSection h3 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.guidanceHint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 1rem;
+  line-height: 1.5;
+}
+
+.noteForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.noteForm select,
+.noteForm textarea,
+.inputRespond input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.notesList, .inputList {
+  list-style: none;
+}
+
+.noteItem {
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.noteItem p {
+  font-size: 0.875rem;
+  margin: 0.35rem 0;
+}
+
+.noteItem time {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.noteTypeBadge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.inputCard {
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.inputOpen {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 1px rgba(245, 166, 35, 0.2);
+}
+
+.inputHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.inputStatus {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.inputQuestion {
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 0.35rem;
+}
+
+.inputContext, .inputOptions {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.inputDefault {
+  font-size: 0.8rem;
+  color: var(--success);
+  margin: 0.5rem 0;
+}
+
+.inputRespond {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.inputRespond input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.inputExpiry {
+  font-size: 0.7rem;
+  color: var(--muted);
+  width: 100%;
+}
+
+.inputAnswer {
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 900px) {
+  .guidancePanel {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1100px) {
   .body { grid-template-columns: 1fr; }
   .sidebar, .events { border: none; border-bottom: 1px solid var(--border); max-height: 300px; }

@@ -70,6 +70,54 @@ export interface Deployment {
   created_at: string;
 }
 
+export type NoteType = "instruction" | "feature" | "scope_out" | "general";
+
+export interface ProjectNote {
+  id: string;
+  project_id: string;
+  content: string;
+  note_type: NoteType;
+  created_at: string;
+}
+
+export interface ProgressEntry {
+  id: string;
+  project_id: string;
+  category: string;
+  title: string;
+  summary: string;
+  detail: string | null;
+  created_at: string;
+}
+
+export interface ProgressDigest {
+  project_id: string;
+  current_state: string;
+  pipeline_running: boolean;
+  entries: ProgressEntry[];
+  summary_lines: string[];
+}
+
+export type InputRequestStatus = "open" | "answered" | "auto_resolved";
+
+export interface InputRequest {
+  id: string;
+  project_id: string;
+  task_id: string | null;
+  agent_id: string;
+  role: string;
+  question: string;
+  context_detail: string;
+  options: string[];
+  default_decision: string;
+  status: InputRequestStatus;
+  human_response: string | null;
+  resolved_decision: string | null;
+  expires_at: string;
+  created_at: string;
+  resolved_at: string | null;
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function headers(): HeadersInit {
@@ -162,6 +210,55 @@ export async function fetchLog(projectId: string, name: string): Promise<string>
   if (!res.ok) throw new Error("Failed to fetch log");
   const data = await res.json();
   return data.content;
+}
+
+export async function fetchProgress(projectId: string): Promise<ProgressDigest> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/progress`, { cache: "no-store", headers: headers() });
+  if (!res.ok) throw new Error("Failed to fetch progress");
+  return res.json();
+}
+
+export async function fetchNotes(projectId: string): Promise<ProjectNote[]> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/notes`, { cache: "no-store", headers: headers() });
+  if (!res.ok) throw new Error("Failed to fetch notes");
+  return res.json();
+}
+
+export async function addNote(
+  projectId: string,
+  content: string,
+  noteType: NoteType = "instruction"
+): Promise<ProjectNote> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/notes`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ content, note_type: noteType }),
+  });
+  if (!res.ok) throw new Error("Failed to add note");
+  return res.json();
+}
+
+export async function fetchInputRequests(projectId: string): Promise<InputRequest[]> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/input-requests`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch input requests");
+  return res.json();
+}
+
+export async function respondToInput(
+  projectId: string,
+  requestId: string,
+  response: string
+): Promise<InputRequest> {
+  const res = await fetch(`${API_URL}/api/projects/${projectId}/input-requests/${requestId}/respond`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ response }),
+  });
+  if (!res.ok) throw new Error("Failed to respond");
+  return res.json();
 }
 
 export function getWebSocketUrl(): string {

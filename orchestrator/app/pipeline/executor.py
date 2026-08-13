@@ -12,6 +12,9 @@ from app.database import SessionLocal
 from app.db_models import DeploymentRow, EventRow, ProjectRow, TaskRow
 from app.events import event_bus
 from app.models import AgentRole, EventType, FactoryEvent, ProjectState, TaskStatus
+from app.services.input_requests import create_input_request
+from app.services.notes import get_notes_for_agents
+from app.services.progress import record_progress
 from app.state_machine import advance_project, block_autonomous, fail_project
 from app.workspace.manager import WorkspaceManager
 
@@ -117,6 +120,21 @@ class PipelineExecutor:
             payload={"success": success, "output": output[:2000]},
         )
 
+    async def _refresh_context(self, session: AsyncSession, project: ProjectRow, context: dict) -> None:
+        context["notes"] = await get_notes_for_agents(session, project.id)
+        context["project_state"] = project.state
+
+    async def _log_progress(
+        self,
+        session: AsyncSession,
+        project_id: UUID,
+        category: str,
+        title: str,
+        summary: str,
+        detail: str | None = None,
+    ) -> None:
+        await record_progress(session, project_id, category, title, summary, detail)
+
     async def run_pipeline(self, project_id: UUID) -> None:
         if project_id in self._running:
             return
@@ -132,7 +150,14 @@ class PipelineExecutor:
                     "name": project.name,
                     "description": project.description,
                     "tests_passed": False,
+                    "notes": [],
                 }
+                await self._refresh_context(session, project, context)
+
+                async def request_input(**kwargs):
+                    return await create_input_request(session, project_id, **kwargs)
+
+                context["request_input"] = request_input
                 meta = self.workspace.load_metadata(project_id)
                 meta["pipeline_started_at"] = datetime.utcnow().isoformat()
                 self.workspace.save_metadata(project_id, meta)
@@ -166,6 +191,7 @@ class PipelineExecutor:
                             break
 
                     success = await stage_fn(session, project, context)
+                    await self._refresh_context(session, project, context)
                     if not success:
                         await self._handle_failure(session, project, context)
                         break
@@ -228,6 +254,7 @@ class PipelineExecutor:
                 break
 
     async def _stage_planning(self, session, project, context) -> bool:
+        await self._refresh_context(session, project, context)
         task = await self.create_task(
             session, project.id, "Architecture planning", project.description, AgentRole.ARCHITECT
         )
@@ -236,10 +263,18 @@ class PipelineExecutor:
         )
         await self.complete_task(session, task, run.success, run.output)
         if run.success:
+            await self._log_progress(
+                session,
+                project.id,
+                "planning",
+                "Architecture planned",
+                "Requirements and architecture documents created",
+            )
             await self.transition(session, project, advance_project(ProjectState.REQUESTED))
         return run.success
 
     async def _stage_implementing(self, session, project, context) -> bool:
+        await self._refresh_context(session, project, context)
         task = await self.create_task(
             session, project.id, "Implement application", project.description, AgentRole.DEVELOPER
         )
@@ -248,6 +283,13 @@ class PipelineExecutor:
         )
         await self.complete_task(session, task, run.success, run.output)
         if run.success:
+            await self._log_progress(
+                session,
+                project.id,
+                "implementation",
+                "Application implemented",
+                run.output[:200],
+            )
             await self.transition(session, project, advance_project(ProjectState.PLANNING))
         return run.success
 
@@ -261,6 +303,13 @@ class PipelineExecutor:
             session, EventType.TEST_COMPLETED, project.id, task.id, payload={"passed": success, "stage": "unit"}
         )
         if success:
+            await self._log_progress(
+                session,
+                project.id,
+                "test",
+                "Unit tests passed",
+                output[:200] if output else "All unit tests green",
+            )
             await self.transition(session, project, advance_project(ProjectState.IMPLEMENTING))
         return success
 
@@ -281,6 +330,13 @@ class PipelineExecutor:
         )
         if success:
             context["tests_passed"] = True
+            await self._log_progress(
+                session,
+                project.id,
+                "test",
+                "Integration tests passed",
+                "API workflow validated end-to-end",
+            )
             await self.transition(session, project, advance_project(ProjectState.UNIT_TESTING))
         return success
 
@@ -308,6 +364,13 @@ class PipelineExecutor:
         if success:
             project.image_tag = tag
             await session.commit()
+            await self._log_progress(
+                session,
+                project.id,
+                "deploy",
+                "Docker image built",
+                f"Tagged as {tag}",
+            )
             await self.transition(session, project, advance_project(ProjectState.INTEGRATION_TESTING))
         return success
 
@@ -353,6 +416,13 @@ class PipelineExecutor:
         )
 
         if success:
+            await self._log_progress(
+                session,
+                project.id,
+                "deploy",
+                "Deployed to staging",
+                f"Available at {staging_url}",
+            )
             await self.transition(session, project, advance_project(ProjectState.DOCKER_BUILD))
         return success
 
@@ -378,10 +448,18 @@ class PipelineExecutor:
             payload={"passed": success, "stage": "smoke"},
         )
         if success:
+            await self._log_progress(
+                session,
+                project.id,
+                "test",
+                "Smoke tests passed",
+                output[:200] if output else "Health check OK on staging",
+            )
             await self.transition(session, project, advance_project(ProjectState.STAGING_DEPLOY))
         return success
 
     async def _stage_review(self, session, project, context) -> bool:
+        await self._refresh_context(session, project, context)
         task = await self.create_task(
             session, project.id, "Code review", "Reviewer agent checklist", AgentRole.REVIEWER
         )
@@ -390,6 +468,13 @@ class PipelineExecutor:
         )
         await self.complete_task(session, task, run.success, run.output)
         if run.success:
+            await self._log_progress(
+                session,
+                project.id,
+                "review",
+                "Review approved",
+                "All acceptance criteria met — ready for production promotion",
+            )
             await self.transition(session, project, advance_project(ProjectState.SMOKE_TESTING))
         return run.success
 
