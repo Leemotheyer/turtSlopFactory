@@ -629,6 +629,168 @@
   color: var(--warning);
 }
 
+/* Cursor account panel */
+.cursorBtn {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cursorConnected {
+  border-color: var(--accent);
+}
+
+.cursorTokenBadge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  background: rgba(91, 141, 239, 0.15);
+  border-radius: 999px;
+  color: var(--accent);
+}
+
+.cursorDropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: 380px;
+  max-height: 520px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 100;
+}
+
+.cursorHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.cursorHeader h3 {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.cursorConnect,
+.cursorBody {
+  padding: 1rem;
+}
+
+.cursorConnect p,
+.cursorNote {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+}
+
+.cursorDocsLink {
+  display: inline-block;
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+  text-decoration: none;
+}
+
+.cursorConnect form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cursorConnect input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.cursorAccount {
+  margin-bottom: 0.75rem;
+}
+
+.cursorAccount strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.cursorKeyName {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.cursorUsageGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.cursorStat {
+  padding: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.cursorStatLabel {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.cursorStatValue {
+  display: block;
+  font-size: 1rem;
+  font-weight: 700;
+  margin-top: 0.15rem;
+}
+
+.cursorAgents h4 {
+  font-size: 0.85rem;
+  margin: 0.75rem 0 0.5rem;
+}
+
+.cursorAgents ul {
+  list-style: none;
+  margin-bottom: 0.75rem;
+}
+
+.cursorAgents li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+
+.cursorAgents a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.cursorAgentMeta {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
 /* Notifications */
 .notifWrapper {
   position: relative;

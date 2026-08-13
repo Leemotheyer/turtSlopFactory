@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import cursor as cursor_api
 from app.api import discovery as discovery_api
 from app.api import events as events_api
 from app.api import feedback as feedback_api
@@ -116,6 +117,7 @@ def create_app() -> FastAPI:
     app.include_router(discovery_api.router, prefix="/api")
     app.include_router(secrets_api.router, prefix="/api")
     app.include_router(notifications_api.router, prefix="/api")
+    app.include_router(cursor_api.router, prefix="/api")
 
     return app
 

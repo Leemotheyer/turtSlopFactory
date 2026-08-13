@@ -3,10 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   addNote,
+  connectCursor,
   createProject,
   deleteSecret,
+  disconnectCursor,
   fetchArtifact,
   fetchDeployments,
+  fetchCursorStatus,
+  fetchCursorUsage,
   fetchDiscovery,
   fetchEvents,
   fetchInputRequests,
@@ -27,6 +31,8 @@ import {
   runPipeline,
   setSecret,
   submitIntake,
+  type CursorConnectionStatus,
+  type CursorUsage,
   type Deployment,
   type DiscoverySession,
   type FactoryEvent,
@@ -115,6 +121,11 @@ export default function DashboardPage() {
   const [secretKey, setSecretKey] = useState("");
   const [secretValue, setSecretValue] = useState("");
   const [secretDesc, setSecretDesc] = useState("");
+  const [showCursor, setShowCursor] = useState(false);
+  const [cursorStatus, setCursorStatus] = useState<CursorConnectionStatus | null>(null);
+  const [cursorUsage, setCursorUsage] = useState<CursorUsage | null>(null);
+  const [cursorApiKey, setCursorApiKey] = useState("");
+  const [cursorLoading, setCursorLoading] = useState(false);
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -165,6 +176,25 @@ export default function DashboardPage() {
       setError(err instanceof Error ? err.message : "Failed to load data");
     }
   }, [selectedId]);
+
+  const loadCursor = useCallback(async () => {
+    try {
+      const [status, usage] = await Promise.all([fetchCursorStatus(), fetchCursorUsage()]);
+      setCursorStatus(status);
+      setCursorUsage(usage);
+    } catch {
+      setCursorStatus({ connected: false });
+      setCursorUsage(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCursor();
+  }, [loadCursor]);
+
+  useEffect(() => {
+    if (showCursor) loadCursor();
+  }, [showCursor, loadCursor]);
 
   useEffect(() => {
     if (detail?.state === "INTAKE_PENDING") {
@@ -349,6 +379,44 @@ export default function DashboardPage() {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   }
 
+  async function handleConnectCursor(e: React.FormEvent) {
+    e.preventDefault();
+    if (!cursorApiKey.trim()) return;
+    setCursorLoading(true);
+    try {
+      const status = await connectCursor(cursorApiKey);
+      setCursorApiKey("");
+      setCursorStatus(status);
+      await loadCursor();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to connect Cursor");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
+  async function handleDisconnectCursor() {
+    setCursorLoading(true);
+    try {
+      await disconnectCursor();
+      setCursorStatus({ connected: false });
+      setCursorUsage(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
+  function formatTokens(n: number | undefined): string {
+    return (n ?? 0).toLocaleString();
+  }
+
+  function formatDollars(n: number | null | undefined): string {
+    if (n == null) return "—";
+    return `$${n.toFixed(2)}`;
+  }
+
   function notificationIcon(type: Notification["type"]): string {
     switch (type) {
       case "env_required": return "🔐";
@@ -457,8 +525,147 @@ export default function DashboardPage() {
           <div className={styles.notifWrapper}>
             <button
               type="button"
+              className={`${styles.cursorBtn} ${cursorStatus?.connected ? styles.cursorConnected : ""}`}
+              onClick={() => {
+                setShowCursor((v) => !v);
+                setShowNotifications(false);
+              }}
+              aria-label="Cursor account"
+            >
+              Cursor
+              {cursorStatus?.connected && cursorUsage?.tokens && (
+                <span className={styles.cursorTokenBadge}>
+                  {formatTokens(cursorUsage.tokens.total_tokens)}
+                </span>
+              )}
+            </button>
+            {showCursor && (
+              <div className={styles.cursorDropdown}>
+                <div className={styles.cursorHeader}>
+                  <h3>Cursor account</h3>
+                  {cursorStatus?.connected && (
+                    <button
+                      type="button"
+                      className={styles.notifMarkAll}
+                      onClick={loadCursor}
+                      disabled={cursorLoading}
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </div>
+                {!cursorStatus?.connected ? (
+                  <div className={styles.cursorConnect}>
+                    <p>
+                      Connect your Cursor API key to see token usage, budget remaining, and cloud agents.
+                    </p>
+                    <a
+                      href="https://cursor.com/dashboard/api"
+                      target="_blank"
+                      rel="noreferrer"
+                      className={styles.cursorDocsLink}
+                    >
+                      Get API key from Cursor Dashboard ↗
+                    </a>
+                    <form onSubmit={handleConnectCursor}>
+                      <input
+                        type="password"
+                        placeholder="crsr_…"
+                        value={cursorApiKey}
+                        onChange={(e) => setCursorApiKey(e.target.value)}
+                        autoComplete="off"
+                        required
+                      />
+                      <button type="submit" className={styles.btnPrimary} disabled={cursorLoading}>
+                        Connect account
+                      </button>
+                    </form>
+                  </div>
+                ) : (
+                  <div className={styles.cursorBody}>
+                    <div className={styles.cursorAccount}>
+                      <strong>{cursorStatus.user_email ?? "Connected"}</strong>
+                      {cursorStatus.api_key_name && (
+                        <span className={styles.cursorKeyName}>{cursorStatus.api_key_name}</span>
+                      )}
+                    </div>
+                    {cursorUsage?.tokens && (
+                      <div className={styles.cursorUsageGrid}>
+                        <div className={styles.cursorStat}>
+                          <span className={styles.cursorStatLabel}>Total tokens</span>
+                          <span className={styles.cursorStatValue}>
+                            {formatTokens(cursorUsage.tokens.total_tokens)}
+                          </span>
+                        </div>
+                        <div className={styles.cursorStat}>
+                          <span className={styles.cursorStatLabel}>Input</span>
+                          <span className={styles.cursorStatValue}>
+                            {formatTokens(cursorUsage.tokens.input_tokens)}
+                          </span>
+                        </div>
+                        <div className={styles.cursorStat}>
+                          <span className={styles.cursorStatLabel}>Output</span>
+                          <span className={styles.cursorStatValue}>
+                            {formatTokens(cursorUsage.tokens.output_tokens)}
+                          </span>
+                        </div>
+                        {cursorUsage.enterprise_billing && (
+                          <>
+                            <div className={styles.cursorStat}>
+                              <span className={styles.cursorStatLabel}>Spent (cycle)</span>
+                              <span className={styles.cursorStatValue}>
+                                {formatDollars((cursorUsage.spend_cents ?? 0) / 100)}
+                              </span>
+                            </div>
+                            <div className={styles.cursorStat}>
+                              <span className={styles.cursorStatLabel}>Remaining</span>
+                              <span className={styles.cursorStatValue}>
+                                {formatDollars(cursorUsage.remaining_budget_dollars)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {cursorUsage?.note && <p className={styles.cursorNote}>{cursorUsage.note}</p>}
+                    {(cursorUsage?.agents?.length ?? 0) > 0 && (
+                      <div className={styles.cursorAgents}>
+                        <h4>Cloud agents</h4>
+                        <ul>
+                          {cursorUsage!.agents!.slice(0, 8).map((agent) => (
+                            <li key={agent.id}>
+                              <a href={agent.url ?? "#"} target="_blank" rel="noreferrer">
+                                {agent.name ?? agent.id}
+                              </a>
+                              <span className={styles.cursorAgentMeta}>
+                                {agent.status} · {formatTokens(agent.total_tokens)} tokens
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className={styles.btnDanger}
+                      onClick={handleDisconnectCursor}
+                      disabled={cursorLoading}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div className={styles.notifWrapper}>
+            <button
+              type="button"
               className={styles.notifBell}
-              onClick={() => setShowNotifications((v) => !v)}
+              onClick={() => {
+                setShowNotifications((v) => !v);
+                setShowCursor(false);
+              }}
               aria-label="Notifications"
             >
               🔔

@@ -436,6 +436,82 @@ export async function deleteSecret(projectId: string, keyName: string): Promise<
   if (!res.ok) throw new Error("Failed to delete secret");
 }
 
+export interface CursorConnectionStatus {
+  connected: boolean;
+  user_email?: string | null;
+  api_key_name?: string | null;
+  masked_api_key?: string | null;
+  enterprise_billing?: boolean;
+  connected_at?: string;
+  last_synced_at?: string | null;
+}
+
+export interface CursorTokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_write_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+}
+
+export interface CursorAgentSummary {
+  id: string;
+  name: string | null;
+  status: string | null;
+  url: string | null;
+  created_at: string | null;
+  total_tokens: number;
+}
+
+export interface CursorUsage {
+  connected: boolean;
+  user_email?: string | null;
+  api_key_name?: string | null;
+  enterprise_billing?: boolean;
+  spend_cents?: number | null;
+  overall_spend_cents?: number | null;
+  spend_limit_dollars?: number | null;
+  remaining_budget_dollars?: number | null;
+  subscription_cycle_start?: string | null;
+  tokens?: CursorTokenUsage;
+  agents?: CursorAgentSummary[];
+  note?: string | null;
+  error?: string;
+}
+
+export async function fetchCursorStatus(): Promise<CursorConnectionStatus> {
+  const res = await fetch(`${API_URL}/api/cursor/status`, { cache: "no-store", headers: headers() });
+  if (!res.ok) throw new Error("Failed to fetch Cursor status");
+  return res.json();
+}
+
+export async function connectCursor(apiKey: string): Promise<CursorConnectionStatus> {
+  const res = await fetch(`${API_URL}/api/cursor/connect`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to connect Cursor");
+  }
+  return res.json();
+}
+
+export async function disconnectCursor(): Promise<void> {
+  const res = await fetch(`${API_URL}/api/cursor/disconnect`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to disconnect Cursor");
+}
+
+export async function fetchCursorUsage(): Promise<CursorUsage> {
+  const res = await fetch(`${API_URL}/api/cursor/usage`, { cache: "no-store", headers: headers() });
+  if (!res.ok) throw new Error("Failed to fetch Cursor usage");
+  return res.json();
+}
+
 export function getWebSocketUrl(): string {
   return process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
 }
