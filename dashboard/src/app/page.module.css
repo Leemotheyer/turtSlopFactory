@@ -1,0 +1,299 @@
+.layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 2rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.statusBadge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.dotOn,
+.dotOff {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dotOn {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+.dotOff {
+  background: var(--danger);
+}
+
+.error {
+  margin: 1rem 2rem 0;
+  padding: 0.75rem 1rem;
+  background: rgba(245, 101, 101, 0.15);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+.main {
+  display: grid;
+  grid-template-columns: 280px 1fr 320px;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar,
+.eventPanel {
+  padding: 1.25rem;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.eventPanel {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.sidebar h2,
+.eventPanel h2 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+
+.projectList {
+  list-style: none;
+  margin-bottom: 2rem;
+}
+
+.projectItem,
+.projectActive {
+  width: 100%;
+  text-align: left;
+  padding: 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  margin-bottom: 0.25rem;
+}
+
+.projectActive {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.projectName {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.statePill {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  color: #000;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.createForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.createForm h3 {
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.createForm input,
+.createForm textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  color: var(--text);
+}
+
+.content {
+  padding: 1.5rem 2rem;
+  overflow-y: auto;
+}
+
+.projectHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+}
+
+.projectHeader h2 {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btnPrimary,
+.btnSecondary {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btnSecondary {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+
+.card h3 {
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+  color: var(--muted);
+}
+
+.pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pipelineStep,
+.pipelineStepActive {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+.pipelineStepActive {
+  background: rgba(91, 141, 239, 0.2);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.taskList {
+  list-style: none;
+}
+
+.taskItem {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.taskTitle {
+  display: block;
+  font-size: 0.875rem;
+}
+
+.taskMeta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+}
+
+.eventList {
+  list-style: none;
+}
+
+.eventItem {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+
+.eventType {
+  display: block;
+  color: var(--accent);
+  font-family: monospace;
+  margin-bottom: 0.15rem;
+}
+
+.eventPayload {
+  display: block;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.eventTime {
+  display: block;
+  color: var(--muted);
+  margin-top: 0.15rem;
+  opacity: 0.7;
+}
+
+@media (max-width: 1100px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar,
+  .eventPanel {
+    border: none;
+    border-bottom: 1px solid var(--border);
+  }
+}

@@ -1,0 +1,118 @@
+from datetime import datetime
+from enum import StrEnum
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, Field
+
+
+class ProjectState(StrEnum):
+    REQUESTED = "REQUESTED"
+    PLANNING = "PLANNING"
+    IMPLEMENTING = "IMPLEMENTING"
+    UNIT_TESTING = "UNIT_TESTING"
+    INTEGRATION_TESTING = "INTEGRATION_TESTING"
+    DOCKER_BUILD = "DOCKER_BUILD"
+    STAGING_DEPLOY = "STAGING_DEPLOY"
+    SMOKE_TESTING = "SMOKE_TESTING"
+    REVIEW = "REVIEW"
+    PRODUCTION = "PRODUCTION"
+    DIAGNOSING = "DIAGNOSING"
+    FIXING = "FIXING"
+    AUTONOMOUSLY_BLOCKED = "AUTONOMOUSLY_BLOCKED"
+
+
+class AgentRole(StrEnum):
+    ARCHITECT = "architect"
+    DEVELOPER = "developer"
+    TESTER = "tester"
+    REVIEWER = "reviewer"
+
+
+class TaskStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    WAITING = "WAITING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str
+    repo_url: str | None = None
+
+
+class Project(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str
+    description: str
+    repo_url: str | None = None
+    state: ProjectState = ProjectState.REQUESTED
+    branch: str = "main"
+    image_tag: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TaskCreate(BaseModel):
+    title: str
+    description: str
+    role: AgentRole = AgentRole.DEVELOPER
+
+
+class Task(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    title: str
+    description: str
+    role: AgentRole
+    status: TaskStatus = TaskStatus.QUEUED
+    attempt: int = 1
+    max_attempts: int = 5
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EventType(StrEnum):
+    STATE_TRANSITION = "state.transition"
+    AGENT_COMMAND_STARTED = "agent.command.started"
+    AGENT_COMMAND_OUTPUT = "agent.command.output"
+    AGENT_COMMAND_FINISHED = "agent.command.finished"
+    TEST_COMPLETED = "test.completed"
+    TASK_STATUS_CHANGED = "task.status.changed"
+    DEPLOYMENT_STARTED = "deployment.started"
+    DEPLOYMENT_FINISHED = "deployment.finished"
+
+
+class FactoryEvent(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    type: EventType
+    project_id: UUID | None = None
+    task_id: UUID | None = None
+    agent_id: str | None = None
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Valid forward transitions for the happy path
+FORWARD_TRANSITIONS: dict[ProjectState, ProjectState] = {
+    ProjectState.REQUESTED: ProjectState.PLANNING,
+    ProjectState.PLANNING: ProjectState.IMPLEMENTING,
+    ProjectState.IMPLEMENTING: ProjectState.UNIT_TESTING,
+    ProjectState.UNIT_TESTING: ProjectState.INTEGRATION_TESTING,
+    ProjectState.INTEGRATION_TESTING: ProjectState.DOCKER_BUILD,
+    ProjectState.DOCKER_BUILD: ProjectState.STAGING_DEPLOY,
+    ProjectState.STAGING_DEPLOY: ProjectState.SMOKE_TESTING,
+    ProjectState.SMOKE_TESTING: ProjectState.REVIEW,
+    ProjectState.REVIEW: ProjectState.PRODUCTION,
+}
+
+FAILURE_TRANSITIONS: dict[ProjectState, ProjectState] = {
+    ProjectState.UNIT_TESTING: ProjectState.DIAGNOSING,
+    ProjectState.INTEGRATION_TESTING: ProjectState.DIAGNOSING,
+    ProjectState.DOCKER_BUILD: ProjectState.DIAGNOSING,
+    ProjectState.STAGING_DEPLOY: ProjectState.DIAGNOSING,
+    ProjectState.SMOKE_TESTING: ProjectState.DIAGNOSING,
+    ProjectState.REVIEW: ProjectState.DIAGNOSING,
+}
