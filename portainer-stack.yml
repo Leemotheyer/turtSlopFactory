@@ -63,7 +63,7 @@ services:
       - workspace_data:/data/workspaces
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "8081-8099:8081-8099"
+      - "9010-9039:9010-9039"
     healthcheck:
       test:
         [
@@ -92,7 +92,7 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8044:80"
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile

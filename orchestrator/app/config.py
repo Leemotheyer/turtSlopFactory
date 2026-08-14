@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     intake_form_timeout_hours: int = 72  # Auto-submit intake with defaults after 72h
     secrets_encryption_key: str | None = None  # Fernet key or passphrase; required in production
     preview_host: str = "localhost"  # Hostname used in live preview URLs shown in the dashboard
-    preview_port_start: int = 8081
-    preview_port_end: int = 8999
+    preview_port_start: int = 9010
+    preview_port_end: int = 9039
     # Agent backend: cursor_cloud (default), cursor_local, or local (deterministic scaffold)
     agent_backend: str = "cursor_cloud"
     cursor_api_key: str | None = None  # Fallback when no dashboard connection
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Deployment — optional overrides; most settings are auto or configured in the dashboard
     public_host: str | None = None  # Hostname for preview links and public API URLs
     api_port: int = 8000
-    dashboard_port: int = 3000
+    dashboard_port: int = 8044
     cors_allow_all: bool = True  # Allow any origin when True (simple self-hosted deploy)
     trust_proxy_headers: bool = True  # Trust X-Forwarded-* from gateway (Caddy)
 

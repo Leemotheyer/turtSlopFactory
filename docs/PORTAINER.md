@@ -5,7 +5,7 @@
 1. **Stacks** → **Add stack**
 2. Paste the contents of [`portainer-stack.yml`](../portainer-stack.yml) into the **Web editor**
 3. **Deploy** — no environment variables, no bind mounts
-4. Open `http://<your-server-ip>`
+4. Open `http://<your-server-ip>:8044`
 
 The stack includes:
 
@@ -13,7 +13,7 @@ The stack includes:
 - **factory** — API + worker combined, with Docker socket for pipeline builds
 - **dashboard**, **postgres**, **redis**
 
-Live previews: `http://<server-ip>:8081` … `:8099`
+Live previews: `http://<server-ip>:9010` … `:9039`
 
 ## Git repository method
 
@@ -27,8 +27,8 @@ Requires the repo checkout on the Portainer host (for `deploy/Caddyfile`). Use t
 ## Requirements
 
 - **Docker Standalone** endpoint (worker needs `/var/run/docker.sock`)
-- Port **80** available (or set `HTTP_PORT` in compose)
-- Ports **8081–8099** for live previews
+- Port **8044** available (or set `HTTP_PORT` in compose)
+- Ports **9010–9039** for live previews
 
 ## GHCR authentication
 

@@ -1,4 +1,4 @@
-# Single-port gateway — dashboard + API on :80
+# Single-port gateway — dashboard + API (host port 8044 → container :80)
 # Factory API and worker run on factory:8000 (internal only).
 
 :80 {

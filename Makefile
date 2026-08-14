@@ -1,6 +1,6 @@
 .PHONY: up down dev logs test build install
 
-# Production deploy (pull GHCR images, single URL on :80)
+# Production deploy (pull GHCR images, single URL on :8044)
 up:
 	docker compose pull
 	docker compose up -d

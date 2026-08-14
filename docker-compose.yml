@@ -1,8 +1,8 @@
 # turtSlopFactory — recommended deploy (zero config)
 #   docker compose up -d
-#   open http://localhost
+#   open http://localhost:8044
 #
-# One URL (port 80): dashboard + API. Live previews on ports 8081–8099.
+# One URL (port 8044): dashboard + API. Live previews on ports 9010–9039.
 # Optional dev build: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 services:
@@ -53,7 +53,7 @@ services:
       - workspace_data:/data/workspaces
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "8081-8099:8081-8099"
+      - "9010-9039:9010-9039"
     healthcheck:
       test:
         [
@@ -82,7 +82,7 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-80}:80"
+      - "${HTTP_PORT:-8044}:80"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:

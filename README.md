@@ -8,7 +8,7 @@ A self-hosted **agentic software factory**: give it a project specification, and
 
 ```bash
 docker compose up -d
-# open http://localhost
+# open http://localhost:8044
 ```
 
 Or use the install script:
@@ -19,8 +19,8 @@ curl -fsSL https://raw.githubusercontent.com/Leemotheyer/turtSlopFactory/main/in
 
 | URL | Purpose |
 |-----|---------|
-| http://localhost | Dashboard + API (single port via gateway) |
-| http://localhost:8081–8099 | Live project previews |
+| http://localhost:8044 | Dashboard + API (single port via gateway) |
+| http://localhost:9010–9039 | Live project previews |
 
 Everything else — encryption key, hostname, Cursor, API key — is auto-configured or set in the dashboard.
 
@@ -28,7 +28,7 @@ Everything else — encryption key, hostname, Cursor, API key — is auto-config
 
 | Container | Role |
 |-----------|------|
-| **gateway** (Caddy) | Serves dashboard + proxies `/api` and `/ws` on port 80 |
+| **gateway** (Caddy) | Serves dashboard + proxies `/api` and `/ws` on port 8044 |
 | **factory** | API + pipeline worker in one container (Docker socket for builds) |
 | **dashboard** | Next.js UI |
 | **postgres** / **redis** | Internal data stores |
@@ -68,8 +68,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ## Optional env overrides
 
 ```env
-HTTP_PORT=8080    # if port 80 is taken
-IMAGE_TAG=latest  # pin GHCR release
+HTTP_PORT=8044      # default; change if 8044 is taken
+IMAGE_TAG=latest    # pin GHCR release
 PUBLIC_HOST=factory.example.com
 ```
 
