@@ -92,6 +92,7 @@ const STATE_COLORS: Record<string, string> = {
 };
 
 type Tab = "overview" | "intake" | "guidance" | "secrets" | "tasks" | "artifacts" | "deployments" | "logs";
+type MobilePanel = "projects" | "status" | "activity";
 
 const NOTE_TYPES: { value: NoteType; label: string }[] = [
   { value: "instruction", label: "Instruction" },
@@ -139,8 +140,17 @@ export default function DashboardPage() {
   const [setupPreviewHost, setSetupPreviewHost] = useState("");
   const [setupApiKey, setSetupApiKey] = useState("");
   const [instanceApiKey, setInstanceApiKey] = useState("");
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("status");
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function selectProject(id: string) {
+    setSelectedId(id);
+    setTab("overview");
+    setArtifactView(null);
+    setLogView(null);
+    setMobilePanel("status");
+  }
 
   const loadSetup = useCallback(async () => {
     await ensurePublicConfig();
@@ -409,7 +419,10 @@ export default function DashboardPage() {
       );
     }
     setShowNotifications(false);
-    if (notif.project_id) setSelectedId(notif.project_id);
+    if (notif.project_id) {
+      setSelectedId(notif.project_id);
+      setMobilePanel("status");
+    }
     if (notif.action === "secrets") setTab("secrets");
     else if (notif.action === "guidance") setTab("guidance");
     else if (notif.action === "intake") setTab("intake");
@@ -889,6 +902,18 @@ export default function DashboardPage() {
         </div>
       </header>
 
+      {(showCursor || showNotifications) && (
+        <button
+          type="button"
+          className={styles.dropdownBackdrop}
+          aria-label="Close menu"
+          onClick={() => {
+            setShowCursor(false);
+            setShowNotifications(false);
+          }}
+        />
+      )}
+
       {error && (
         <div className={styles.error} onClick={() => setError(null)}>
           {error} <span className={styles.dismiss}>✕</span>
@@ -932,7 +957,9 @@ export default function DashboardPage() {
       )}
 
       <div className={styles.body}>
-        <aside className={styles.sidebar}>
+        <aside
+          className={`${styles.sidebar} ${mobilePanel !== "projects" ? styles.mobileHidden : ""}`}
+        >
           <div className={styles.sidebarHeader}>
             <h2>Projects</h2>
           </div>
@@ -941,12 +968,7 @@ export default function DashboardPage() {
               <li key={p.id}>
                 <button
                   className={p.id === selectedId ? styles.projectActive : styles.projectBtn}
-                  onClick={() => {
-                    setSelectedId(p.id);
-                    setTab("overview");
-                    setArtifactView(null);
-                    setLogView(null);
-                  }}
+                  onClick={() => selectProject(p.id)}
                 >
                   <span className={styles.projectName}>{p.name}</span>
                   <span className={styles.projectMeta}>
@@ -997,7 +1019,9 @@ export default function DashboardPage() {
           </form>
         </aside>
 
-        <main className={styles.main}>
+        <main
+          className={`${styles.main} ${mobilePanel !== "status" ? styles.mobileHidden : ""}`}
+        >
           {detail ? (
             <>
               <div className={styles.projectTop}>
@@ -1466,7 +1490,9 @@ export default function DashboardPage() {
           )}
         </main>
 
-        <aside className={styles.events}>
+        <aside
+          className={`${styles.events} ${mobilePanel !== "activity" ? styles.mobileHidden : ""}`}
+        >
           <h2>Live events</h2>
           <ul>
             {[...events].reverse().slice(0, 50).map((ev) => (
@@ -1482,6 +1508,42 @@ export default function DashboardPage() {
           </ul>
         </aside>
       </div>
+
+      <nav className={styles.mobileNav} aria-label="Main navigation">
+        <button
+          type="button"
+          className={mobilePanel === "projects" ? styles.mobileNavActive : styles.mobileNavBtn}
+          onClick={() => setMobilePanel("projects")}
+        >
+          <span className={styles.mobileNavIcon}>📁</span>
+          <span>Projects</span>
+          {projects.length > 0 && (
+            <span className={styles.mobileNavBadge}>{projects.length}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={mobilePanel === "status" ? styles.mobileNavActive : styles.mobileNavBtn}
+          onClick={() => setMobilePanel("status")}
+        >
+          <span className={styles.mobileNavIcon}>📊</span>
+          <span>{detail ? detail.name : "Status"}</span>
+          {(openInputs.length > 0 || pendingSecrets > 0) && (
+            <span className={styles.mobileNavAlert}>!</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={mobilePanel === "activity" ? styles.mobileNavActive : styles.mobileNavBtn}
+          onClick={() => setMobilePanel("activity")}
+        >
+          <span className={styles.mobileNavIcon}>⚡</span>
+          <span>Activity</span>
+          {events.length > 0 && (
+            <span className={styles.mobileNavBadge}>{events.length > 99 ? "99+" : events.length}</span>
+          )}
+        </button>
+      </nav>
     </div>
   );
 }
