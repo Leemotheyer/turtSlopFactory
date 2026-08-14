@@ -44,7 +44,9 @@ def resolve_request_context(request: Request | None) -> tuple[str, str, str, boo
     scheme = request.url.scheme
     hostname, port = _split_host_port(host_header)
 
-    if port in (80, 443, None) and hostname not in ("localhost", "127.0.0.1"):
+    # Standard HTTP(S) ports or any non-API port (e.g. 8044) — single-origin gateway deploy
+    is_gateway_port = port in (80, 443, None) or (port is not None and port != settings.api_port)
+    if is_gateway_port and hostname not in ("localhost", "127.0.0.1"):
         api_url = f"{scheme}://{host_header}".rstrip("/")
         ws_scheme = "wss" if scheme == "https" else "ws"
         return hostname, api_url, f"{ws_scheme}://{host_header}".rstrip("/"), True

@@ -223,34 +223,63 @@ export interface SetupStatus extends PublicConfig {
 
 let publicConfig: PublicConfig | null = null;
 
+function browserOrigin(): string {
+  if (typeof window === "undefined") return "http://localhost:8000";
+  return window.location.origin;
+}
+
+/** Drop stale URLs that point at the internal API port (not exposed in gateway deploy). */
+function sanitizeApiUrl(url: string): string {
+  const origin = browserOrigin();
+  try {
+    const parsed = new URL(url);
+    const originParsed = new URL(origin);
+    if (
+      parsed.hostname === originParsed.hostname &&
+      parsed.port === "8000" &&
+      originParsed.port &&
+      originParsed.port !== "8000"
+    ) {
+      return origin;
+    }
+  } catch {
+    return origin;
+  }
+  return url;
+}
+
 async function discoverBootstrapUrl(): Promise<string> {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window === "undefined") return "http://localhost:8000";
-  const saved = localStorage.getItem("factory_api_url");
-  if (saved) return saved;
 
   try {
-    const origin = window.location.origin;
+    const origin = browserOrigin();
     const res = await fetch(`${origin}/api/settings/public`, { cache: "no-store" });
     if (res.ok) {
       const cfg = (await res.json()) as PublicConfig;
       publicConfig = cfg;
-      localStorage.setItem("factory_api_url", cfg.api_url);
-      return cfg.api_url;
+      const apiUrl = sanitizeApiUrl(cfg.api_url || origin);
+      publicConfig.api_url = apiUrl;
+      publicConfig.ws_url = cfg.ws_url || apiUrl.replace(/^http/, "ws");
+      localStorage.setItem("factory_api_url", apiUrl);
+      return apiUrl;
     }
   } catch {
-    /* not behind gateway — try direct API port */
+    /* fall through */
   }
 
-  return `${window.location.protocol}//${window.location.hostname}:8000`;
+  const saved = localStorage.getItem("factory_api_url");
+  if (saved) return sanitizeApiUrl(saved);
+
+  return browserOrigin();
 }
 
 function apiUrl(): string {
-  if (publicConfig?.api_url) return publicConfig.api_url;
+  if (publicConfig?.api_url) return sanitizeApiUrl(publicConfig.api_url);
   if (typeof window !== "undefined") {
     const saved = localStorage.getItem("factory_api_url");
-    if (saved) return saved;
-    return window.location.origin;
+    if (saved) return sanitizeApiUrl(saved);
+    return browserOrigin();
   }
   return "http://localhost:8000";
 }
@@ -261,22 +290,29 @@ export async function ensurePublicConfig(): Promise<PublicConfig> {
   try {
     const res = await fetch(`${bootstrap}/api/settings/public`, { cache: "no-store" });
     if (res.ok) {
-      publicConfig = await res.json();
+      const cfg = (await res.json()) as PublicConfig;
+      const apiUrlResolved = sanitizeApiUrl(cfg.api_url || bootstrap);
+      publicConfig = {
+        ...cfg,
+        api_url: apiUrlResolved,
+        ws_url: cfg.ws_url || apiUrlResolved.replace(/^http/, "ws"),
+      };
       if (typeof window !== "undefined") {
-        localStorage.setItem("factory_api_url", publicConfig!.api_url);
+        localStorage.setItem("factory_api_url", publicConfig.api_url);
       }
-      return publicConfig!;
+      return publicConfig;
     }
   } catch {
     /* fall through */
   }
+  const origin = browserOrigin();
   publicConfig = {
-    api_url: bootstrap,
-    ws_url: bootstrap.replace(/^http/, "ws"),
+    api_url: sanitizeApiUrl(bootstrap),
+    ws_url: sanitizeApiUrl(bootstrap).replace(/^http/, "ws"),
     preview_host: typeof window !== "undefined" ? window.location.hostname : "localhost",
     setup_complete: true,
     api_key_required: false,
-    gateway_mode: bootstrap === (typeof window !== "undefined" ? window.location.origin : ""),
+    gateway_mode: bootstrap === origin,
   };
   return publicConfig;
 }

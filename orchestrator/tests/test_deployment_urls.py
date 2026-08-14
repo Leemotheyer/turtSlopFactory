@@ -27,3 +27,16 @@ def test_resolve_direct_localhost():
     assert host == "localhost"
     assert api_url == "http://localhost:8000"
     assert gateway is False
+
+
+def test_resolve_gateway_nonstandard_port():
+    """Docker deploy on :8044 must not return internal API port :8000."""
+    request = MagicMock()
+    request.headers = {"host": "192.168.1.204:8044"}
+    request.url.scheme = "http"
+
+    host, api_url, ws_url, gateway = resolve_request_context(request)
+    assert host == "192.168.1.204"
+    assert api_url == "http://192.168.1.204:8044"
+    assert ws_url == "ws://192.168.1.204:8044"
+    assert gateway is True
