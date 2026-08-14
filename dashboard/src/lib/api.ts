@@ -782,7 +782,13 @@ export async function connectCursor(apiKey: string): Promise<CursorConnectionSta
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail ?? "Failed to connect Cursor");
+    const detail = (err as { detail?: string }).detail;
+    if (res.status === 401) {
+      throw new Error(
+        detail ?? "API key required — set your factory API key in the Cursor menu before connecting"
+      );
+    }
+    throw new Error(detail ?? "Failed to connect Cursor");
   }
   return res.json();
 }
