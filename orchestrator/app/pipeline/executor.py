@@ -20,7 +20,8 @@ from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
 from app.services.secrets import get_env_status_for_agents, get_secrets_for_runtime, request_env_var
 from app.services.factory_settings import get_preview_host
-from app.services.work_planner import plan_parallel_work, work_plan_to_dict
+from app.services.agent_concurrency import concurrency_budget_to_dict, resolve_concurrency_budget
+from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
 from app.state_machine import advance_project, block_autonomous, fail_project
 from app.services.preview import (
     allocate_preview_port,
@@ -385,6 +386,18 @@ class PipelineExecutor:
                 await self._handle_failure(session, project, context)
                 break
 
+    async def _build_work_plan(self, session, project, context: dict) -> tuple[list, dict]:
+        budget = await resolve_concurrency_budget(session)
+        raw_units = plan_parallel_work(context.get("notes", []), project.description)
+        units = optimize_work_units(raw_units, budget.max_parallel)
+        plan = work_plan_to_dict(units, concurrency_budget_to_dict(budget))
+        self.workspace.append_log(
+            project.id,
+            "pipeline.log",
+            f"[concurrency] {budget.strategy}",
+        )
+        return units, plan, budget
+
     async def _stage_planning(self, session, project, context) -> bool:
         await self._refresh_context(session, project, context)
         task = await self.create_task(
@@ -395,8 +408,7 @@ class PipelineExecutor:
         )
         await self.complete_task(session, task, run.success, run.output)
         if run.success:
-            units = plan_parallel_work(context.get("notes", []), project.description)
-            plan = work_plan_to_dict(units)
+            units, plan, budget = await self._build_work_plan(session, project, context)
             self.workspace.write_artifact(
                 project.id, "work-plan.json", json.dumps(plan, indent=2)
             )
@@ -406,7 +418,10 @@ class PipelineExecutor:
                 project.id,
                 "planning",
                 "Architecture planned",
-                f"Requirements ready — {len(units)} parallel work streams planned",
+                (
+                    f"Requirements ready — {len(units)} work stream(s), "
+                    f"up to {budget.max_parallel} parallel agent(s)"
+                ),
             )
             await self.transition(session, project, advance_project(ProjectState.PLANNING))
         return run.success
@@ -414,8 +429,8 @@ class PipelineExecutor:
     async def _run_parallel_developers(
         self, session, project, context: dict
     ) -> tuple[bool, str]:
-        units = plan_parallel_work(context.get("notes", []), project.description)
-        context["work_plan"] = work_plan_to_dict(units)
+        units, plan, budget = await self._build_work_plan(session, project, context)
+        context["work_plan"] = plan
 
         task_rows: list[tuple] = []
         for unit in units:
@@ -436,25 +451,30 @@ class PipelineExecutor:
                 "command": "parallel_implement",
                 "streams": [u.stream for u in units],
                 "count": len(units),
+                "max_parallel": budget.max_parallel,
+                "active_cursor_agents": budget.active_cursor_agents,
             },
         )
 
+        semaphore = asyncio.Semaphore(budget.max_parallel)
+
         async def run_unit(unit, task_row: TaskRow) -> tuple[TaskRow, bool, str]:
-            unit_context = {
-                **context,
-                "work_stream": unit.stream,
-                "work_description": unit.description,
-                "feature_id": unit.feature_id,
-                "feature_content": unit.feature_content,
-            }
-            run = await self.runner.run(
-                AgentRole.DEVELOPER,
-                project.id,
-                task_row.id,
-                str(self.workspace.repo_dir(project.id)),
-                unit_context,
-            )
-            return task_row, run.success, run.output
+            async with semaphore:
+                unit_context = {
+                    **context,
+                    "work_stream": unit.stream,
+                    "work_description": unit.description,
+                    "feature_id": unit.feature_id,
+                    "feature_content": unit.feature_content,
+                }
+                run = await self.runner.run(
+                    AgentRole.DEVELOPER,
+                    project.id,
+                    task_row.id,
+                    str(self.workspace.repo_dir(project.id)),
+                    unit_context,
+                )
+                return task_row, run.success, run.output
 
         results = await asyncio.gather(*[run_unit(u, t) for u, t in task_rows])
 
@@ -476,12 +496,18 @@ class PipelineExecutor:
             context["last_failure"] = output
             return False
 
-        stream_count = len(context.get("work_plan", []))
+        stream_count = len(context.get("work_plan", {}).get("units", []))
+        max_parallel = (context.get("work_plan", {}).get("concurrency") or {}).get("max_parallel")
+        parallel_label = (
+            f"Parallel implementation ({stream_count} streams, max {max_parallel} concurrent)"
+            if max_parallel
+            else f"Parallel implementation ({stream_count} agents)"
+        )
         await self._log_progress(
             session,
             project.id,
             "implementation",
-            f"Parallel implementation ({stream_count} agents)",
+            parallel_label,
             output[:300],
         )
         first_preview = get_preview_port(self.workspace.load_metadata(project.id)) is None

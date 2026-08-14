@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.agent_concurrency import concurrency_budget_to_dict, resolve_concurrency_budget
 from app.services.cursor_client import CursorApiError
 from app.services.cursor_connection import (
     connect_cursor,
@@ -25,8 +26,9 @@ class CursorConnectRequest(BaseModel):
 @router.get("/status")
 async def cursor_status(db: AsyncSession = Depends(get_db)) -> dict:
     status = await get_connection_status(db)
-    settings = await get_factory_settings(db)
-    return {**status, **settings}
+    factory = await get_factory_settings(db)
+    budget = await resolve_concurrency_budget(db)
+    return {**status, **factory, "concurrency": concurrency_budget_to_dict(budget)}
 
 
 @router.post("/connect")

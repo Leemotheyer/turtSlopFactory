@@ -1481,6 +1481,12 @@
   white-space: nowrap;
 }
 
+.concurrencySummary {
+  font-size: 0.85rem;
+  margin: 0.15rem 0 0.35rem;
+  color: var(--text);
+}
+
 @media (max-width: 900px) {
   .repoForm {
     grid-template-columns: 1fr;

@@ -80,6 +80,8 @@ async def _ensure_factory_settings_columns() -> None:
         "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS encrypted_api_key TEXT",
         "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN DEFAULT FALSE",
         "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS agent_model VARCHAR(128)",
+        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS max_parallel_agents INTEGER",
+        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS cursor_concurrent_limit INTEGER",
     ]
     async with engine.begin() as conn:
         for stmt in statements:

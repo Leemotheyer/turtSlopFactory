@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     cursor_agent_model: str = "composer-2"
     cursor_cloud_poll_seconds: float = 5.0
     cursor_cloud_timeout_seconds: int = 3600
+    # Parallel agent limits — factory stays under Cursor subscription concurrent agent caps
+    max_parallel_agents: int = 4
+    cursor_concurrent_agent_limit: int = 8  # Typical Pro plan; override via dashboard or env
+    cursor_agent_headroom: int = 2  # Reserve slots for agents you start outside the factory
     # Deployment — optional overrides; most settings are auto or configured in the dashboard
     public_host: str | None = None  # Hostname for preview links and public API URLs
     api_port: int = 8000

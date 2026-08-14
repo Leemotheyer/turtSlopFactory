@@ -62,13 +62,65 @@ def plan_parallel_work(notes: list[dict], description: str = "") -> list[WorkUni
     return units
 
 
-def work_plan_to_dict(units: list[WorkUnit]) -> list[dict]:
-    return [
-        {
-            "stream": u.stream,
-            "title": u.title,
-            "description": u.description,
-            "feature_id": u.feature_id,
-        }
-        for u in units
-    ]
+def work_plan_to_dict(units: list[WorkUnit], concurrency: dict | None = None) -> dict:
+    payload: dict = {
+        "units": [
+            {
+                "stream": u.stream,
+                "title": u.title,
+                "description": u.description,
+                "feature_id": u.feature_id,
+            }
+            for u in units
+        ]
+    }
+    if concurrency:
+        payload["concurrency"] = concurrency
+    return payload
+
+
+def _batch_list(items: list[WorkUnit], batch_count: int) -> list[list[WorkUnit]]:
+    if batch_count <= 0:
+        return [items]
+    batches: list[list[WorkUnit]] = [[] for _ in range(batch_count)]
+    for index, item in enumerate(items):
+        batches[index % batch_count].append(item)
+    return [batch for batch in batches if batch]
+
+
+def optimize_work_units(units: list[WorkUnit], max_parallel: int) -> list[WorkUnit]:
+    """Consolidate work when the plan would queue too many agents."""
+    if max_parallel < 1:
+        max_parallel = 1
+    if len(units) <= max_parallel * 2:
+        return units
+
+    backends = [u for u in units if u.stream == "backend"]
+    frontends = [u for u in units if u.stream == "frontend"]
+    features = [u for u in units if u.stream == "feature"]
+
+    result: list[WorkUnit] = []
+    if backends:
+        result.append(backends[0])
+    if frontends:
+        result.append(frontends[0])
+
+    feature_slots = max(1, max_parallel - len(result))
+    if not features:
+        return result
+
+    for index, batch in enumerate(_batch_list(features, feature_slots)):
+        if len(batch) == 1:
+            result.append(batch[0])
+            continue
+        contents = [f.feature_content or f.description for f in batch]
+        result.append(
+            WorkUnit(
+                stream="feature",
+                title=f"Feature batch ({len(batch)} items)",
+                description="Implement the following features:\n" + "\n".join(f"- {c}" for c in contents),
+                feature_id=f"batch-{index}",
+                feature_content="\n".join(contents),
+            )
+        )
+    return result

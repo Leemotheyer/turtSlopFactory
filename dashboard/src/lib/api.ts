@@ -616,6 +616,16 @@ export async function deleteSecret(projectId: string, keyName: string): Promise<
   if (!res.ok) throw new Error("Failed to delete secret");
 }
 
+export interface ConcurrencyBudget {
+  max_parallel: number;
+  active_cursor_agents: number;
+  cursor_slot_limit: number;
+  available_cursor_slots: number;
+  backend: AgentBackend;
+  factory_cap: number;
+  strategy: string;
+}
+
 export interface CursorConnectionStatus {
   connected: boolean;
   user_email?: string | null;
@@ -630,6 +640,9 @@ export interface CursorConnectionStatus {
   agent_model?: string;
   default_agent_model?: string;
   cursor_model?: string;
+  max_parallel_agents?: number;
+  cursor_concurrent_limit?: number;
+  concurrency?: ConcurrencyBudget;
 }
 
 export interface CursorModel {

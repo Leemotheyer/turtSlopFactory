@@ -50,6 +50,20 @@ async def get_agent_model(session: AsyncSession) -> str:
     return row.agent_model or settings.cursor_agent_model
 
 
+async def get_max_parallel_agents(session: AsyncSession) -> int:
+    row = await get_or_create_settings_row(session)
+    if row.max_parallel_agents is not None and row.max_parallel_agents > 0:
+        return row.max_parallel_agents
+    return settings.max_parallel_agents
+
+
+async def get_cursor_concurrent_limit(session: AsyncSession) -> int:
+    row = await get_or_create_settings_row(session)
+    if row.cursor_concurrent_limit is not None and row.cursor_concurrent_limit > 0:
+        return row.cursor_concurrent_limit
+    return settings.cursor_concurrent_agent_limit
+
+
 async def set_agent_backend(session: AsyncSession, backend: str) -> dict:
     if backend not in VALID_AGENT_BACKENDS:
         raise ValueError(f"agent_backend must be one of: {', '.join(sorted(VALID_AGENT_BACKENDS))}")
@@ -131,6 +145,8 @@ async def get_setup_status(session: AsyncSession, request: Request | None = None
         "agent_backend": await get_agent_backend(session),
         "valid_backends": sorted(VALID_AGENT_BACKENDS),
         "agent_model": await get_agent_model(session),
+        "max_parallel_agents": await get_max_parallel_agents(session),
+        "cursor_concurrent_limit": await get_cursor_concurrent_limit(session),
         "auto_configured": {
             "encryption_key": not bool(settings.secrets_encryption_key),
             "database": True,
@@ -147,6 +163,10 @@ async def get_factory_settings(session: AsyncSession, request: Request | None = 
         "valid_backends": status["valid_backends"],
         "agent_model": await get_agent_model(session),
         "default_agent_model": settings.cursor_agent_model,
+        "max_parallel_agents": await get_max_parallel_agents(session),
+        "default_max_parallel_agents": settings.max_parallel_agents,
+        "cursor_concurrent_limit": await get_cursor_concurrent_limit(session),
+        "default_cursor_concurrent_limit": settings.cursor_concurrent_agent_limit,
         "cursor_model": await get_agent_model(session),
         "preview_host": status["preview_host"],
         "setup_complete": status["setup_complete"],

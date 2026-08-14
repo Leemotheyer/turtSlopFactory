@@ -94,6 +94,8 @@ class FactorySettingsRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     agent_backend: Mapped[str] = mapped_column(String(32), nullable=False, default="cursor_cloud")
     agent_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    max_parallel_agents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cursor_concurrent_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preview_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     setup_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

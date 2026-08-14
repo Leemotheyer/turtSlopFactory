@@ -852,6 +852,23 @@ export default function DashboardPage() {
                           : ""}
                   </p>
                 </div>
+                {cursorStatus?.concurrency && (
+                  <div className={styles.cursorBackend}>
+                    <label>Parallel agents</label>
+                    <p className={styles.concurrencySummary}>
+                      Up to <strong>{cursorStatus.concurrency.max_parallel}</strong> factory agent
+                      {cursorStatus.concurrency.max_parallel === 1 ? "" : "s"} at a time
+                      {cursorStatus.concurrency.backend === "cursor_cloud" && (
+                        <>
+                          {" "}
+                          · {cursorStatus.concurrency.active_cursor_agents}/
+                          {cursorStatus.concurrency.cursor_slot_limit} Cursor slots in use
+                        </>
+                      )}
+                    </p>
+                    <p className={styles.cursorBackendHint}>{cursorStatus.concurrency.strategy}</p>
+                  </div>
+                )}
                 <div className={styles.cursorDeploy}>
                   <h4>Deployment</h4>
                   <label>
@@ -1628,7 +1645,10 @@ export default function DashboardPage() {
                 <div className={styles.table}>
                   {runningTasks.length > 0 && (
                     <p className={styles.parallelHint}>
-                      {runningTasks.length} agent{runningTasks.length > 1 ? "s" : ""} running in parallel
+                      {runningTasks.length} agent{runningTasks.length > 1 ? "s" : ""} running
+                      {cursorStatus?.concurrency
+                        ? ` (max ${cursorStatus.concurrency.max_parallel} parallel)`
+                        : " in parallel"}
                     </p>
                   )}
                   {tasks.length === 0 ? (
