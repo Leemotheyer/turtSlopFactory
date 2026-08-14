@@ -1,0 +1,34 @@
+# Single-port gateway — dashboard + API on :80
+# Factory API and worker run on factory:8000 (internal only).
+
+:80 {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy factory:8000
+	}
+
+	handle /docs* {
+		reverse_proxy factory:8000
+	}
+
+	handle /openapi.json {
+		reverse_proxy factory:8000
+	}
+
+	handle /redoc* {
+		reverse_proxy factory:8000
+	}
+
+	handle /health {
+		reverse_proxy factory:8000
+	}
+
+	handle /ws/* {
+		reverse_proxy factory:8000
+	}
+
+	handle {
+		reverse_proxy dashboard:3000
+	}
+}

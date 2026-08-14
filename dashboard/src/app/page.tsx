@@ -895,7 +895,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {setupStatus && !setupStatus.setup_complete && (
+      {setupStatus && !setupStatus.setup_complete && setupStatus.preview_host === "localhost" && (
         <section className={styles.setupBanner}>
           <div>
             <h2>Quick setup</h2>

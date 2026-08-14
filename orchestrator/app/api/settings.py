@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,28 +36,30 @@ class SetupRequest(BaseModel):
 
 
 @router.get("/public")
-async def public_config(db: AsyncSession = Depends(get_db)) -> dict:
-    return await get_public_config(db)
+async def public_config(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    return await get_public_config(db, request)
 
 
 @router.get("/setup")
-async def setup_status(db: AsyncSession = Depends(get_db)) -> dict:
-    return await get_setup_status(db)
+async def setup_status(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    return await get_setup_status(db, request)
 
 
 @router.post("/setup")
-async def finish_setup(body: SetupRequest, db: AsyncSession = Depends(get_db)) -> dict:
+async def finish_setup(
+    body: SetupRequest, request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
     if body.preview_host:
-        await set_preview_host(db, body.preview_host)
+        await set_preview_host(db, body.preview_host, request)
     if body.api_key is not None:
-        await set_instance_api_key(db, body.api_key or None)
+        await set_instance_api_key(db, body.api_key or None, request)
         await refresh_api_key_cache(db)
-    return await complete_setup(db, preview_host=body.preview_host)
+    return await complete_setup(db, preview_host=body.preview_host, request=request)
 
 
 @router.get("/factory")
-async def factory_settings(db: AsyncSession = Depends(get_db)) -> dict:
-    return await get_factory_settings(db)
+async def factory_settings(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    return await get_factory_settings(db, request)
 
 
 @router.put("/factory/agent-backend")
@@ -74,16 +76,18 @@ async def update_agent_backend(
 
 @router.put("/factory/preview-host")
 async def update_preview_host(
-    body: PreviewHostRequest, db: AsyncSession = Depends(get_db)
+    body: PreviewHostRequest, request: Request, db: AsyncSession = Depends(get_db)
 ) -> dict:
     try:
-        return await set_preview_host(db, body.preview_host)
+        return await set_preview_host(db, body.preview_host, request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.put("/factory/api-key")
-async def update_api_key(body: ApiKeyRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    result = await set_instance_api_key(db, body.api_key)
+async def update_api_key(
+    body: ApiKeyRequest, request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
+    result = await set_instance_api_key(db, body.api_key, request)
     await refresh_api_key_cache(db)
     return result

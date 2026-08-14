@@ -1,7 +1,13 @@
-.PHONY: up down logs test build dev
+.PHONY: up down dev logs test build install
 
+# Production deploy (pull GHCR images, single URL on :80)
 up:
-	docker compose up --build -d
+	docker compose pull
+	docker compose up -d
+
+# Build from source
+dev:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 down:
 	docker compose down
@@ -9,9 +15,11 @@ down:
 logs:
 	docker compose logs -f
 
+install:
+	./install.sh
+
 test:
-	cd orchestrator && python3 -m pytest tests/ -v
-	cd dashboard && npm run build
+	cd orchestrator && python3 -m pytest tests/ -q
 
 dev-api:
 	cd orchestrator && uvicorn app.main:app --reload --port 8000
@@ -23,4 +31,4 @@ dev-dashboard:
 	cd dashboard && npm run dev
 
 build:
-	docker compose build
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build

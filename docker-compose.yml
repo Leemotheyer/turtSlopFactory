@@ -1,6 +1,9 @@
-# turtSlopFactory — zero-config stack (build from source)
-# Deploy: docker compose up -d --build
-# Configure after launch in the dashboard (hostname, API key, Cursor).
+# turtSlopFactory — recommended deploy (zero config)
+#   docker compose up -d
+#   open http://localhost
+#
+# One URL (port 80): dashboard + API. Live previews on ports 8081–8099.
+# Optional dev build: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 services:
   postgres:
@@ -31,64 +34,60 @@ services:
     networks:
       - factory
 
-  orchestrator:
-    build:
-      context: ./orchestrator
-      dockerfile: Dockerfile
+  factory:
+    image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
       REDIS_URL: redis://redis:6379/0
       WORKSPACE_ROOT: /data/workspaces
-      WORKER_ENABLED: "false"
+      WORKER_ENABLED: "true"
       CORS_ALLOW_ALL: "true"
+      TRUST_PROXY_HEADERS: "true"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - workspace_data:/data/workspaces
-    networks:
-      - factory
-
-  worker:
-    build:
-      context: ./orchestrator
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    command: ["python", "worker_main.py"]
-    ports:
-      - "8081-8099:8081-8099"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
-      REDIS_URL: redis://redis:6379/0
-      WORKSPACE_ROOT: /data/workspaces
-      CORS_ALLOW_ALL: "true"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      orchestrator:
-        condition: service_started
     volumes:
       - workspace_data:/data/workspaces
       - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8081-8099:8081-8099"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     networks:
       - factory
 
   dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
+    image: ghcr.io/leemotheyer/turtslopfactory-dashboard:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      factory:
+        condition: service_healthy
+    networks:
+      - factory
+
+  gateway:
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
-      - orchestrator
+      - factory
+      - dashboard
     networks:
       - factory
 

@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     api_port: int = 8000
     dashboard_port: int = 3000
     cors_allow_all: bool = True  # Allow any origin when True (simple self-hosted deploy)
+    trust_proxy_headers: bool = True  # Trust X-Forwarded-* from gateway (Caddy)
+
+    @field_validator("trust_proxy_headers", mode="before")
+    @classmethod
+    def parse_trust_proxy(cls, v):
+        if isinstance(v, str):
+            return v.lower() in ("1", "true", "yes")
+        return v
 
     @field_validator("cors_allow_all", mode="before")
     @classmethod

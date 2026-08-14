@@ -1,10 +1,19 @@
-# Alias of docker-compose.yml — same stack
-# turtSlopFactory — recommended deploy (zero config)
-#   docker compose up -d
-#   open http://localhost
-#
-# One URL (port 80): dashboard + API. Live previews on ports 8081–8099.
-# Optional dev build: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# Paste into Portainer → Stacks → Web editor (zero env vars, no bind mounts)
+# Open http://<server-ip> after deploy
+
+configs:
+  caddyfile:
+    content: |
+      :80 {
+        encode gzip
+        handle /api/* { reverse_proxy factory:8000 }
+        handle /docs* { reverse_proxy factory:8000 }
+        handle /openapi.json { reverse_proxy factory:8000 }
+        handle /redoc* { reverse_proxy factory:8000 }
+        handle /health { reverse_proxy factory:8000 }
+        handle /ws/* { reverse_proxy factory:8000 }
+        handle { reverse_proxy dashboard:3000 }
+      }
 
 services:
   postgres:
@@ -36,7 +45,7 @@ services:
       - factory
 
   factory:
-    image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:${IMAGE_TAG:-latest}
+    image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:latest
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
@@ -71,7 +80,7 @@ services:
       - factory
 
   dashboard:
-    image: ghcr.io/leemotheyer/turtslopfactory-dashboard:${IMAGE_TAG:-latest}
+    image: ghcr.io/leemotheyer/turtslopfactory-dashboard:latest
     restart: unless-stopped
     depends_on:
       factory:
@@ -83,9 +92,10 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-80}:80"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - "80:80"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
     depends_on:
       - factory
       - dashboard

@@ -2,83 +2,76 @@
 
 A self-hosted **agentic software factory**: give it a project specification, and orchestrated AI agents plan, implement, test, Docker-build, deploy to staging, and promote to production — with you as supervisor.
 
-```
-┌─────────────┐     REST + WebSocket     ┌──────────────┐     Redis Queue     ┌────────────┐
-│  Dashboard  │ ◄──────────────────────► │ Orchestrator │ ◄──────────────────► │   Worker   │
-│  (Next.js)  │                          │  (FastAPI)   │                      │  (Pipeline)│
-└─────────────┘                          └──────┬───────┘                      └─────┬──────┘
-                                                │                                    │
-                                          PostgreSQL                          Docker builds
-                                                                                + live preview
-```
-
 ## Quick start
 
-**No `.env` file required.**
+**One command, no `.env` file:**
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d
+docker compose up -d
+# open http://localhost
 ```
 
-Open http://localhost:3000 and complete the one-time setup banner (hostname + optional API key). Connect Cursor from the header menu when you're ready.
-
-| Service | URL |
-|---------|-----|
-| Dashboard | http://localhost:3000 |
-| API | http://localhost:8000 |
-| API docs | http://localhost:8000/docs |
-| Live previews | http://localhost:8081–8099 (per project) |
-
-### Build from source
+Or use the install script:
 
 ```bash
-docker compose up -d --build
+curl -fsSL https://raw.githubusercontent.com/Leemotheyer/turtSlopFactory/main/install.sh | bash
 ```
 
-### Portainer
+| URL | Purpose |
+|-----|---------|
+| http://localhost | Dashboard + API (single port via gateway) |
+| http://localhost:8081–8099 | Live project previews |
 
-See [docs/PORTAINER.md](docs/PORTAINER.md) — deploy `docker-compose.prod.yml` as a stack with zero environment variables.
+Everything else — encryption key, hostname, Cursor, API key — is auto-configured or set in the dashboard.
 
-## What gets auto-configured
+## What runs
+
+| Container | Role |
+|-----------|------|
+| **gateway** (Caddy) | Serves dashboard + proxies `/api` and `/ws` on port 80 |
+| **factory** | API + pipeline worker in one container (Docker socket for builds) |
+| **dashboard** | Next.js UI |
+| **postgres** / **redis** | Internal data stores |
+
+**4 app containers** instead of 5 — no separate worker service.
+
+## Portainer
+
+Paste [`portainer-stack.yml`](portainer-stack.yml) into **Stacks → Web editor**. No bind mounts, no env vars. Open `http://<server-ip>`.
+
+See [docs/PORTAINER.md](docs/PORTAINER.md).
+
+## Build from source
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# or: make dev
+```
+
+## After deploy
+
+1. Open the dashboard — hostname is **auto-detected** when not on localhost
+2. Optional: **Cursor** menu → connect API key, choose agent backend
+3. Optional: set a **factory API key** under Cursor → Deployment
+4. Create a project and **Start pipeline**
+
+## Auto-configured
 
 | Setting | How |
 |---------|-----|
-| Encryption key for secrets | Generated on first boot, stored on the workspace volume |
-| Database / Redis | Built into compose with internal credentials |
-| API URL for dashboard | Detected from your browser hostname (`:8000`) |
-| CORS | Open by default for simple LAN/Portainer deploys |
-| Cursor API key | Connect in dashboard after deploy |
-| Agent backend | Choose in dashboard (default: Cursor Cloud) |
-| Preview hostname | Quick setup banner or Cursor → Deployment |
+| Encryption key | Generated on first boot, saved on workspace volume |
+| API + dashboard URL | Single origin on port 80 (gateway) |
+| Preview hostname | Auto-detected from your browser / `X-Forwarded-Host` |
+| Database / Redis | Internal compose defaults |
+| CORS | Open for self-hosted |
 
-Optional env overrides (`.env` or Portainer stack env): `PUBLIC_HOST`, `IMAGE_TAG`, `API_KEY`.
+## Optional env overrides
 
-## Usage
-
-1. Open the dashboard and create a project with a natural-language spec (optional `repo_url` for GitHub-backed Cursor Cloud agents)
-2. Complete discovery intake if prompted
-3. Click **Start pipeline**
-4. When state reaches **REVIEW**, click **Promote to production**
-5. Open the live preview URL to interact with the generated app
-
-## Generated app deployment
-
-Each project includes `Dockerfile` and `docker-compose.yml`:
-
-```bash
-cd /path/to/project/repo
-docker compose up -d --build
-# → http://localhost:8080
+```env
+HTTP_PORT=8080    # if port 80 is taken
+IMAGE_TAG=latest  # pin GHCR release
+PUBLIC_HOST=factory.example.com
 ```
-
-## Pre-built images (GHCR)
-
-Published on every push to `main`:
-
-| Image | Package |
-|-------|---------|
-| Orchestrator + worker | `ghcr.io/leemotheyer/turtslopfactory-orchestrator:latest` |
-| Dashboard | `ghcr.io/leemotheyer/turtslopfactory-dashboard:latest` |
 
 ## Local development
 
@@ -87,22 +80,18 @@ cd orchestrator && pip install -e ".[dev,cursor]"
 docker compose up postgres redis -d
 uvicorn app.main:app --reload --port 8000
 
-# Worker (separate terminal)
+# Worker (separate terminal, only for non-combined dev)
 WORKER_ENABLED=false python worker_main.py
 
-# Dashboard
 cd dashboard && npm install && npm run dev
 ```
 
-## Project structure
+## Generated apps
 
-```
-├── dashboard/              # Next.js control plane UI
-├── orchestrator/           # FastAPI API + pipeline worker
-├── docker-compose.yml      # Build from source
-├── docker-compose.prod.yml # Pre-built images (recommended)
-├── docs/PORTAINER.md       # Portainer one-click deploy
-└── .github/workflows/      # GHCR image publish
+Each project includes `docker-compose.yml`:
+
+```bash
+cd project/repo && docker compose up -d --build
 ```
 
 ## License

@@ -200,6 +200,7 @@ export interface PublicConfig {
   preview_host: string;
   setup_complete: boolean;
   api_key_required: boolean;
+  gateway_mode?: boolean;
 }
 
 export interface SetupStatus extends PublicConfig {
@@ -217,22 +218,43 @@ export interface SetupStatus extends PublicConfig {
 
 let publicConfig: PublicConfig | null = null;
 
-function bootstrapApiUrl(): string {
+async function discoverBootstrapUrl(): Promise<string> {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window === "undefined") return "http://localhost:8000";
   const saved = localStorage.getItem("factory_api_url");
   if (saved) return saved;
+
+  try {
+    const origin = window.location.origin;
+    const res = await fetch(`${origin}/api/settings/public`, { cache: "no-store" });
+    if (res.ok) {
+      const cfg = (await res.json()) as PublicConfig;
+      publicConfig = cfg;
+      localStorage.setItem("factory_api_url", cfg.api_url);
+      return cfg.api_url;
+    }
+  } catch {
+    /* not behind gateway — try direct API port */
+  }
+
   return `${window.location.protocol}//${window.location.hostname}:8000`;
 }
 
 function apiUrl(): string {
-  return publicConfig?.api_url ?? bootstrapApiUrl();
+  if (publicConfig?.api_url) return publicConfig.api_url;
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("factory_api_url");
+    if (saved) return saved;
+    return window.location.origin;
+  }
+  return "http://localhost:8000";
 }
 
 export async function ensurePublicConfig(): Promise<PublicConfig> {
   if (publicConfig) return publicConfig;
+  const bootstrap = await discoverBootstrapUrl();
   try {
-    const res = await fetch(`${bootstrapApiUrl()}/api/settings/public`, { cache: "no-store" });
+    const res = await fetch(`${bootstrap}/api/settings/public`, { cache: "no-store" });
     if (res.ok) {
       publicConfig = await res.json();
       if (typeof window !== "undefined") {
@@ -244,11 +266,12 @@ export async function ensurePublicConfig(): Promise<PublicConfig> {
     /* fall through */
   }
   publicConfig = {
-    api_url: bootstrapApiUrl(),
-    ws_url: bootstrapApiUrl().replace(/^http/, "ws"),
+    api_url: bootstrap,
+    ws_url: bootstrap.replace(/^http/, "ws"),
     preview_host: typeof window !== "undefined" ? window.location.hostname : "localhost",
     setup_complete: true,
     api_key_required: false,
+    gateway_mode: bootstrap === (typeof window !== "undefined" ? window.location.origin : ""),
   };
   return publicConfig;
 }
