@@ -577,6 +577,29 @@ export async function fetchDiscovery(projectId: string): Promise<DiscoverySessio
   return data;
 }
 
+export async function startDiscovery(projectId: string): Promise<DiscoverySession> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/discovery`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to start discovery");
+  }
+  return res.json();
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to delete project");
+  }
+}
+
 export async function submitIntake(
   projectId: string,
   responses: Record<string, string | string[]>

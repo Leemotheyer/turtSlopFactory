@@ -70,3 +70,9 @@ class WorkspaceManager:
             shutil.rmtree(repo)
         repo.mkdir(parents=True)
         return repo
+
+    def delete_project(self, project_id: UUID) -> None:
+        """Remove all local workspace files for a project. Does not touch GitHub."""
+        path = self.root / "projects" / str(project_id)
+        if path.exists():
+            shutil.rmtree(path)

@@ -7,6 +7,7 @@ import {
   connectGithubToken,
   disconnectGithubToken,
   createProject,
+  deleteProject,
   updateProjectRepo,
   fetchGithubRepos,
   deleteSecret,
@@ -16,6 +17,7 @@ import {
   fetchCursorStatus,
   fetchCursorUsage,
   fetchDiscovery,
+  startDiscovery,
   fetchEvents,
   fetchInputRequests,
   fetchLog,
@@ -182,6 +184,7 @@ export default function DashboardPage() {
   const [modelsLoading, setModelsLoading] = useState(false);
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const discoveryKickoff = useRef<string | null>(null);
 
   function selectProject(id: string) {
     setSelectedId(id);
@@ -353,6 +356,18 @@ export default function DashboardPage() {
   }, [refresh, detail?.pipeline_running]);
 
   useEffect(() => {
+    if (!selectedId || detail?.state !== "REQUESTED") return;
+    if (discoveryKickoff.current === selectedId) return;
+    discoveryKickoff.current = selectedId;
+    startDiscovery(selectedId)
+      .then(() => refresh())
+      .catch((err) => {
+        discoveryKickoff.current = null;
+        setError(err instanceof Error ? err.message : "Discovery failed to start");
+      });
+  }, [selectedId, detail?.state, refresh]);
+
+  useEffect(() => {
     let ws: WebSocket | null = null;
     let cancelled = false;
 
@@ -376,6 +391,27 @@ export default function DashboardPage() {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
   }, [refresh]);
+
+  async function handleDeleteProject() {
+    if (!selectedId || !detail) return;
+    const message = detail.repo_url
+      ? "Delete this project from the factory? Local files will be removed but the GitHub repository will not be deleted."
+      : "Delete this project and all local files? This cannot be undone.";
+    if (!window.confirm(message)) return;
+    setLoading(true);
+    try {
+      await deleteProject(selectedId);
+      discoveryKickoff.current = null;
+      setSelectedId(null);
+      setDetail(null);
+      setDiscovery(null);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete project");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -1588,6 +1624,8 @@ export default function DashboardPage() {
                 <div className={styles.actions}>
                   {detail.pipeline_running ? (
                     <span className={styles.running}>Pipeline running…</span>
+                  ) : detail.state === "REQUESTED" ? (
+                    <span className={styles.running}>Starting discovery…</span>
                   ) : detail.state === "DISCOVERY" ? (
                     <span className={styles.running}>Discovery agent thinking…</span>
                   ) : detail.state === "INTAKE_PENDING" ? (
@@ -1596,7 +1634,7 @@ export default function DashboardPage() {
                     </button>
                   ) : (
                     <>
-                      {detail.state !== "PRODUCTION" && detail.state !== "REQUESTED" && (
+                      {detail.state !== "PRODUCTION" && (
                         <button className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
                           {detail.state === "PLANNING" ? "Start pipeline" : "Re-run pipeline"}
                         </button>
@@ -1620,6 +1658,19 @@ export default function DashboardPage() {
                       )}
                     </>
                   )}
+                  <button
+                    type="button"
+                    className={styles.btnDanger}
+                    onClick={handleDeleteProject}
+                    disabled={loading || detail.pipeline_running}
+                    title={
+                      detail.repo_url
+                        ? "Remove from factory (GitHub repo is kept)"
+                        : "Delete project and local files"
+                    }
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
 
@@ -1815,7 +1866,7 @@ export default function DashboardPage() {
 
               {tab === "intake" && (
                 <div className={styles.intakePanel}>
-                  {detail.state === "DISCOVERY" || discovery?.status === "generating" ? (
+                  {detail.state === "REQUESTED" || detail.state === "DISCOVERY" || discovery?.status === "generating" ? (
                     <div className={styles.intakeWaiting}>
                       <h3>Discovery agent is working…</h3>
                       <p>Analyzing your idea and preparing a loose plan with follow-up questions.</p>

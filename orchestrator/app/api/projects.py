@@ -21,10 +21,12 @@ from app.models import (
     TaskCreate,
     TaskStatus,
 )
+from app.services.discovery import run_discovery
 from app.services.git_branching import apply_isolated_branch_fields, setup_project_branches
+from app.services.project_lifecycle import delete_project as delete_project_record
 from app.services.secrets import get_github_token, maybe_request_github_token
 from app.workspace.provisioner import normalize_repo_url
-from app.worker import pipeline_queue
+from app.pipeline.executor import pipeline_executor
 from app.state_machine import StateMachineError, advance_project, fail_project
 from app.workspace.manager import WorkspaceManager
 
@@ -106,15 +108,6 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
         await db.commit()
         await db.refresh(row)
 
-        message = await setup_project_branches(
-            workspace,
-            row,
-            github_token=await get_github_token(db, row.id),
-        )
-        await db.commit()
-        workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
-        await maybe_request_github_token(db, row.id, message)
-
     await event_bus.publish(
         db,
         FactoryEvent(
@@ -124,8 +117,23 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
         ),
     )
 
-    await pipeline_queue.enqueue_discovery(row.id)
+    try:
+        await run_discovery(db, row.id)
+    except Exception as exc:
+        workspace.append_log(row.id, "pipeline.log", f"[discovery] Failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Discovery failed: {exc}") from exc
 
+    if repo_url:
+        message = await setup_project_branches(
+            workspace,
+            row,
+            github_token=await get_github_token(db, row.id),
+        )
+        await db.commit()
+        workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
+        await maybe_request_github_token(db, row.id, message)
+
+    await db.refresh(row)
     return _project_from_row(row)
 
 
@@ -227,6 +235,17 @@ async def update_project(
     meta = workspace.load_metadata(project_id)
     preview_url = meta.get("preview_url") or meta.get("staging_url")
     return _project_from_row(row, preview_url=preview_url)
+
+
+@router.delete("/{project_id}")
+async def remove_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        await delete_project_record(db, project_id, workspace=workspace)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "deleted", "project_id": str(project_id)}
 
 
 @router.post("/{project_id}/advance", response_model=Project)

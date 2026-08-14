@@ -46,7 +46,9 @@ class JobQueue:
 
         logger.info("Job worker started (pipeline + discovery)")
         while True:
-            result = await self._redis.blpop(PIPELINE_QUEUE_KEY, DISCOVERY_QUEUE_KEY, timeout=5)
+            result = await self._redis.blpop(
+                [PIPELINE_QUEUE_KEY, DISCOVERY_QUEUE_KEY], timeout=5
+            )
             if not result:
                 continue
             queue_name, project_id_str = result

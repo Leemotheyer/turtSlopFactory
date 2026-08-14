@@ -30,8 +30,13 @@ async def start_discovery(project_id: UUID, db: AsyncSession = Depends(get_db)):
     if existing and existing.status.value != "generating":
         return existing
 
+    if row.state in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value):
+        try:
+            return await run_discovery(db, project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     await pipeline_queue.enqueue_discovery(project_id)
-    # Return placeholder while queued
     if existing:
         return existing
     from app.models import DiscoveryStatus

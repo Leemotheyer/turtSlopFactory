@@ -50,6 +50,34 @@ async def run_discovery(session: AsyncSession, project_id: UUID) -> DiscoverySes
     if not project:
         raise ValueError("Project not found")
 
+    existing = await get_discovery(session, project_id)
+    if existing:
+        if existing.status in (
+            DiscoveryStatus.AWAITING_USER,
+            DiscoveryStatus.SUBMITTED,
+            DiscoveryStatus.AUTO_SUBMITTED,
+        ):
+            return existing
+        if (
+            existing.status == DiscoveryStatus.GENERATING
+            and project.state not in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value)
+        ):
+            return existing
+
+    if project.state not in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value):
+        if existing:
+            return existing
+        raise ValueError(f"Discovery not applicable in state {project.state}")
+
+    if existing:
+        stale = await session.execute(
+            select(DiscoverySessionRow).where(DiscoverySessionRow.project_id == project_id)
+        )
+        stale_row = stale.scalar_one_or_none()
+        if stale_row:
+            await session.delete(stale_row)
+            await session.commit()
+
     project.state = ProjectState.DISCOVERY.value
     project.updated_at = datetime.utcnow()
 
