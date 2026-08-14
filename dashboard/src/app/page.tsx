@@ -5,6 +5,8 @@ import {
   addNote,
   connectCursor,
   createProject,
+  updateProjectRepo,
+  fetchGithubRepos,
   deleteSecret,
   disconnectCursor,
   fetchArtifact,
@@ -27,18 +29,26 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   promoteProject,
+  mergeToMain,
   respondToInput,
   runPipeline,
   setSecret,
   submitIntake,
   updateAgentBackend,
+  updateAgentModel,
+  updateAgentModels,
+  fetchCursorModels,
   agentBackendLabel,
   ensurePublicConfig,
   completeSetup,
   fetchSetupStatus,
   updatePreviewHost,
   updateInstanceApiKey,
+  type GithubRepository,
+  type CursorModel,
   type AgentBackend,
+  type AgentRoleModelKey,
+  type AgentRoleModels,
   type SetupStatus,
   type CursorConnectionStatus,
   type CursorUsage,
@@ -141,6 +151,17 @@ export default function DashboardPage() {
   const [setupApiKey, setSetupApiKey] = useState("");
   const [instanceApiKey, setInstanceApiKey] = useState("");
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("status");
+  const [newRepoUrl, setNewRepoUrl] = useState("");
+  const [newBranch, setNewBranch] = useState("main");
+  const [newIsolateBranch, setNewIsolateBranch] = useState(true);
+  const [editRepoUrl, setEditRepoUrl] = useState("");
+  const [editBranch, setEditBranch] = useState("main");
+  const [editIsolateBranch, setEditIsolateBranch] = useState(true);
+  const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
+  const [repoLoading, setRepoLoading] = useState(false);
+  const [repoNote, setRepoNote] = useState<string | null>(null);
+  const [cursorModels, setCursorModels] = useState<CursorModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -238,9 +259,56 @@ export default function DashboardPage() {
     loadCursor();
   }, [loadCursor]);
 
+  const loadGithubRepos = useCallback(async (refresh = false) => {
+    if (!cursorStatus?.connected) {
+      setGithubRepos([]);
+      return;
+    }
+    setRepoLoading(true);
+    try {
+      const data = await fetchGithubRepos(refresh);
+      setGithubRepos(data.repositories ?? []);
+      setRepoNote(data.note ?? data.error ?? null);
+    } catch {
+      setGithubRepos([]);
+    } finally {
+      setRepoLoading(false);
+    }
+  }, [cursorStatus?.connected]);
+
+  useEffect(() => {
+    loadGithubRepos();
+  }, [loadGithubRepos]);
+
+  useEffect(() => {
+    if (detail) {
+      setEditRepoUrl(detail.repo_url ?? "");
+      setEditBranch(detail.base_branch ?? detail.branch ?? "main");
+      setEditIsolateBranch(detail.isolate_branch ?? true);
+    }
+  }, [detail?.id, detail?.repo_url, detail?.branch, detail?.base_branch, detail?.isolate_branch]);
+
   useEffect(() => {
     if (showCursor) loadCursor();
   }, [showCursor, loadCursor]);
+
+  const loadCursorModels = useCallback(async () => {
+    setModelsLoading(true);
+    try {
+      const data = await fetchCursorModels();
+      setCursorModels(data.models ?? []);
+    } catch {
+      setCursorModels([]);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showCursor && cursorStatus?.connected) {
+      loadCursorModels();
+    }
+  }, [showCursor, cursorStatus?.connected, loadCursorModels]);
 
   useEffect(() => {
     if (detail?.state === "INTAKE_PENDING") {
@@ -284,13 +352,39 @@ export default function DashboardPage() {
     if (!newName.trim()) return;
     setLoading(true);
     try {
-      const p = await createProject(newName, newDesc);
+      const p = await createProject(newName, newDesc, {
+        repo_url: newRepoUrl || null,
+        base_branch: newBranch || "main",
+        isolate_branch: newRepoUrl ? newIsolateBranch : false,
+      });
       setNewName("");
       setNewDesc("");
+      setNewRepoUrl("");
+      setNewBranch("main");
+      setNewIsolateBranch(true);
       setSelectedId(p.id);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveRepo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await updateProjectRepo(selectedId, {
+        repo_url: editRepoUrl || null,
+        base_branch: editBranch || "main",
+        isolate_branch: editRepoUrl ? editIsolateBranch : false,
+        clear_repo: !editRepoUrl,
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save repository");
     } finally {
       setLoading(false);
     }
@@ -321,6 +415,25 @@ export default function DashboardPage() {
       setLoading(false);
     }
   }
+
+  async function handleMergeToMain() {
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await mergeToMain(selectedId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Merge failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const repoSettingsDirty =
+    !!detail &&
+    (editRepoUrl !== (detail.repo_url ?? "") ||
+      editBranch !== (detail.base_branch ?? detail.branch ?? "main") ||
+      editIsolateBranch !== (detail.isolate_branch ?? true));
 
   async function viewArtifact(name: string) {
     if (!selectedId) return;
@@ -515,6 +628,48 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleRoleModelChange(role: AgentRoleModelKey, modelId: string) {
+    setCursorLoading(true);
+    try {
+      const result = await updateAgentModels({ [role]: modelId });
+      setCursorStatus((prev) =>
+        prev
+          ? {
+              ...prev,
+              agent_models: result.agent_models,
+              agent_model: result.agent_model,
+              cursor_model: result.agent_model,
+            }
+          : prev
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update agent model");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
+  async function handleSetAllRoleModels(modelId: string) {
+    setCursorLoading(true);
+    try {
+      const result = await updateAgentModel(modelId);
+      setCursorStatus((prev) =>
+        prev
+          ? {
+              ...prev,
+              agent_models: result.agent_models,
+              agent_model: result.agent_model,
+              cursor_model: result.agent_model,
+            }
+          : prev
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update agent models");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
   async function handleAgentBackendChange(backend: AgentBackend) {
     setCursorLoading(true);
     try {
@@ -615,6 +770,79 @@ export default function DashboardPage() {
   const livePreviewUrl = detail?.preview_url ?? detail?.staging_url;
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
 
+  const defaultAgentModel =
+    cursorStatus?.default_agent_model ?? cursorStatus?.cursor_model ?? "composer-2";
+
+  const roleModels: AgentRoleModels = cursorStatus?.agent_models ?? {
+    architect: defaultAgentModel,
+    developer: defaultAgentModel,
+    reviewer: defaultAgentModel,
+  };
+
+  const ROLE_MODEL_CONFIG: { key: AgentRoleModelKey; label: string; hint: string }[] = [
+    {
+      key: "architect",
+      label: "Architect",
+      hint: "Planning, requirements, and system design.",
+    },
+    {
+      key: "developer",
+      label: "Developer",
+      hint: "Implementation and parallel build streams.",
+    },
+    {
+      key: "reviewer",
+      label: "Reviewer",
+      hint: "Code review and promotion gate.",
+    },
+  ];
+
+  const modelOptions = (() => {
+    const byId = new Map<string, CursorModel>();
+    for (const model of cursorModels) {
+      byId.set(model.id, model);
+    }
+    for (const modelId of Object.values(roleModels)) {
+      if (modelId && !byId.has(modelId)) {
+        byId.set(modelId, { id: modelId, display_name: modelId });
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) =>
+      a.display_name.localeCompare(b.display_name)
+    );
+  })();
+
+  function renderModelOptions(currentValue: string) {
+    if (modelOptions.length === 0) {
+      return <option value={currentValue}>{currentValue}</option>;
+    }
+    return modelOptions.map((model) => (
+      <option key={model.id} value={model.id}>
+        {model.display_name}
+      </option>
+    ));
+  }
+
+  function repoLabel(url: string): string {
+    return url.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
+  }
+
+  function renderRepoOptions(currentUrl = "") {
+    const options = githubRepos.map((repo) => (
+      <option key={repo.url} value={repo.url}>
+        {repo.name}
+      </option>
+    ));
+    if (currentUrl && !githubRepos.some((r) => r.url === currentUrl)) {
+      options.unshift(
+        <option key={currentUrl} value={currentUrl}>
+          {repoLabel(currentUrl)} (linked)
+        </option>
+      );
+    }
+    return options;
+  }
+
   function previewTypeLabel(type: string | null | undefined): string {
     switch (type) {
       case "dev": return "Development build";
@@ -693,6 +921,69 @@ export default function DashboardPage() {
                     Default is Cursor Cloud Agents. Local Cursor runs in your workspace; scaffold mode needs no API key.
                   </p>
                 </div>
+                <div className={styles.cursorBackend}>
+                  <div className={styles.roleModelsHeader}>
+                    <label>Agent models by role</label>
+                    <button
+                      type="button"
+                      className={styles.notifMarkAll}
+                      onClick={() => handleSetAllRoleModels(roleModels.developer)}
+                      disabled={
+                        cursorLoading ||
+                        modelsLoading ||
+                        cursorStatus?.agent_backend === "local"
+                      }
+                      title="Apply the developer model to all roles"
+                    >
+                      Match developer
+                    </button>
+                  </div>
+                  <div className={styles.roleModelGrid}>
+                    {ROLE_MODEL_CONFIG.map(({ key, label, hint }) => (
+                      <label key={key} className={styles.roleModelField}>
+                        <span className={styles.roleModelLabel}>{label}</span>
+                        <select
+                          id={`agent-model-${key}`}
+                          value={roleModels[key]}
+                          onChange={(e) => handleRoleModelChange(key, e.target.value)}
+                          disabled={
+                            cursorLoading || modelsLoading || cursorStatus?.agent_backend === "local"
+                          }
+                        >
+                          {renderModelOptions(roleModels[key])}
+                        </select>
+                        <span className={styles.roleModelHint}>{hint}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className={styles.cursorBackendHint}>
+                    Pick the best model per role — e.g. a reasoning model for architecture and a fast model for implementation.
+                    {cursorStatus?.agent_backend === "local"
+                      ? " Switch off scaffold mode to use Cursor models."
+                      : !cursorStatus?.connected
+                        ? " Connect Cursor to load your account's available models."
+                        : modelsLoading
+                          ? " Loading models…"
+                          : ""}
+                  </p>
+                </div>
+                {cursorStatus?.concurrency && (
+                  <div className={styles.cursorBackend}>
+                    <label>Parallel agents</label>
+                    <p className={styles.concurrencySummary}>
+                      Up to <strong>{cursorStatus.concurrency.max_parallel}</strong> factory agent
+                      {cursorStatus.concurrency.max_parallel === 1 ? "" : "s"} at a time
+                      {cursorStatus.concurrency.backend === "cursor_cloud" && (
+                        <>
+                          {" "}
+                          · {cursorStatus.concurrency.active_cursor_agents}/
+                          {cursorStatus.concurrency.cursor_slot_limit} Cursor slots in use
+                        </>
+                      )}
+                    </p>
+                    <p className={styles.cursorBackendHint}>{cursorStatus.concurrency.strategy}</p>
+                  </div>
+                )}
                 <div className={styles.cursorDeploy}>
                   <h4>Deployment</h4>
                   <label>
@@ -972,12 +1263,16 @@ export default function DashboardPage() {
                 >
                   <span className={styles.projectName}>{p.name}</span>
                   <span className={styles.projectMeta}>
-                    <span
-                      className={styles.stateTag}
+                    <span className={styles.stateTag}
                       style={{ background: STATE_COLORS[p.state] ?? "#6b7280" }}
                     >
                       {p.state.replace(/_/g, " ")}
                     </span>
+                    {p.repo_url && (
+                      <span className={styles.repoTag} title={p.repo_url}>
+                        {repoLabel(p.repo_url)}
+                      </span>
+                    )}
                     {p.preview_url && (
                       <a
                         href={p.preview_url}
@@ -1013,6 +1308,43 @@ export default function DashboardPage() {
               onChange={(e) => setNewDesc(e.target.value)}
               rows={4}
             />
+            <label className={styles.repoField}>
+              GitHub repo (optional)
+              <select
+                value={newRepoUrl}
+                onChange={(e) => setNewRepoUrl(e.target.value)}
+                disabled={!cursorStatus?.connected || repoLoading}
+              >
+                <option value="">None — factory scaffold</option>
+                {renderRepoOptions()}
+              </select>
+            </label>
+            {!cursorStatus?.connected && (
+              <p className={styles.repoHint}>
+                Connect Cursor to pick repos from your GitHub account.
+              </p>
+            )}
+            {newRepoUrl && (
+              <>
+                <label className={styles.repoField}>
+                  Production branch
+                  <input
+                    type="text"
+                    value={newBranch}
+                    onChange={(e) => setNewBranch(e.target.value)}
+                    placeholder="main"
+                  />
+                </label>
+                <label className={styles.repoCheckbox}>
+                  <input
+                    type="checkbox"
+                    checked={newIsolateBranch}
+                    onChange={(e) => setNewIsolateBranch(e.target.checked)}
+                  />
+                  Develop on a separate factory branch (keeps production branch untouched)
+                </label>
+              </>
+            )}
             <button type="submit" className={styles.btnPrimary} disabled={loading}>
               Create project
             </button>
@@ -1046,9 +1378,21 @@ export default function DashboardPage() {
                         </button>
                       )}
                       {detail.state === "REVIEW" && (
-                        <button className={styles.btnSuccess} onClick={handlePromote} disabled={loading}>
-                          Promote to production
-                        </button>
+                        <>
+                          {detail.isolate_branch && detail.merge_status !== "merged" && (
+                            <button
+                              className={styles.btnSecondary}
+                              onClick={handleMergeToMain}
+                              disabled={loading}
+                              title="Merge factory work branch into production"
+                            >
+                              Merge to main
+                            </button>
+                          )}
+                          <button className={styles.btnSuccess} onClick={handlePromote} disabled={loading}>
+                            Promote to production
+                          </button>
+                        </>
                       )}
                     </>
                   )}
@@ -1063,6 +1407,98 @@ export default function DashboardPage() {
                   </a>
                 )}
               </div>
+
+              <section className={styles.repoPanel}>
+                <div className={styles.repoPanelHeader}>
+                  <div>
+                    <h3>GitHub repository</h3>
+                    <p className={styles.repoHint}>
+                      Link an empty or existing repo from your Cursor-connected GitHub account.
+                      When branch isolation is on, agents work on a factory branch and only merge
+                      to your production branch when you approve.
+                    </p>
+                  </div>
+                  {cursorStatus?.connected && (
+                    <button
+                      type="button"
+                      className={styles.btnSecondary}
+                      onClick={() => loadGithubRepos(true)}
+                      disabled={repoLoading}
+                    >
+                      {repoLoading ? "Loading…" : "Refresh repos"}
+                    </button>
+                  )}
+                </div>
+                <form className={styles.repoForm} onSubmit={handleSaveRepo}>
+                  <label className={styles.repoField}>
+                    Repository
+                    <select
+                      value={editRepoUrl}
+                      onChange={(e) => setEditRepoUrl(e.target.value)}
+                      disabled={!cursorStatus?.connected || repoLoading}
+                    >
+                      <option value="">None — factory scaffold</option>
+                      {renderRepoOptions(editRepoUrl)}
+                    </select>
+                  </label>
+                  <label className={styles.repoField}>
+                    {editIsolateBranch ? "Production branch" : "Branch"}
+                    <input
+                      type="text"
+                      value={editBranch}
+                      onChange={(e) => setEditBranch(e.target.value)}
+                      placeholder="main"
+                      disabled={!editRepoUrl}
+                    />
+                  </label>
+                  {editRepoUrl && (
+                    <label className={styles.repoCheckbox}>
+                      <input
+                        type="checkbox"
+                        checked={editIsolateBranch}
+                        onChange={(e) => setEditIsolateBranch(e.target.checked)}
+                      />
+                      Isolate from production branch (factory work branch)
+                    </label>
+                  )}
+                  {editRepoUrl && editIsolateBranch && detail.work_branch && (
+                    <div className={styles.repoField}>
+                      <span>Factory work branch</span>
+                      <code className={styles.workBranch}>{detail.work_branch}</code>
+                      {detail.merge_status === "merged" && (
+                        <span className={styles.mergeBadge}>Merged to main</span>
+                      )}
+                    </div>
+                  )}
+                  <div className={styles.repoFormActions}>
+                    <button
+                      type="submit"
+                      className={styles.btnPrimary}
+                      disabled={loading || !repoSettingsDirty}
+                    >
+                      Save repository
+                    </button>
+                    {detail.repo_url && (
+                      <a
+                        href={detail.repo_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={styles.btnSecondary}
+                      >
+                        Open on GitHub ↗
+                      </a>
+                    )}
+                  </div>
+                </form>
+                {!cursorStatus?.connected && (
+                  <p className={styles.repoHint}>
+                    Connect your Cursor API key (header menu) to browse repositories linked to your GitHub account.
+                  </p>
+                )}
+                {repoNote && cursorStatus?.connected && (
+                  <p className={styles.repoHint}>{repoNote}</p>
+                )}
+              </section>
 
               {livePreviewUrl && (
                 <div className={styles.livePreview}>
@@ -1377,7 +1813,10 @@ export default function DashboardPage() {
                 <div className={styles.table}>
                   {runningTasks.length > 0 && (
                     <p className={styles.parallelHint}>
-                      {runningTasks.length} agent{runningTasks.length > 1 ? "s" : ""} running in parallel
+                      {runningTasks.length} agent{runningTasks.length > 1 ? "s" : ""} running
+                      {cursorStatus?.concurrency
+                        ? ` (max ${cursorStatus.concurrency.max_parallel} parallel)`
+                        : " in parallel"}
                     </p>
                   )}
                   {tasks.length === 0 ? (

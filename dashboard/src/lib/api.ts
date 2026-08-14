@@ -26,6 +26,10 @@ export interface Project {
   repo_url: string | null;
   state: ProjectState;
   branch: string;
+  base_branch: string;
+  work_branch: string | null;
+  isolate_branch: boolean;
+  merge_status: string | null;
   image_tag: string | null;
   preview_url: string | null;
   created_at: string;
@@ -140,6 +144,7 @@ export type NotificationType =
   | "project_finished"
   | "intake_ready"
   | "review_ready"
+  | "merge_ready"
   | "pipeline_blocked"
   | "preview_ready";
 
@@ -343,13 +348,76 @@ export async function fetchProjectDetail(id: string): Promise<ProjectDetail> {
   return res.json();
 }
 
-export async function createProject(name: string, description: string): Promise<Project> {
+export async function createProject(
+  name: string,
+  description: string,
+  options?: { repo_url?: string | null; branch?: string; base_branch?: string; isolate_branch?: boolean }
+): Promise<Project> {
   const res = await fetch(`${apiUrl()}/api/projects`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({
+      name,
+      description,
+      repo_url: options?.repo_url || null,
+      branch: options?.branch || options?.base_branch || "main",
+      base_branch: options?.base_branch || options?.branch || "main",
+      isolate_branch: options?.isolate_branch ?? true,
+    }),
   });
-  if (!res.ok) throw new Error("Failed to create project");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to create project");
+  }
+  return res.json();
+}
+
+export async function updateProjectRepo(
+  projectId: string,
+  params: {
+    repo_url?: string | null;
+    branch?: string;
+    base_branch?: string;
+    work_branch?: string;
+    isolate_branch?: boolean;
+    clear_repo?: boolean;
+  }
+): Promise<Project> {
+  const res = await fetch(`${apiUrl()}/api/projects/${projectId}`, {
+    method: "PATCH",
+    headers: headers(),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update repository");
+  }
+  return res.json();
+}
+
+export interface GithubRepository {
+  url: string;
+  name: string;
+}
+
+export interface GithubRepositoriesResponse {
+  connected: boolean;
+  repositories: GithubRepository[];
+  cached?: boolean;
+  note?: string;
+  error?: string;
+}
+
+export async function fetchGithubRepos(refresh = false): Promise<GithubRepositoriesResponse> {
+  const query = refresh ? "?refresh=true" : "";
+  const res = await fetch(`${apiUrl()}/api/cursor/repositories${query}`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to fetch GitHub repositories");
+  }
   return res.json();
 }
 
@@ -397,6 +465,20 @@ export async function promoteProject(projectId: string): Promise<{ production_ur
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Failed to promote");
+  }
+  return res.json();
+}
+
+export async function mergeToMain(
+  projectId: string
+): Promise<{ status: string; message: string; base_branch: string; work_branch: string }> {
+  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/merge-to-main`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to merge to main");
   }
   return res.json();
 }
@@ -562,6 +644,16 @@ export async function deleteSecret(projectId: string, keyName: string): Promise<
   if (!res.ok) throw new Error("Failed to delete secret");
 }
 
+export interface ConcurrencyBudget {
+  max_parallel: number;
+  active_cursor_agents: number;
+  cursor_slot_limit: number;
+  available_cursor_slots: number;
+  backend: AgentBackend;
+  factory_cap: number;
+  strategy: string;
+}
+
 export interface CursorConnectionStatus {
   connected: boolean;
   user_email?: string | null;
@@ -573,7 +665,36 @@ export interface CursorConnectionStatus {
   agent_backend?: AgentBackend;
   default_agent_backend?: AgentBackend;
   valid_backends?: AgentBackend[];
+  agent_model?: string;
+  agent_models?: AgentRoleModels;
+  default_agent_model?: string;
   cursor_model?: string;
+  max_parallel_agents?: number;
+  cursor_concurrent_limit?: number;
+  concurrency?: ConcurrencyBudget;
+}
+
+export interface CursorModel {
+  id: string;
+  display_name: string;
+  description?: string | null;
+  aliases?: string[];
+  default_params?: { id: string; value: string }[] | null;
+}
+
+export interface CursorModelsResponse {
+  connected: boolean;
+  models: CursorModel[];
+  note?: string;
+  error?: string;
+}
+
+export type AgentRoleModelKey = "architect" | "developer" | "reviewer";
+
+export interface AgentRoleModels {
+  architect: string;
+  developer: string;
+  reviewer: string;
 }
 
 export type AgentBackend = "cursor_cloud" | "cursor_local" | "local";
@@ -647,6 +768,7 @@ export async function fetchCursorUsage(): Promise<CursorUsage> {
 export async function updateAgentBackend(agentBackend: AgentBackend): Promise<{
   agent_backend: AgentBackend;
   valid_backends: AgentBackend[];
+  agent_model?: string;
 }> {
   const res = await fetch(`${apiUrl()}/api/settings/factory/agent-backend`, {
     method: "PUT",
@@ -656,6 +778,53 @@ export async function updateAgentBackend(agentBackend: AgentBackend): Promise<{
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Failed to update agent backend");
+  }
+  return res.json();
+}
+
+export async function updateAgentModel(agentModel: string): Promise<{
+  agent_model: string;
+  agent_models?: AgentRoleModels;
+  default_agent_model?: string;
+}> {
+  const res = await fetch(`${apiUrl()}/api/settings/factory/agent-model`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({ agent_model: agentModel }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update agent model");
+  }
+  return res.json();
+}
+
+export async function updateAgentModels(
+  models: Partial<AgentRoleModels>
+): Promise<{
+  agent_models: AgentRoleModels;
+  agent_model: string;
+}> {
+  const res = await fetch(`${apiUrl()}/api/settings/factory/agent-models`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify(models),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update agent models");
+  }
+  return res.json();
+}
+
+export async function fetchCursorModels(): Promise<CursorModelsResponse> {
+  const res = await fetch(`${apiUrl()}/api/cursor/models`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to fetch Cursor models");
   }
   return res.json();
 }

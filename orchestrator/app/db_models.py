@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,6 +17,10 @@ class ProjectRow(Base):
     repo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     state: Mapped[str] = mapped_column(String(64), nullable=False, default="REQUESTED")
     branch: Mapped[str] = mapped_column(String(255), nullable=False, default="main")
+    base_branch: Mapped[str] = mapped_column(String(64), nullable=False, default="main")
+    work_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    isolate_branch: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    merge_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     image_tag: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -93,6 +97,10 @@ class FactorySettingsRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     agent_backend: Mapped[str] = mapped_column(String(32), nullable=False, default="cursor_cloud")
+    agent_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_models: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    max_parallel_agents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cursor_concurrent_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preview_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     setup_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

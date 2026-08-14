@@ -1,4 +1,4 @@
-from app.services.work_planner import plan_parallel_work, work_plan_to_dict
+from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
 
 
 def test_default_parallel_streams():
@@ -31,5 +31,14 @@ def test_api_only_skips_frontend():
 def test_work_plan_serializable():
     units = plan_parallel_work([{"type": "feature", "content": "Dark mode"}], "App")
     plan = work_plan_to_dict(units)
-    assert len(plan) == 3
-    assert plan[0]["stream"] == "backend"
+    assert len(plan["units"]) == 3
+    assert plan["units"][0]["stream"] == "backend"
+
+
+def test_optimize_work_units_batches_many_features():
+    notes = [{"type": "feature", "content": f"Feature {i}"} for i in range(8)]
+    units = plan_parallel_work(notes, "Big app")
+    optimized = optimize_work_units(units, max_parallel=2)
+    assert len(optimized) <= 4
+    assert any(u.stream == "backend" for u in optimized)
+    assert any(u.stream == "frontend" for u in optimized)

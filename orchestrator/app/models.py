@@ -44,6 +44,18 @@ class ProjectCreate(BaseModel):
     name: str
     description: str
     repo_url: str | None = None
+    branch: str = "main"
+    base_branch: str | None = None
+    isolate_branch: bool = True
+
+
+class ProjectUpdate(BaseModel):
+    repo_url: str | None = None
+    branch: str | None = None
+    base_branch: str | None = None
+    work_branch: str | None = None
+    isolate_branch: bool | None = None
+    clear_repo: bool = False
 
 
 class Project(BaseModel):
@@ -53,6 +65,10 @@ class Project(BaseModel):
     repo_url: str | None = None
     state: ProjectState = ProjectState.REQUESTED
     branch: str = "main"
+    base_branch: str = "main"
+    work_branch: str | None = None
+    isolate_branch: bool = True
+    merge_status: str | None = None
     image_tag: str | None = None
     preview_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -104,6 +120,7 @@ class NotificationType(StrEnum):
     PROJECT_FINISHED = "project_finished"
     INTAKE_READY = "intake_ready"
     REVIEW_READY = "review_ready"
+    MERGE_READY = "merge_ready"
     PIPELINE_BLOCKED = "pipeline_blocked"
     PREVIEW_READY = "preview_ready"
 

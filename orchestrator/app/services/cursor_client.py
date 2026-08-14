@@ -93,6 +93,14 @@ class CursorClient:
         data = await self._request("GET", "/v1/agents", params={"limit": limit})
         return data.get("items") or data.get("agents") or []
 
+    async def list_repositories(self) -> list[dict[str, Any]]:
+        data = await self._request("GET", "/v1/repositories")
+        return data.get("items") or data.get("repositories") or []
+
+    async def list_models(self) -> list[dict[str, Any]]:
+        data = await self._request("GET", "/v1/models")
+        return data.get("items") or data.get("models") or []
+
     async def get_agent_usage(self, agent_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/v1/agents/{agent_id}/usage")
 
@@ -122,6 +130,7 @@ class CursorClient:
         repos: list[dict[str, str]] | None = None,
         starting_ref: str | None = None,
         model_id: str | None = None,
+        model_params: list[dict[str, str]] | None = None,
         mode: str = "agent",
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -131,7 +140,10 @@ class CursorClient:
         if name:
             body["name"] = name[:100]
         if model_id:
-            body["model"] = {"id": model_id}
+            model_body: dict[str, Any] = {"id": model_id}
+            if model_params:
+                model_body["params"] = model_params
+            body["model"] = model_body
         if repos:
             body["repos"] = repos
         return await self._request("POST", "/v1/agents", json=body)

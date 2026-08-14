@@ -1,4 +1,25 @@
 from app.services.cursor_client import TokenTotals, _match_member_spend
+from app.services.cursor_connection import _default_variant_params
+
+
+def test_default_variant_params_prefers_is_default():
+    model = {
+        "variants": [
+            {"params": [{"id": "fast", "value": "true"}], "isDefault": False},
+            {"params": [{"id": "fast", "value": "false"}], "isDefault": True},
+        ]
+    }
+    assert _default_variant_params(model) == [{"id": "fast", "value": "false"}]
+
+
+def test_default_variant_params_single_variant():
+    model = {
+        "variants": [
+            {"params": [{"id": "reasoning", "value": "high"}]},
+        ]
+    }
+    assert _default_variant_params(model) == [{"id": "reasoning", "value": "high"}]
+
 
 
 def test_token_totals_add():

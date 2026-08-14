@@ -16,10 +16,14 @@ from app.models import (
     Project,
     ProjectCreate,
     ProjectState,
+    ProjectUpdate,
     Task,
     TaskCreate,
     TaskStatus,
 )
+from app.services.git_branching import apply_isolated_branch_fields, setup_project_branches
+from app.services.secrets import get_secrets_for_runtime
+from app.workspace.provisioner import normalize_repo_url
 from app.worker import pipeline_queue
 from app.state_machine import StateMachineError, advance_project, fail_project
 from app.workspace.manager import WorkspaceManager
@@ -36,6 +40,10 @@ def _project_from_row(row: ProjectRow, preview_url: str | None = None) -> Projec
         repo_url=row.repo_url,
         state=ProjectState(row.state),
         branch=row.branch,
+        base_branch=row.base_branch or "main",
+        work_branch=row.work_branch,
+        isolate_branch=bool(row.isolate_branch),
+        merge_status=row.merge_status,
         image_tag=row.image_tag,
         preview_url=preview_url,
         created_at=row.created_at,
@@ -71,15 +79,39 @@ async def list_projects(db: AsyncSession = Depends(get_db)) -> list[Project]:
 
 @router.post("", response_model=Project, status_code=201)
 async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)) -> Project:
+    repo_url = None
+    if body.repo_url:
+        try:
+            repo_url = normalize_repo_url(body.repo_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    base = (body.base_branch or body.branch or "main").strip() or "main"
     row = ProjectRow(
         name=body.name,
         description=body.description,
-        repo_url=body.repo_url,
+        repo_url=repo_url,
+        branch=base,
+        base_branch=base,
+        isolate_branch=body.isolate_branch if repo_url else False,
+        merge_status="pending" if repo_url and body.isolate_branch else None,
         state=ProjectState.REQUESTED.value,
     )
+    if repo_url:
+        apply_isolated_branch_fields(row)
     db.add(row)
     await db.commit()
     await db.refresh(row)
+
+    if repo_url:
+        secrets = await get_secrets_for_runtime(db, row.id)
+        message = await setup_project_branches(
+            workspace,
+            row,
+            github_token=secrets.get("GITHUB_TOKEN"),
+        )
+        await db.commit()
+        workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
 
     await event_bus.publish(
         db,
@@ -100,7 +132,99 @@ async def get_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -> P
     row = await db.get(ProjectRow, project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    return _project_from_row(row)
+    meta = workspace.load_metadata(project_id)
+    preview_url = meta.get("preview_url") or meta.get("staging_url")
+    return _project_from_row(row, preview_url=preview_url)
+
+
+@router.patch("/{project_id}", response_model=Project)
+async def update_project(
+    project_id: UUID, body: ProjectUpdate, db: AsyncSession = Depends(get_db)
+) -> Project:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    repo_changed = False
+    branch_settings_changed = False
+    prev_repo = row.repo_url
+    prev_isolate = row.isolate_branch
+    prev_base = row.base_branch
+    prev_branch = row.branch
+    prev_work = row.work_branch
+
+    if body.clear_repo:
+        row.repo_url = None
+        repo_changed = True
+    elif body.repo_url is not None:
+        if not body.repo_url.strip():
+            if row.repo_url is not None:
+                row.repo_url = None
+                repo_changed = True
+        else:
+            try:
+                new_url = normalize_repo_url(body.repo_url)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if new_url != row.repo_url:
+                row.repo_url = new_url
+                repo_changed = True
+
+    if body.base_branch is not None:
+        new_base = body.base_branch.strip() or "main"
+        if new_base != row.base_branch:
+            row.base_branch = new_base
+            branch_settings_changed = True
+
+    if body.branch is not None:
+        new_branch = body.branch.strip() or "main"
+        if new_branch != row.branch:
+            row.branch = new_branch
+            branch_settings_changed = True
+
+    if body.work_branch is not None:
+        new_work = body.work_branch.strip() or None
+        if new_work != row.work_branch:
+            row.work_branch = new_work
+            branch_settings_changed = True
+
+    if body.isolate_branch is not None and body.isolate_branch != row.isolate_branch:
+        row.isolate_branch = body.isolate_branch
+        branch_settings_changed = True
+
+    if (
+        repo_changed
+        or branch_settings_changed
+        or prev_repo != row.repo_url
+        or prev_isolate != row.isolate_branch
+        or prev_base != row.base_branch
+        or prev_branch != row.branch
+        or prev_work != row.work_branch
+    ):
+        apply_isolated_branch_fields(row)
+        if repo_changed and row.repo_url and row.isolate_branch and row.merge_status is None:
+            row.merge_status = "pending"
+
+    await db.commit()
+    await db.refresh(row)
+
+    setup_needed = repo_changed or branch_settings_changed
+    if row.repo_url and setup_needed:
+        secrets = await get_secrets_for_runtime(db, row.id)
+        message = await setup_project_branches(
+            workspace,
+            row,
+            github_token=secrets.get("GITHUB_TOKEN"),
+            force_reclone=repo_changed,
+        )
+        await db.commit()
+        workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
+    elif repo_changed and not row.repo_url:
+        workspace.append_log(row.id, "pipeline.log", "[setup] GitHub repository unlinked")
+
+    meta = workspace.load_metadata(project_id)
+    preview_url = meta.get("preview_url") or meta.get("staging_url")
+    return _project_from_row(row, preview_url=preview_url)
 
 
 @router.post("/{project_id}/advance", response_model=Project)

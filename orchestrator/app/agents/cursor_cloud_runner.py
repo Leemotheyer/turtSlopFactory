@@ -33,12 +33,15 @@ class CursorCloudRunner:
         task_id: UUID,
         workspace_path: str,
         context: dict,
+        *,
+        model_id: str | None = None,
     ) -> tuple[bool, str, str]:
         """Returns (success, output, agent_id)."""
         prompt = build_role_prompt(role, context)
         repo_url = context.get("repo_url")
         branch = context.get("branch", "main")
         agent_name = f"factory-{role.value}-{str(task_id)[:8]}"
+        selected_model = model_id or settings.cursor_agent_model
 
         repos: list[dict[str, str]] | None = None
         if repo_url:
@@ -50,7 +53,7 @@ class CursorCloudRunner:
                     prompt,
                     name=agent_name,
                     repos=repos,
-                    model_id=settings.cursor_agent_model,
+                    model_id=selected_model,
                 )
             except CursorApiError as exc:
                 return False, f"Cursor cloud create failed: {exc.message}", ""

@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.db_models import DeploymentRow, ProjectRow
 from app.models import Deployment, ProjectState
+from app.services.git_branching import merge_work_branch_to_base, resolve_branch_plan
+from app.services.secrets import get_secrets_for_runtime
 from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
 from app.services.factory_settings import get_preview_host
@@ -32,8 +34,13 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
         "id": str(row.id),
         "name": row.name,
         "description": row.description,
+        "repo_url": row.repo_url,
         "state": row.state,
         "branch": row.branch,
+        "base_branch": row.base_branch or "main",
+        "work_branch": row.work_branch,
+        "isolate_branch": bool(row.isolate_branch),
+        "merge_status": row.merge_status,
         "image_tag": row.image_tag,
         "staging_url": preview["staging_url"],
         "production_url": meta.get("production_url"),
@@ -110,6 +117,43 @@ async def promote_to_production(project_id: UUID, db: AsyncSession = Depends(get
         "status": "promoted",
         "state": row.state,
         "production_url": meta.get("production_url"),
+    }
+
+
+@router.post("/{project_id}/merge-to-main")
+async def merge_to_main(project_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not row.repo_url or not row.isolate_branch:
+        raise HTTPException(status_code=400, detail="Project does not use isolated factory branches")
+
+    plan = resolve_branch_plan(row)
+    if not plan.work_branch:
+        raise HTTPException(status_code=400, detail="No factory work branch configured")
+
+    secrets = await get_secrets_for_runtime(db, project_id)
+    success, message = await merge_work_branch_to_base(
+        workspace,
+        project_id,
+        row.repo_url,
+        plan.base_branch,
+        plan.work_branch,
+        github_token=secrets.get("GITHUB_TOKEN"),
+    )
+    workspace.append_log(project_id, "pipeline.log", f"[merge] {message}")
+
+    if not success:
+        raise HTTPException(status_code=500, detail=message)
+
+    row.merge_status = "merged"
+    await db.commit()
+    return {
+        "status": "merged",
+        "message": message,
+        "base_branch": plan.base_branch,
+        "work_branch": plan.work_branch,
     }
 
 
