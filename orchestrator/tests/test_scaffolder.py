@@ -30,3 +30,12 @@ def test_scaffold_env_files():
         assert (repo / ".env.example").exists()
         gitignore = (repo / ".gitignore").read_text()
         assert ".env" in gitignore
+
+
+def test_scaffold_multiline_description_is_valid_python():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        description = '# turtSlopFactory\n\n## Refined specification\n"A quote" breaks naive templates'
+        scaffold_web_app(repo, "turtSlopFactory", description)
+        main_py = (repo / "app" / "main.py").read_text()
+        compile(main_py, "app/main.py", "exec")
