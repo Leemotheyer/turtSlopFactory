@@ -24,6 +24,24 @@ Live previews: `http://<server-ip>:9010` … `:9039`
 
 Requires the repo checkout on the Portainer host (for `deploy/Caddyfile`). Use the web-editor stack above if you prefer paste-only deploy.
 
+The stack uses **named Docker volumes** for persistence (no host bind mounts required):
+
+| Volume | Mount | Contents |
+|--------|-------|----------|
+| `factory_config` | `/data/factory` | Encryption key, optional `local.env` |
+| `workspace_data` | `/data/workspaces` | Project repos and artifacts |
+| `pgdata` | PostgreSQL data | Database (dashboard settings, projects) |
+
+To edit config on the host, attach a bind mount in Portainer:
+
+```yaml
+factory:
+  volumes:
+    - /opt/turtslopfactory/config:/data/factory
+```
+
+Or use the git-clone compose file (`docker-compose.yml`) which defaults to `./data/config`.
+
 ## Requirements
 
 - **Docker Standalone** endpoint (worker needs `/var/run/docker.sock`)

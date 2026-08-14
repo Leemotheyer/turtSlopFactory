@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -15,8 +16,36 @@ from app.services.instance_auth import refresh_api_key_cache
 
 logger = logging.getLogger(__name__)
 
-_KEY_FILE = Path(settings.workspace_root) / ".factory" / "encryption.key"
 _ephemeral_key: str | None = None
+
+
+def _config_dir() -> Path:
+    return Path(settings.factory_config_dir)
+
+
+def _key_paths() -> list[Path]:
+    """Preferred config dir, with legacy workspace path for upgrades."""
+    return [
+        _config_dir() / "encryption.key",
+        Path(settings.workspace_root) / ".factory" / "encryption.key",
+    ]
+
+
+def load_local_env_overrides() -> None:
+    """Apply ./data/config/local.env without overriding existing process env."""
+    env_file = _config_dir() / "local.env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+    logger.info("Loaded config overrides from %s", env_file)
 
 
 def ensure_encryption_key() -> str:
@@ -25,15 +54,17 @@ def ensure_encryption_key() -> str:
     if settings.secrets_encryption_key:
         return settings.secrets_encryption_key
 
-    try:
-        _KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        if _KEY_FILE.exists():
-            return _KEY_FILE.read_text().strip()
+    for path in _key_paths():
+        if path.exists():
+            return path.read_text().strip()
 
+    target = _key_paths()[0]
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
         key = Fernet.generate_key().decode()
-        _KEY_FILE.write_text(key)
-        _KEY_FILE.chmod(0o600)
-        logger.info("Generated instance encryption key at %s", _KEY_FILE)
+        target.write_text(key)
+        target.chmod(0o600)
+        logger.info("Generated instance encryption key at %s", target)
         return key
     except OSError as exc:
         if _ephemeral_key is None:
@@ -55,6 +86,7 @@ async def _ensure_factory_settings_columns() -> None:
 
 
 async def run_instance_bootstrap() -> None:
+    load_local_env_overrides()
     ensure_encryption_key()
     await _ensure_factory_settings_columns()
     async with SessionLocal() as session:

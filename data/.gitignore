@@ -1,0 +1,9 @@
+# Persistent factory data (bind-mounted from host by default)
+#
+# config/     Instance settings — survives container rebuilds
+# workspaces/ Project repos, artifacts, pipeline logs
+# postgres/   Database files
+
+config/
+workspaces/
+postgres/

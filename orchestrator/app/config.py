@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
     max_fix_attempts: int = 5
     workspace_root: str = "/data/workspaces"
+    factory_config_dir: str = "/data/factory"  # Persistent config (encryption key, local.env)
     api_key: str | None = None  # Set in production to require X-API-Key header
     worker_enabled: bool = True
     input_request_timeout_seconds: int = 300  # Auto-resolve after 5 min without human response

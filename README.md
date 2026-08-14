@@ -65,11 +65,29 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 | Database / Redis | Internal compose defaults |
 | CORS | Open for self-hosted |
 
+## Persistent data
+
+All state survives `docker compose down` and image upgrades via bind mounts:
+
+```
+./data/
+  config/       → /data/factory   encryption key, optional local.env
+  workspaces/   → project repos, artifacts, logs
+  postgres/     → database (projects, settings, secrets metadata)
+```
+
+Copy `data/config/local.env.example` to `data/config/local.env` for optional env overrides without editing compose.
+
+Change the host path with `FACTORY_DATA_DIR=/mnt/factory docker compose up -d`.
+
+**Portainer** uses named volumes `factory_config`, `workspace_data`, and `pgdata` instead (no host paths required).
+
 ## Optional env overrides
 
 ```env
-HTTP_PORT=8044      # default; change if 8044 is taken
-IMAGE_TAG=latest    # pin GHCR release
+FACTORY_DATA_DIR=./data  # host path for config/workspaces/postgres (default)
+HTTP_PORT=8044           # default; change if 8044 is taken
+IMAGE_TAG=latest         # pin GHCR release
 PUBLIC_HOST=factory.example.com
 ```
 

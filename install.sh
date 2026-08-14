@@ -25,6 +25,10 @@ if [ ! -d "$DIR" ]; then
 fi
 
 cd "$DIR"
+mkdir -p data/config data/workspaces data/postgres
+if [ ! -f data/config/local.env ] && [ -f data/config/local.env.example ]; then
+  cp data/config/local.env.example data/config/local.env
+fi
 echo "Pulling images ..."
 $COMPOSE pull
 echo "Starting turtSlopFactory ..."

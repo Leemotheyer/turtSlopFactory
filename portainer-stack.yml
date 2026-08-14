@@ -51,6 +51,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
       REDIS_URL: redis://redis:6379/0
       WORKSPACE_ROOT: /data/workspaces
+      FACTORY_CONFIG_DIR: /data/factory
       WORKER_ENABLED: "true"
       CORS_ALLOW_ALL: "true"
       TRUST_PROXY_HEADERS: "true"
@@ -60,6 +61,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - factory_config:/data/factory
       - workspace_data:/data/workspaces
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
@@ -104,6 +106,7 @@ services:
 
 volumes:
   pgdata:
+  factory_config:
   workspace_data:
 
 networks:

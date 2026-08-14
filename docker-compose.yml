@@ -2,7 +2,7 @@
 #   docker compose up -d
 #   open http://localhost:8044
 #
-# One URL (port 8044): dashboard + API. Live previews on ports 9010–9039.
+# Persistent data: ./data/config, ./data/workspaces, ./data/postgres (bind-mounted)
 # Optional dev build: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 services:
@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: factory
       POSTGRES_DB: factory
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${FACTORY_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
       interval: 5s
@@ -37,10 +37,14 @@ services:
   factory:
     image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    env_file:
+      - path: ${FACTORY_DATA_DIR:-./data}/config/local.env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
       REDIS_URL: redis://redis:6379/0
       WORKSPACE_ROOT: /data/workspaces
+      FACTORY_CONFIG_DIR: /data/factory
       WORKER_ENABLED: "true"
       CORS_ALLOW_ALL: "true"
       TRUST_PROXY_HEADERS: "true"
@@ -50,7 +54,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - workspace_data:/data/workspaces
+      - ${FACTORY_DATA_DIR:-./data}/config:/data/factory
+      - ${FACTORY_DATA_DIR:-./data}/workspaces:/data/workspaces
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9010-9039:9010-9039"
@@ -90,10 +95,6 @@ services:
       - dashboard
     networks:
       - factory
-
-volumes:
-  pgdata:
-  workspace_data:
 
 networks:
   factory:
