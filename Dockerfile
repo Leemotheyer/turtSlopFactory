@@ -13,6 +13,8 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 RUN npm run build
 
+FROM node:22-bookworm-slim AS node-runtime
+
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
@@ -41,6 +43,9 @@ RUN pip install --no-cache-dir .
 COPY --from=dashboard-build /app/public /dashboard/public
 COPY --from=dashboard-build /app/.next/standalone /dashboard/
 COPY --from=dashboard-build /app/.next/static /dashboard/.next/static
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+
+RUN node --version
 
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 COPY deploy/entrypoint.sh /entrypoint.sh
