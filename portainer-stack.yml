@@ -19,6 +19,7 @@ services:
       WORKER_ENABLED: "true"
       CORS_ALLOW_ALL: "true"
       TRUST_PROXY_HEADERS: "true"
+      DASHBOARD_PORT: "8044"
     volumes:
       - factory_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
