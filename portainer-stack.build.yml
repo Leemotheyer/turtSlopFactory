@@ -1,14 +1,15 @@
-# Paste into Portainer → Stacks → Web editor
-# Open http://<server-ip>:8044 after deploy
+# Portainer stack — build from GitHub (no GHCR pull required)
+# Stacks → Add stack → Repository: https://github.com/Leemotheyer/turtSlopFactory
+# Compose path: portainer-stack.build.yml
 #
-# If deploy fails with "denied", the GHCR image is private — see docs/PORTAINER.md
-# (add a ghcr.io registry in Portainer, or use the Git-repo stack that builds locally).
-#
-# All persistent data lives in the factory_data volume (config, workspaces, postgres, redis).
+# Or paste this file into the Web editor if your Portainer supports compose build.
 
 services:
   factory:
-    image: ghcr.io/leemotheyer/turtslopfactory:latest
+    build:
+      context: https://github.com/Leemotheyer/turtSlopFactory.git#main
+      dockerfile: Dockerfile
+    image: turtslopfactory:local
     restart: unless-stopped
     environment:
       FACTORY_DATA: /data
@@ -30,7 +31,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 45s
+      start_period: 90s
 
 volumes:
   factory_data:

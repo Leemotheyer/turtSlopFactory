@@ -43,9 +43,11 @@ Only two mounts are required:
 
 ## Portainer
 
-Paste [`portainer-stack.yml`](portainer-stack.yml) into **Stacks → Web editor**. One service, one named volume. Open `http://<server-ip>:8044`.
+Paste [`portainer-stack.yml`](portainer-stack.yml) into **Stacks → Web editor**, or use [`portainer-stack.build.yml`](portainer-stack.build.yml) to build on your server (no GHCR pull).
 
-See [docs/PORTAINER.md](docs/PORTAINER.md).
+If deploy fails with **`denied`**, the GHCR image is private — see [docs/PORTAINER.md](docs/PORTAINER.md).
+
+Open `http://<server-ip>:8044`.
 
 ## Build from source
 
@@ -88,6 +90,8 @@ Copy `data/config/local.env.example` to `${FACTORY_DATA}/config/local.env` for o
 ```bash
 FACTORY_DATA=/mnt/factory docker compose up -d
 ```
+
+**Quotes:** not needed for normal paths (`./data`, `/mnt/factory`). Only use quotes if the path contains spaces, e.g. `FACTORY_DATA="/opt/my factory"`. In Portainer’s environment UI, enter the path **without** quotes.
 
 Legacy installs that used `FACTORY_DATA_DIR` still work — compose falls back to it when `FACTORY_DATA` is unset.
 
