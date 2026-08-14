@@ -8,7 +8,7 @@ services:
   factory:
     build:
       context: https://github.com/Leemotheyer/turtSlopFactory.git#main
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.factory
     image: turtslopfactory:local
     restart: unless-stopped
     environment:

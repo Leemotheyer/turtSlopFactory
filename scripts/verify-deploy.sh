@@ -15,10 +15,10 @@ echo "Checking compose files reference turtslopfactory image..."
 grep -q 'ghcr.io/leemotheyer/turtslopfactory' docker-compose.yml
 grep -q 'ghcr.io/leemotheyer/turtslopfactory' portainer-stack.yml
 
-echo "Checking Dockerfile includes git and node..."
-grep -q '\bgit\b' Dockerfile
-grep -q 'node-runtime' Dockerfile
-grep -q 'bookworm-slim AS dashboard-build' Dockerfile
+echo "Checking Dockerfile.factory includes git and node..."
+grep -q '\bgit\b' Dockerfile.factory
+grep -q 'node-runtime' Dockerfile.factory
+grep -q 'bookworm-slim AS dashboard-build' Dockerfile.factory
 
 echo "Checking orchestrator startup order..."
 grep -A2 'async def lifespan' orchestrator/app/main.py | grep -q init_db
