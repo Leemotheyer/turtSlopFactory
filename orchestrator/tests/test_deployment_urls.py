@@ -40,3 +40,27 @@ def test_resolve_gateway_nonstandard_port():
     assert api_url == "http://192.168.1.204:8044"
     assert ws_url == "ws://192.168.1.204:8044"
     assert gateway is True
+
+
+def test_resolve_gateway_localhost_nonstandard_port():
+    """localhost:8044 must use gateway mode, not internal :8000."""
+    request = MagicMock()
+    request.headers = {"host": "127.0.0.1:8044"}
+    request.url.scheme = "http"
+
+    host, api_url, ws_url, gateway = resolve_request_context(request)
+    assert host == "127.0.0.1"
+    assert api_url == "http://127.0.0.1:8044"
+    assert ws_url == "ws://127.0.0.1:8044"
+    assert gateway is True
+
+
+def test_resolve_gateway_localhost_name_nonstandard_port():
+    request = MagicMock()
+    request.headers = {"host": "localhost:8044"}
+    request.url.scheme = "http"
+
+    host, api_url, _, gateway = resolve_request_context(request)
+    assert host == "localhost"
+    assert api_url == "http://localhost:8044"
+    assert gateway is True

@@ -228,24 +228,48 @@ function browserOrigin(): string {
   return window.location.origin;
 }
 
-/** Drop stale URLs that point at the internal API port (not exposed in gateway deploy). */
+/** Drop stale URLs that point at the internal API port or a different browser origin. */
 function sanitizeApiUrl(url: string): string {
   const origin = browserOrigin();
   try {
     const parsed = new URL(url);
     const originParsed = new URL(origin);
-    if (
-      parsed.hostname === originParsed.hostname &&
-      parsed.port === "8000" &&
-      originParsed.port &&
-      originParsed.port !== "8000"
-    ) {
+    // Internal API port is never exposed in gateway deploys
+    if (parsed.port === "8000" && originParsed.port !== "8000") {
+      return origin;
+    }
+    // Stale host from another machine/session (e.g. localhost saved, now on LAN IP)
+    if (parsed.hostname !== originParsed.hostname) {
+      return origin;
+    }
+    // Same host but wrong port while browser is on the gateway port
+    if (parsed.port !== originParsed.port && originParsed.port && originParsed.port !== "8000") {
       return origin;
     }
   } catch {
     return origin;
   }
   return url;
+}
+
+function resolveApiUrlFromConfig(): string {
+  const origin = browserOrigin();
+  if (publicConfig?.gateway_mode) {
+    return origin;
+  }
+  if (publicConfig?.api_url) {
+    return sanitizeApiUrl(publicConfig.api_url);
+  }
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("factory_api_url");
+    if (saved) return sanitizeApiUrl(saved);
+  }
+  return origin;
+}
+
+async function resolvedApiUrl(): Promise<string> {
+  await ensurePublicConfig();
+  return resolveApiUrlFromConfig();
 }
 
 async function discoverBootstrapUrl(): Promise<string> {
@@ -257,12 +281,16 @@ async function discoverBootstrapUrl(): Promise<string> {
     const res = await fetch(`${origin}/api/settings/public`, { cache: "no-store" });
     if (res.ok) {
       const cfg = (await res.json()) as PublicConfig;
-      publicConfig = cfg;
-      const apiUrl = sanitizeApiUrl(cfg.api_url || origin);
-      publicConfig.api_url = apiUrl;
-      publicConfig.ws_url = cfg.ws_url || apiUrl.replace(/^http/, "ws");
-      localStorage.setItem("factory_api_url", apiUrl);
-      return apiUrl;
+      const apiUrlResolved = cfg.gateway_mode ? origin : sanitizeApiUrl(cfg.api_url || origin);
+      publicConfig = {
+        ...cfg,
+        api_url: apiUrlResolved,
+        ws_url: cfg.gateway_mode
+          ? origin.replace(/^http/, "ws")
+          : cfg.ws_url || apiUrlResolved.replace(/^http/, "ws"),
+      };
+      localStorage.setItem("factory_api_url", publicConfig.api_url);
+      return publicConfig.api_url;
     }
   } catch {
     /* fall through */
@@ -275,13 +303,7 @@ async function discoverBootstrapUrl(): Promise<string> {
 }
 
 function apiUrl(): string {
-  if (publicConfig?.api_url) return sanitizeApiUrl(publicConfig.api_url);
-  if (typeof window !== "undefined") {
-    const saved = localStorage.getItem("factory_api_url");
-    if (saved) return sanitizeApiUrl(saved);
-    return browserOrigin();
-  }
-  return "http://localhost:8000";
+  return resolveApiUrlFromConfig();
 }
 
 export async function ensurePublicConfig(): Promise<PublicConfig> {
@@ -291,11 +313,14 @@ export async function ensurePublicConfig(): Promise<PublicConfig> {
     const res = await fetch(`${bootstrap}/api/settings/public`, { cache: "no-store" });
     if (res.ok) {
       const cfg = (await res.json()) as PublicConfig;
-      const apiUrlResolved = sanitizeApiUrl(cfg.api_url || bootstrap);
+      const origin = browserOrigin();
+      const apiUrlResolved = cfg.gateway_mode ? origin : sanitizeApiUrl(cfg.api_url || bootstrap);
       publicConfig = {
         ...cfg,
         api_url: apiUrlResolved,
-        ws_url: cfg.ws_url || apiUrlResolved.replace(/^http/, "ws"),
+        ws_url: cfg.gateway_mode
+          ? origin.replace(/^http/, "ws")
+          : cfg.ws_url || apiUrlResolved.replace(/^http/, "ws"),
       };
       if (typeof window !== "undefined") {
         localStorage.setItem("factory_api_url", publicConfig.api_url);
@@ -319,7 +344,7 @@ export async function ensurePublicConfig(): Promise<PublicConfig> {
 
 export async function fetchSetupStatus(): Promise<SetupStatus> {
   await ensurePublicConfig();
-  const res = await fetch(`${apiUrl()}/api/settings/setup`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/setup`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch setup status");
   return res.json();
 }
@@ -328,7 +353,7 @@ export async function completeSetup(body: {
   preview_host?: string;
   api_key?: string;
 }): Promise<SetupStatus> {
-  const res = await fetch(`${apiUrl()}/api/settings/setup`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/setup`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify(body),
@@ -343,7 +368,7 @@ export async function completeSetup(body: {
 }
 
 export async function updatePreviewHost(previewHost: string): Promise<SetupStatus> {
-  const res = await fetch(`${apiUrl()}/api/settings/factory/preview-host`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/factory/preview-host`, {
     method: "PUT",
     headers: headers(),
     body: JSON.stringify({ preview_host: previewHost }),
@@ -356,7 +381,7 @@ export async function updatePreviewHost(previewHost: string): Promise<SetupStatu
 export async function updateInstanceApiKey(apiKey: string | null): Promise<SetupStatus & { verified?: boolean; message?: string }> {
   const trimmed = apiKey?.trim() || "";
   const authKey = trimmed && !hasStoredFactoryApiKey() ? trimmed : undefined;
-  const res = await fetch(`${apiUrl()}/api/settings/factory/api-key`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/factory/api-key`, {
     method: "PUT",
     headers: headers(authKey),
     body: JSON.stringify({ api_key: apiKey }),
@@ -368,7 +393,7 @@ export async function updateInstanceApiKey(apiKey: string | null): Promise<Setup
 }
 
 export async function verifyFactoryApiKey(apiKey: string): Promise<{ verified: boolean; message: string }> {
-  const res = await fetch(`${apiUrl()}/api/settings/verify-key`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/verify-key`, {
     cache: "no-store",
     headers: headers(apiKey),
   });
@@ -411,13 +436,13 @@ export function hasStoredFactoryApiKey(): boolean {
 }
 
 export async function fetchProjects(): Promise<Project[]> {
-  const res = await fetch(`${apiUrl()}/api/projects`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch projects");
   return res.json();
 }
 
 export async function fetchProjectDetail(id: string): Promise<ProjectDetail> {
-  const res = await fetch(`${apiUrl()}/api/projects/${id}/detail`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${id}/detail`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch project detail");
   return res.json();
 }
@@ -427,7 +452,7 @@ export async function createProject(
   description: string,
   options?: { repo_url?: string | null; branch?: string; base_branch?: string; isolate_branch?: boolean }
 ): Promise<Project> {
-  const res = await fetch(`${apiUrl()}/api/projects`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({
@@ -457,7 +482,7 @@ export async function updateProjectRepo(
     clear_repo?: boolean;
   }
 ): Promise<Project> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}`, {
     method: "PATCH",
     headers: headers(),
     body: JSON.stringify(params),
@@ -484,7 +509,7 @@ export interface GithubRepositoriesResponse {
 
 export async function fetchGithubRepos(refresh = false): Promise<GithubRepositoriesResponse> {
   const query = refresh ? "?refresh=true" : "";
-  const res = await fetch(`${apiUrl()}/api/cursor/repositories${query}`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/cursor/repositories${query}`, {
     cache: "no-store",
     headers: headers(),
   });
@@ -496,7 +521,7 @@ export async function fetchGithubRepos(refresh = false): Promise<GithubRepositor
 }
 
 export async function fetchDiscovery(projectId: string): Promise<DiscoverySession | null> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/discovery`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/discovery`, {
     cache: "no-store",
     headers: headers(),
   });
@@ -510,7 +535,7 @@ export async function submitIntake(
   projectId: string,
   responses: Record<string, string | string[]>
 ): Promise<DiscoverySession> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/discovery/submit`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/discovery/submit`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ responses }),
@@ -523,7 +548,7 @@ export async function submitIntake(
 }
 
 export async function runPipeline(projectId: string): Promise<{ status: string }> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/run`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/run`, {
     method: "POST",
     headers: headers(),
   });
@@ -532,7 +557,7 @@ export async function runPipeline(projectId: string): Promise<{ status: string }
 }
 
 export async function promoteProject(projectId: string): Promise<{ production_url: string | null }> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/promote`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/promote`, {
     method: "POST",
     headers: headers(),
   });
@@ -546,7 +571,7 @@ export async function promoteProject(projectId: string): Promise<{ production_ur
 export async function mergeToMain(
   projectId: string
 ): Promise<{ status: string; message: string; base_branch: string; work_branch: string }> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/merge-to-main`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/merge-to-main`, {
     method: "POST",
     headers: headers(),
   });
@@ -558,13 +583,13 @@ export async function mergeToMain(
 }
 
 export async function fetchTasks(): Promise<Task[]> {
-  const res = await fetch(`${apiUrl()}/api/tasks`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/tasks`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch tasks");
   return res.json();
 }
 
 export async function fetchProjectTasks(projectId: string): Promise<Task[]> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/tasks`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/tasks`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch tasks");
   return res.json();
 }
@@ -572,39 +597,39 @@ export async function fetchProjectTasks(projectId: string): Promise<Task[]> {
 export async function fetchEvents(limit = 100, projectId?: string): Promise<FactoryEvent[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (projectId) params.set("project_id", projectId);
-  const res = await fetch(`${apiUrl()}/api/events?${params}`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/events?${params}`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch events");
   return res.json();
 }
 
 export async function fetchDeployments(projectId: string): Promise<Deployment[]> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/deployments`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/deployments`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch deployments");
   return res.json();
 }
 
 export async function fetchArtifact(projectId: string, name: string): Promise<string> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/artifacts/${name}`, { headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/artifacts/${name}`, { headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch artifact");
   const data = await res.json();
   return data.content;
 }
 
 export async function fetchLog(projectId: string, name: string): Promise<string> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/logs/${name}`, { headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/logs/${name}`, { headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch log");
   const data = await res.json();
   return data.content;
 }
 
 export async function fetchProgress(projectId: string): Promise<ProgressDigest> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/progress`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/progress`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch progress");
   return res.json();
 }
 
 export async function fetchNotes(projectId: string): Promise<ProjectNote[]> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/notes`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/notes`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch notes");
   return res.json();
 }
@@ -614,7 +639,7 @@ export async function addNote(
   content: string,
   noteType: NoteType = "instruction"
 ): Promise<ProjectNote> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/notes`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/notes`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ content, note_type: noteType }),
@@ -624,7 +649,7 @@ export async function addNote(
 }
 
 export async function fetchInputRequests(projectId: string): Promise<InputRequest[]> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/input-requests`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/input-requests`, {
     cache: "no-store",
     headers: headers(),
   });
@@ -637,7 +662,7 @@ export async function respondToInput(
   requestId: string,
   response: string
 ): Promise<InputRequest> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/input-requests/${requestId}/respond`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/input-requests/${requestId}/respond`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ response }),
@@ -649,7 +674,7 @@ export async function respondToInput(
 export async function fetchNotifications(unreadOnly = false): Promise<Notification[]> {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
-  const res = await fetch(`${apiUrl()}/api/notifications?${params}`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/notifications?${params}`, {
     cache: "no-store",
     headers: headers(),
   });
@@ -658,7 +683,7 @@ export async function fetchNotifications(unreadOnly = false): Promise<Notificati
 }
 
 export async function fetchUnreadCount(): Promise<number> {
-  const res = await fetch(`${apiUrl()}/api/notifications/unread-count`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/notifications/unread-count`, {
     cache: "no-store",
     headers: headers(),
   });
@@ -668,7 +693,7 @@ export async function fetchUnreadCount(): Promise<number> {
 }
 
 export async function markNotificationRead(notificationId: string): Promise<void> {
-  const res = await fetch(`${apiUrl()}/api/notifications/${notificationId}/read`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/notifications/${notificationId}/read`, {
     method: "POST",
     headers: headers(),
   });
@@ -676,7 +701,7 @@ export async function markNotificationRead(notificationId: string): Promise<void
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
-  const res = await fetch(`${apiUrl()}/api/notifications/read-all`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/notifications/read-all`, {
     method: "POST",
     headers: headers(),
   });
@@ -684,7 +709,7 @@ export async function markAllNotificationsRead(): Promise<void> {
 }
 
 export async function fetchSecrets(projectId: string): Promise<ProjectSecrets> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/secrets`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/secrets`, {
     cache: "no-store",
     headers: headers(),
   });
@@ -698,7 +723,7 @@ export async function setSecret(
   value: string,
   description = ""
 ): Promise<ProjectSecret> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/secrets`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/secrets`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ key_name: keyName, value, description }),
@@ -711,7 +736,7 @@ export async function setSecret(
 }
 
 export async function deleteSecret(projectId: string, keyName: string): Promise<void> {
-  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/secrets/${encodeURIComponent(keyName)}`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/secrets/${encodeURIComponent(keyName)}`, {
     method: "DELETE",
     headers: headers(),
   });
@@ -810,7 +835,7 @@ export interface CursorUsage {
 }
 
 export async function fetchCursorStatus(): Promise<CursorConnectionStatus> {
-  const res = await fetch(`${apiUrl()}/api/cursor/status`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/cursor/status`, { cache: "no-store", headers: headers() });
   if (!res.ok) {
     throw new Error(await parseApiError(res, "Failed to fetch Cursor status"));
   }
@@ -818,7 +843,7 @@ export async function fetchCursorStatus(): Promise<CursorConnectionStatus> {
 }
 
 export async function connectCursor(apiKey: string): Promise<CursorConnectionStatus> {
-  const res = await fetch(`${apiUrl()}/api/cursor/connect`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/cursor/connect`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ api_key: apiKey }),
@@ -830,7 +855,7 @@ export async function connectCursor(apiKey: string): Promise<CursorConnectionSta
 }
 
 export async function disconnectCursor(): Promise<void> {
-  const res = await fetch(`${apiUrl()}/api/cursor/disconnect`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/cursor/disconnect`, {
     method: "DELETE",
     headers: headers(),
   });
@@ -838,7 +863,7 @@ export async function disconnectCursor(): Promise<void> {
 }
 
 export async function fetchCursorUsage(): Promise<CursorUsage> {
-  const res = await fetch(`${apiUrl()}/api/cursor/usage`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${await resolvedApiUrl()}/api/cursor/usage`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error("Failed to fetch Cursor usage");
   return res.json();
 }
@@ -848,7 +873,7 @@ export async function updateAgentBackend(agentBackend: AgentBackend): Promise<{
   valid_backends: AgentBackend[];
   agent_model?: string;
 }> {
-  const res = await fetch(`${apiUrl()}/api/settings/factory/agent-backend`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/factory/agent-backend`, {
     method: "PUT",
     headers: headers(),
     body: JSON.stringify({ agent_backend: agentBackend }),
@@ -865,7 +890,7 @@ export async function updateAgentModel(agentModel: string): Promise<{
   agent_models?: AgentRoleModels;
   default_agent_model?: string;
 }> {
-  const res = await fetch(`${apiUrl()}/api/settings/factory/agent-model`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/factory/agent-model`, {
     method: "PUT",
     headers: headers(),
     body: JSON.stringify({ agent_model: agentModel }),
@@ -883,7 +908,7 @@ export async function updateAgentModels(
   agent_models: AgentRoleModels;
   agent_model: string;
 }> {
-  const res = await fetch(`${apiUrl()}/api/settings/factory/agent-models`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/factory/agent-models`, {
     method: "PUT",
     headers: headers(),
     body: JSON.stringify(models),
@@ -896,7 +921,7 @@ export async function updateAgentModels(
 }
 
 export async function fetchCursorModels(): Promise<CursorModelsResponse> {
-  const res = await fetch(`${apiUrl()}/api/cursor/models`, {
+  const res = await fetch(`${await resolvedApiUrl()}/api/cursor/models`, {
     cache: "no-store",
     headers: headers(),
   });
@@ -921,7 +946,10 @@ export function agentBackendLabel(backend: AgentBackend): string {
 }
 
 export function getWebSocketUrl(): string {
+  if (publicConfig?.gateway_mode) {
+    return browserOrigin().replace(/^http/, "ws");
+  }
   if (publicConfig?.ws_url) return publicConfig.ws_url;
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
-  return apiUrl().replace(/^http/, "ws");
+  return browserOrigin().replace(/^http/, "ws");
 }
