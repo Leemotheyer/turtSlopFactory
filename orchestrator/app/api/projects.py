@@ -234,7 +234,7 @@ async def update_project(
         workspace.append_log(row.id, "pipeline.log", "[setup] GitHub repository unlinked")
 
     meta = workspace.load_metadata(project_id)
-    preview_url = meta.get("preview_url") or meta.get("staging_url")
+    preview_url = preview_from_metadata(meta, project_id=project_id)["preview_url"]
     return _project_from_row(row, preview_url=preview_url)
 
 
