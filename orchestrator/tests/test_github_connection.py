@@ -51,7 +51,8 @@ async def test_verify_and_connect_github(mock_client_cls, db_session):
     stored = await get_github_connection_status(db_session)
     assert stored["connected"] is True
     assert stored["github_login"] == "devuser"
-    assert stored["masked_github_token"].endswith("****")
+    assert "gh" in stored["masked_github_token"]
+    assert "****" in stored["masked_github_token"]
 
     disconnected = await disconnect_github_token(db_session)
     assert disconnected["connected"] is False
