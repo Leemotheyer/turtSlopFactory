@@ -63,10 +63,10 @@ async def _expire_input_requests_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await init_db()
     await run_instance_bootstrap()
     await event_bus.connect()
     await pipeline_queue.connect()
-    await init_db()
 
     redis_task = asyncio.create_task(_relay_redis_events())
     expire_task = asyncio.create_task(_expire_input_requests_loop())

@@ -74,24 +74,36 @@ def ensure_encryption_key() -> str:
         return _ephemeral_key
 
 
+async def _table_exists(conn, table_name: str) -> bool:
+    result = await conn.scalar(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = :name)"
+        ),
+        {"name": table_name},
+    )
+    return bool(result)
+
+
 async def _ensure_factory_settings_columns() -> None:
-    """Add new factory_settings columns on existing databases (no Alembic)."""
+    """Add new columns on existing databases (no Alembic)."""
     statements = [
-        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS preview_host VARCHAR(255)",
-        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS encrypted_api_key TEXT",
-        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN DEFAULT FALSE",
-        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS agent_model VARCHAR(128)",
-        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS agent_models JSONB",
-        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS max_parallel_agents INTEGER",
-        "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS cursor_concurrent_limit INTEGER",
-        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS base_branch VARCHAR(64) DEFAULT 'main'",
-        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS work_branch VARCHAR(255)",
-        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS isolate_branch BOOLEAN DEFAULT TRUE",
-        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS merge_status VARCHAR(32)",
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS preview_host VARCHAR(255)"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS encrypted_api_key TEXT"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN DEFAULT FALSE"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS agent_model VARCHAR(128)"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS agent_models JSONB"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS max_parallel_agents INTEGER"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS cursor_concurrent_limit INTEGER"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS base_branch VARCHAR(64) DEFAULT 'main'"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS work_branch VARCHAR(255)"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS isolate_branch BOOLEAN DEFAULT TRUE"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS merge_status VARCHAR(32)"),
     ]
     async with engine.begin() as conn:
-        for stmt in statements:
-            await conn.execute(text(stmt))
+        for table, stmt in statements:
+            if await _table_exists(conn, table):
+                await conn.execute(text(stmt))
 
 
 async def run_instance_bootstrap() -> None:
