@@ -8,7 +8,7 @@ from app.services.instance_auth import get_effective_api_key
 class APIKeyMiddleware(BaseHTTPMiddleware):
     """Require X-API-Key when an API key is configured (env or dashboard)."""
 
-    EXEMPT_PREFIXES = ("/preview/", "/ws/")
+    EXEMPT_PREFIXES = ("/preview/", "/ui", "/ws/")
 
     EXEMPT = {"/health", "/docs", "/openapi.json", "/redoc", "/api/settings/public", "/api/settings/setup"}
 
