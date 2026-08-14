@@ -2,7 +2,7 @@
 :80 {
 	encode gzip
 
-	@api path /api/* /docs* /openapi.json /redoc* /health /ws/*
+	@api path /api/* /docs* /openapi.json /redoc* /health /ws/* /ui*
 	handle @api {
 		reverse_proxy 127.0.0.1:8000 {
 			header_up Host {host}

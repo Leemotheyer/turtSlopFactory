@@ -1,9 +1,11 @@
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import cursor as cursor_api
 from app.api import github as github_api
@@ -125,6 +127,10 @@ def create_app() -> FastAPI:
     app.include_router(cursor_api.router, prefix="/api")
     app.include_router(github_api.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
+
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/ui", StaticFiles(directory=str(static_dir), html=True), name="static-ui")
 
     return app
 

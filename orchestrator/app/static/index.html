@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1117" />
+  <meta name="description" content="turtSlopFactory — autonomous agentic software development" />
+  <title>turtSlopFactory</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <header class="header">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">🐢</div>
+        <div>
+          <h1>turtSlopFactory</h1>
+          <p>Start a project, check back later</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <span class="status-pill" id="live-status">
+          <span class="dot"></span>
+          <span class="status-text">Live</span>
+        </span>
+        <span class="badge" id="project-count">0 projects</span>
+        <button type="button" class="icon-btn" id="notif-btn" aria-label="Notifications">
+          🔔
+          <span class="count hidden" id="notif-count">0</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="banner error hidden" id="error-banner" role="alert"></div>
+
+    <div class="backdrop hidden" id="backdrop" aria-hidden="true"></div>
+    <div class="notif-dropdown hidden" id="notif-dropdown"></div>
+
+    <div class="body">
+      <aside class="panel panel-sidebar" data-panel="projects">
+        <div class="sidebar-header">
+          <h2>Projects</h2>
+        </div>
+        <ul class="project-list" id="project-list"></ul>
+        <form class="create-form" id="create-form">
+          <h3>New project</h3>
+          <input type="text" id="new-name" placeholder="e.g. Invoice Manager" required autocomplete="off" />
+          <textarea id="new-desc" placeholder="Describe what to build — agents handle the rest" rows="4"></textarea>
+          <button type="submit" class="btn btn-primary">Create &amp; start</button>
+        </form>
+      </aside>
+
+      <main class="panel panel-main active" data-panel="status" id="main-content"></main>
+
+      <aside class="panel panel-events" data-panel="activity">
+        <h2>Live events</h2>
+        <ul class="event-list" id="event-list"></ul>
+      </aside>
+    </div>
+
+    <nav class="mobile-nav" aria-label="Main navigation">
+      <button type="button" data-panel="projects">
+        <span class="icon">📁</span>
+        <span>Projects</span>
+      </button>
+      <button type="button" class="active" data-panel="status">
+        <span class="icon">📊</span>
+        <span>Status</span>
+      </button>
+      <button type="button" data-panel="activity">
+        <span class="icon">⚡</span>
+        <span>Activity</span>
+      </button>
+    </nav>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
