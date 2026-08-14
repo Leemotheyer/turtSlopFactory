@@ -93,6 +93,10 @@ class CursorClient:
         data = await self._request("GET", "/v1/agents", params={"limit": limit})
         return data.get("items") or data.get("agents") or []
 
+    async def list_repositories(self) -> list[dict[str, Any]]:
+        data = await self._request("GET", "/v1/repositories")
+        return data.get("items") or data.get("repositories") or []
+
     async def get_agent_usage(self, agent_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/v1/agents/{agent_id}/usage")
 

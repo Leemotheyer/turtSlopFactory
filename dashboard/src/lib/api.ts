@@ -343,13 +343,67 @@ export async function fetchProjectDetail(id: string): Promise<ProjectDetail> {
   return res.json();
 }
 
-export async function createProject(name: string, description: string): Promise<Project> {
+export async function createProject(
+  name: string,
+  description: string,
+  options?: { repo_url?: string | null; branch?: string }
+): Promise<Project> {
   const res = await fetch(`${apiUrl()}/api/projects`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({
+      name,
+      description,
+      repo_url: options?.repo_url || null,
+      branch: options?.branch || "main",
+    }),
   });
-  if (!res.ok) throw new Error("Failed to create project");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to create project");
+  }
+  return res.json();
+}
+
+export async function updateProjectRepo(
+  projectId: string,
+  params: { repo_url?: string | null; branch?: string; clear_repo?: boolean }
+): Promise<Project> {
+  const res = await fetch(`${apiUrl()}/api/projects/${projectId}`, {
+    method: "PATCH",
+    headers: headers(),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update repository");
+  }
+  return res.json();
+}
+
+export interface GithubRepository {
+  url: string;
+  name: string;
+}
+
+export interface GithubRepositoriesResponse {
+  connected: boolean;
+  repositories: GithubRepository[];
+  cached?: boolean;
+  note?: string;
+  error?: string;
+}
+
+export async function fetchGithubRepos(refresh = false): Promise<GithubRepositoriesResponse> {
+  const query = refresh ? "?refresh=true" : "";
+  const res = await fetch(`${apiUrl()}/api/cursor/repositories${query}`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to fetch GitHub repositories");
+  }
   return res.json();
 }
 

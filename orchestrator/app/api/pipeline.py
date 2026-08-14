@@ -32,6 +32,7 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
         "id": str(row.id),
         "name": row.name,
         "description": row.description,
+        "repo_url": row.repo_url,
         "state": row.state,
         "branch": row.branch,
         "image_tag": row.image_tag,

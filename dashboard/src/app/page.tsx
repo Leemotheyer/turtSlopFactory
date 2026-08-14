@@ -5,6 +5,8 @@ import {
   addNote,
   connectCursor,
   createProject,
+  updateProjectRepo,
+  fetchGithubRepos,
   deleteSecret,
   disconnectCursor,
   fetchArtifact,
@@ -38,6 +40,7 @@ import {
   fetchSetupStatus,
   updatePreviewHost,
   updateInstanceApiKey,
+  type GithubRepository,
   type AgentBackend,
   type SetupStatus,
   type CursorConnectionStatus,
@@ -139,6 +142,13 @@ export default function DashboardPage() {
   const [setupPreviewHost, setSetupPreviewHost] = useState("");
   const [setupApiKey, setSetupApiKey] = useState("");
   const [instanceApiKey, setInstanceApiKey] = useState("");
+  const [newRepoUrl, setNewRepoUrl] = useState("");
+  const [newBranch, setNewBranch] = useState("main");
+  const [editRepoUrl, setEditRepoUrl] = useState("");
+  const [editBranch, setEditBranch] = useState("main");
+  const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
+  const [repoLoading, setRepoLoading] = useState(false);
+  const [repoNote, setRepoNote] = useState<string | null>(null);
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -228,6 +238,34 @@ export default function DashboardPage() {
     loadCursor();
   }, [loadCursor]);
 
+  const loadGithubRepos = useCallback(async (refresh = false) => {
+    if (!cursorStatus?.connected) {
+      setGithubRepos([]);
+      return;
+    }
+    setRepoLoading(true);
+    try {
+      const data = await fetchGithubRepos(refresh);
+      setGithubRepos(data.repositories ?? []);
+      setRepoNote(data.note ?? data.error ?? null);
+    } catch {
+      setGithubRepos([]);
+    } finally {
+      setRepoLoading(false);
+    }
+  }, [cursorStatus?.connected]);
+
+  useEffect(() => {
+    loadGithubRepos();
+  }, [loadGithubRepos]);
+
+  useEffect(() => {
+    if (detail) {
+      setEditRepoUrl(detail.repo_url ?? "");
+      setEditBranch(detail.branch ?? "main");
+    }
+  }, [detail?.id, detail?.repo_url, detail?.branch]);
+
   useEffect(() => {
     if (showCursor) loadCursor();
   }, [showCursor, loadCursor]);
@@ -274,13 +312,36 @@ export default function DashboardPage() {
     if (!newName.trim()) return;
     setLoading(true);
     try {
-      const p = await createProject(newName, newDesc);
+      const p = await createProject(newName, newDesc, {
+        repo_url: newRepoUrl || null,
+        branch: newBranch || "main",
+      });
       setNewName("");
       setNewDesc("");
+      setNewRepoUrl("");
+      setNewBranch("main");
       setSelectedId(p.id);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveRepo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await updateProjectRepo(selectedId, {
+        repo_url: editRepoUrl || null,
+        branch: editBranch || "main",
+        clear_repo: !editRepoUrl,
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save repository");
     } finally {
       setLoading(false);
     }
@@ -601,6 +662,26 @@ export default function DashboardPage() {
   const pendingSecrets = secrets?.pending_requirements.length ?? 0;
   const livePreviewUrl = detail?.preview_url ?? detail?.staging_url;
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
+
+  function repoLabel(url: string): string {
+    return url.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
+  }
+
+  function renderRepoOptions(currentUrl = "") {
+    const options = githubRepos.map((repo) => (
+      <option key={repo.url} value={repo.url}>
+        {repo.name}
+      </option>
+    ));
+    if (currentUrl && !githubRepos.some((r) => r.url === currentUrl)) {
+      options.unshift(
+        <option key={currentUrl} value={currentUrl}>
+          {repoLabel(currentUrl)} (linked)
+        </option>
+      );
+    }
+    return options;
+  }
 
   function previewTypeLabel(type: string | null | undefined): string {
     switch (type) {
@@ -950,12 +1031,16 @@ export default function DashboardPage() {
                 >
                   <span className={styles.projectName}>{p.name}</span>
                   <span className={styles.projectMeta}>
-                    <span
-                      className={styles.stateTag}
+                    <span className={styles.stateTag}
                       style={{ background: STATE_COLORS[p.state] ?? "#6b7280" }}
                     >
                       {p.state.replace(/_/g, " ")}
                     </span>
+                    {p.repo_url && (
+                      <span className={styles.repoTag} title={p.repo_url}>
+                        {repoLabel(p.repo_url)}
+                      </span>
+                    )}
                     {p.preview_url && (
                       <a
                         href={p.preview_url}
@@ -991,6 +1076,33 @@ export default function DashboardPage() {
               onChange={(e) => setNewDesc(e.target.value)}
               rows={4}
             />
+            <label className={styles.repoField}>
+              GitHub repo (optional)
+              <select
+                value={newRepoUrl}
+                onChange={(e) => setNewRepoUrl(e.target.value)}
+                disabled={!cursorStatus?.connected || repoLoading}
+              >
+                <option value="">None — factory scaffold</option>
+                {renderRepoOptions()}
+              </select>
+            </label>
+            {!cursorStatus?.connected && (
+              <p className={styles.repoHint}>
+                Connect Cursor to pick repos from your GitHub account.
+              </p>
+            )}
+            {newRepoUrl && (
+              <label className={styles.repoField}>
+                Branch
+                <input
+                  type="text"
+                  value={newBranch}
+                  onChange={(e) => setNewBranch(e.target.value)}
+                  placeholder="main"
+                />
+              </label>
+            )}
             <button type="submit" className={styles.btnPrimary} disabled={loading}>
               Create project
             </button>
@@ -1039,6 +1151,78 @@ export default function DashboardPage() {
                   </a>
                 )}
               </div>
+
+              <section className={styles.repoPanel}>
+                <div className={styles.repoPanelHeader}>
+                  <div>
+                    <h3>GitHub repository</h3>
+                    <p className={styles.repoHint}>
+                      Link an empty or existing repo from your Cursor-connected GitHub account.
+                      Cloud agents will work directly in that repository.
+                    </p>
+                  </div>
+                  {cursorStatus?.connected && (
+                    <button
+                      type="button"
+                      className={styles.btnSecondary}
+                      onClick={() => loadGithubRepos(true)}
+                      disabled={repoLoading}
+                    >
+                      {repoLoading ? "Loading…" : "Refresh repos"}
+                    </button>
+                  )}
+                </div>
+                <form className={styles.repoForm} onSubmit={handleSaveRepo}>
+                  <label className={styles.repoField}>
+                    Repository
+                    <select
+                      value={editRepoUrl}
+                      onChange={(e) => setEditRepoUrl(e.target.value)}
+                      disabled={!cursorStatus?.connected || repoLoading}
+                    >
+                      <option value="">None — factory scaffold</option>
+                      {renderRepoOptions(editRepoUrl)}
+                    </select>
+                  </label>
+                  <label className={styles.repoField}>
+                    Branch
+                    <input
+                      type="text"
+                      value={editBranch}
+                      onChange={(e) => setEditBranch(e.target.value)}
+                      placeholder="main"
+                      disabled={!editRepoUrl}
+                    />
+                  </label>
+                  <div className={styles.repoFormActions}>
+                    <button
+                      type="submit"
+                      className={styles.btnPrimary}
+                      disabled={loading || (editRepoUrl === (detail.repo_url ?? "") && editBranch === (detail.branch ?? "main"))}
+                    >
+                      Save repository
+                    </button>
+                    {detail.repo_url && (
+                      <a
+                        href={detail.repo_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={styles.btnSecondary}
+                      >
+                        Open on GitHub ↗
+                      </a>
+                    )}
+                  </div>
+                </form>
+                {!cursorStatus?.connected && (
+                  <p className={styles.repoHint}>
+                    Connect your Cursor API key (header menu) to browse repositories linked to your GitHub account.
+                  </p>
+                )}
+                {repoNote && cursorStatus?.connected && (
+                  <p className={styles.repoHint}>{repoNote}</p>
+                )}
+              </section>
 
               {livePreviewUrl && (
                 <div className={styles.livePreview}>

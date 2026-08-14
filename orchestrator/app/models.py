@@ -44,6 +44,13 @@ class ProjectCreate(BaseModel):
     name: str
     description: str
     repo_url: str | None = None
+    branch: str = "main"
+
+
+class ProjectUpdate(BaseModel):
+    repo_url: str | None = None
+    branch: str | None = None
+    clear_repo: bool = False
 
 
 class Project(BaseModel):

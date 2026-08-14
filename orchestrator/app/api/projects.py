@@ -16,10 +16,12 @@ from app.models import (
     Project,
     ProjectCreate,
     ProjectState,
+    ProjectUpdate,
     Task,
     TaskCreate,
     TaskStatus,
 )
+from app.workspace.provisioner import normalize_repo_url, provision_repo
 from app.worker import pipeline_queue
 from app.state_machine import StateMachineError, advance_project, fail_project
 from app.workspace.manager import WorkspaceManager
@@ -71,15 +73,27 @@ async def list_projects(db: AsyncSession = Depends(get_db)) -> list[Project]:
 
 @router.post("", response_model=Project, status_code=201)
 async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)) -> Project:
+    repo_url = None
+    if body.repo_url:
+        try:
+            repo_url = normalize_repo_url(body.repo_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     row = ProjectRow(
         name=body.name,
         description=body.description,
-        repo_url=body.repo_url,
+        repo_url=repo_url,
+        branch=(body.branch or "main").strip() or "main",
         state=ProjectState.REQUESTED.value,
     )
     db.add(row)
     await db.commit()
     await db.refresh(row)
+
+    if repo_url:
+        message = await provision_repo(workspace, row.id, repo_url, row.branch)
+        workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
 
     await event_bus.publish(
         db,
@@ -100,7 +114,63 @@ async def get_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -> P
     row = await db.get(ProjectRow, project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    return _project_from_row(row)
+    meta = workspace.load_metadata(project_id)
+    preview_url = meta.get("preview_url") or meta.get("staging_url")
+    return _project_from_row(row, preview_url=preview_url)
+
+
+@router.patch("/{project_id}", response_model=Project)
+async def update_project(
+    project_id: UUID, body: ProjectUpdate, db: AsyncSession = Depends(get_db)
+) -> Project:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    repo_changed = False
+    branch_changed = False
+
+    if body.clear_repo:
+        row.repo_url = None
+        repo_changed = True
+    elif body.repo_url is not None:
+        if not body.repo_url.strip():
+            if row.repo_url is not None:
+                row.repo_url = None
+                repo_changed = True
+        else:
+            try:
+                new_url = normalize_repo_url(body.repo_url)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if new_url != row.repo_url:
+                row.repo_url = new_url
+                repo_changed = True
+
+    if body.branch is not None:
+        new_branch = body.branch.strip() or "main"
+        if new_branch != row.branch:
+            row.branch = new_branch
+            branch_changed = True
+
+    await db.commit()
+    await db.refresh(row)
+
+    if row.repo_url and (repo_changed or branch_changed):
+        message = await provision_repo(
+            workspace,
+            row.id,
+            row.repo_url,
+            row.branch,
+            force=repo_changed,
+        )
+        workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
+    elif repo_changed and not row.repo_url:
+        workspace.append_log(row.id, "pipeline.log", "[setup] GitHub repository unlinked")
+
+    meta = workspace.load_metadata(project_id)
+    preview_url = meta.get("preview_url") or meta.get("staging_url")
+    return _project_from_row(row, preview_url=preview_url)
 
 
 @router.post("/{project_id}/advance", response_model=Project)

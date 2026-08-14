@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Any
 
@@ -14,8 +15,12 @@ from app.db_models import CursorConnectionRow
 from app.config import settings
 from app.services.crypto import decrypt_value, encrypt_value, mask_value
 from app.services.cursor_client import CursorApiError, CursorClient, CursorUsageSummary
+from app.workspace.provisioner import repo_display_name
 
 logger = logging.getLogger(__name__)
+
+_REPO_CACHE_TTL_SECONDS = 55
+_repo_cache: dict[str, Any] = {"fetched_at": 0.0, "items": []}
 
 
 async def get_api_key(session: AsyncSession | None = None) -> str | None:
@@ -150,6 +155,79 @@ async def list_cursor_agents(session: AsyncSession) -> dict[str, Any]:
     row.last_synced_at = datetime.utcnow()
     await session.commit()
     return {"connected": True, "agents": enriched}
+
+
+async def list_github_repositories(session: AsyncSession, *, refresh: bool = False) -> dict[str, Any]:
+    row = await get_connection_row(session)
+    if not row:
+        return {
+            "connected": False,
+            "repositories": [],
+            "note": "Connect your Cursor API key to browse GitHub repositories.",
+        }
+
+    now = time.monotonic()
+    if (
+        not refresh
+        and _repo_cache["items"]
+        and now - float(_repo_cache["fetched_at"]) < _REPO_CACHE_TTL_SECONDS
+    ):
+        return {
+            "connected": True,
+            "repositories": _repo_cache["items"],
+            "cached": True,
+            "note": "Repository list is cached for one minute due to Cursor API rate limits.",
+        }
+
+    try:
+        async with CursorClient(await _api_key_from_row(row)) as client:
+            raw_items = await client.list_repositories()
+    except CursorApiError as exc:
+        if _repo_cache["items"]:
+            return {
+                "connected": True,
+                "repositories": _repo_cache["items"],
+                "cached": True,
+                "note": f"Using cached repositories ({exc.message})",
+            }
+        if exc.status in (401, 403):
+            return {
+                "connected": False,
+                "repositories": [],
+                "error": "Cursor API key is invalid or expired. Reconnect from settings.",
+            }
+        raise
+
+    repositories = []
+    for item in raw_items:
+        url = item.get("url") or item.get("repository")
+        if not url:
+            owner = item.get("owner")
+            name = item.get("name")
+            if owner and name:
+                url = f"https://github.com/{owner}/{name}"
+        if not url:
+            continue
+        repositories.append(
+            {
+                "url": url.rstrip("/").removesuffix(".git"),
+                "name": repo_display_name(url),
+            }
+        )
+
+    repositories.sort(key=lambda r: r["name"].lower())
+    _repo_cache["items"] = repositories
+    _repo_cache["fetched_at"] = now
+
+    row.last_synced_at = datetime.utcnow()
+    await session.commit()
+
+    return {
+        "connected": True,
+        "repositories": repositories,
+        "cached": False,
+        "note": "Repositories from your Cursor-linked GitHub account. List refreshes at most once per minute.",
+    }
 
 
 def _summary_to_dict(summary: CursorUsageSummary) -> dict[str, Any]:

@@ -10,6 +10,7 @@ from app.services.cursor_connection import (
     fetch_usage,
     get_connection_status,
     list_cursor_agents,
+    list_github_repositories,
 )
 from app.services.factory_settings import get_factory_settings
 
@@ -54,5 +55,15 @@ async def cursor_usage(db: AsyncSession = Depends(get_db)) -> dict:
 async def cursor_agents(db: AsyncSession = Depends(get_db)) -> dict:
     try:
         return await list_cursor_agents(db)
+    except CursorApiError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@router.get("/repositories")
+async def cursor_repositories(
+    refresh: bool = False, db: AsyncSession = Depends(get_db)
+) -> dict:
+    try:
+        return await list_github_repositories(db, refresh=refresh)
     except CursorApiError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.message) from exc

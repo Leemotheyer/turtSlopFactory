@@ -1410,6 +1410,93 @@
   margin-bottom: 0.35rem;
 }
 
+/* GitHub repository linking */
+.repoPanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.repoPanelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.repoPanel h3 {
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.repoHint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0.25rem 0 0;
+}
+
+.repoForm {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.repoField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.repoField select,
+.repoField input,
+.createForm select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.repoFormActions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.repoTag {
+  font-size: 0.6rem;
+  color: var(--muted);
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .repoForm {
+    grid-template-columns: 1fr;
+  }
+
+  .repoFormActions {
+    flex-direction: column;
+  }
+
+  .repoFormActions .btnPrimary,
+  .repoFormActions .btnSecondary {
+    width: 100%;
+    text-align: center;
+  }
+}
+
 @media (max-width: 900px) {
   .guidancePanel {
     grid-template-columns: 1fr;
