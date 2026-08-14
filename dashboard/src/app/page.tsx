@@ -44,6 +44,8 @@ import {
   fetchSetupStatus,
   updatePreviewHost,
   updateInstanceApiKey,
+  verifyFactoryApiKey,
+  hasStoredFactoryApiKey,
   type GithubRepository,
   type CursorModel,
   type AgentBackend,
@@ -146,6 +148,15 @@ export default function DashboardPage() {
   const [cursorUsage, setCursorUsage] = useState<CursorUsage | null>(null);
   const [cursorApiKey, setCursorApiKey] = useState("");
   const [cursorLoading, setCursorLoading] = useState(false);
+  const [cursorFeedback, setCursorFeedback] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+  const [factoryKeyFeedback, setFactoryKeyFeedback] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+  const [browserHasFactoryKey, setBrowserHasFactoryKey] = useState(false);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [setupPreviewHost, setSetupPreviewHost] = useState("");
   const [setupApiKey, setSetupApiKey] = useState("");
@@ -175,6 +186,7 @@ export default function DashboardPage() {
 
   const loadSetup = useCallback(async () => {
     await ensurePublicConfig();
+    setBrowserHasFactoryKey(hasStoredFactoryApiKey());
     try {
       const status = await fetchSetupStatus();
       setSetupStatus(status);
@@ -245,13 +257,24 @@ export default function DashboardPage() {
       const [status, usage] = await Promise.all([fetchCursorStatus(), fetchCursorUsage()]);
       setCursorStatus(status);
       setCursorUsage(usage);
-    } catch {
+    } catch (err) {
       setCursorStatus({ connected: false });
       setCursorUsage(null);
+      const message = err instanceof Error ? err.message : "Could not reach the factory API";
+      if (setupStatus?.api_key_required && !hasStoredFactoryApiKey()) {
+        setCursorFeedback({
+          type: "error",
+          message:
+            "Factory API key is required. Enter it below under Deployment, then try connecting Cursor again.",
+        });
+      } else if (message.includes("Factory API key")) {
+        setCursorFeedback({ type: "error", message });
+      }
     }
-  }, []);
+  }, [setupStatus?.api_key_required]);
 
   useEffect(() => {
+    setBrowserHasFactoryKey(hasStoredFactoryApiKey());
     loadSetup().then(() => refresh());
   }, []);
 
@@ -553,13 +576,23 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!cursorApiKey.trim()) return;
     setCursorLoading(true);
+    setCursorFeedback({ type: "info", message: "Verifying API key with Cursor…" });
     try {
       const status = await connectCursor(cursorApiKey);
       setCursorApiKey("");
       setCursorStatus(status);
+      setCursorFeedback({
+        type: "success",
+        message:
+          status.message ??
+          `Connected${status.user_email ? ` as ${status.user_email}` : ""}. API key saved securely.`,
+      });
       await loadCursor();
+      await loadCursorModels();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect Cursor");
+      const message = err instanceof Error ? err.message : "Failed to connect Cursor";
+      setCursorFeedback({ type: "error", message });
+      setError(message);
     } finally {
       setCursorLoading(false);
     }
@@ -601,15 +634,34 @@ export default function DashboardPage() {
 
   async function handleSaveInstanceApiKey() {
     setCursorLoading(true);
+    setFactoryKeyFeedback({ type: "info", message: "Saving factory API key…" });
     try {
       const key = instanceApiKey.trim();
-      await updateInstanceApiKey(key || null);
-      if (key) localStorage.setItem("api_key", key);
-      else localStorage.removeItem("api_key");
+      const result = await updateInstanceApiKey(key || null);
+      if (key) {
+        localStorage.setItem("api_key", key);
+        setFactoryKeyFeedback({ type: "info", message: "Testing saved key…" });
+        const verified = await verifyFactoryApiKey(key);
+        setFactoryKeyFeedback({
+          type: "success",
+          message: verified.message ?? result.message ?? "Factory API key saved and verified in this browser.",
+        });
+      } else {
+        localStorage.removeItem("api_key");
+        setFactoryKeyFeedback({
+          type: "success",
+          message: result.message ?? "Factory API key removed.",
+        });
+      }
       setInstanceApiKey("");
+      setBrowserHasFactoryKey(hasStoredFactoryApiKey());
       await loadSetup();
+      await loadCursor();
+      await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save API key");
+      const message = err instanceof Error ? err.message : "Failed to save API key";
+      setFactoryKeyFeedback({ type: "error", message });
+      setError(message);
     } finally {
       setCursorLoading(false);
     }
@@ -1007,12 +1059,19 @@ export default function DashboardPage() {
                   </label>
                   <label>
                     Factory API key (optional)
+                    <p className={styles.cursorBackendHint}>
+                      {setupStatus?.api_key_configured
+                        ? browserHasFactoryKey
+                          ? "Server has a key and this browser is configured."
+                          : "Server has a key — enter it below so this browser can call the API."
+                        : "Optional — protect API access. Saved keys are encrypted on the server."}
+                    </p>
                     <div className={styles.inlineField}>
                       <input
                         type="password"
                         value={instanceApiKey}
                         onChange={(e) => setInstanceApiKey(e.target.value)}
-                        placeholder={setupStatus?.api_key_configured ? "Set new key or leave blank" : "Protect API access"}
+                        placeholder={setupStatus?.api_key_configured ? "Enter key to sync this browser" : "Protect API access"}
                         autoComplete="off"
                       />
                       <button
@@ -1021,18 +1080,45 @@ export default function DashboardPage() {
                         onClick={handleSaveInstanceApiKey}
                         disabled={cursorLoading}
                       >
-                        {setupStatus?.api_key_configured ? "Update" : "Set"}
+                        {setupStatus?.api_key_configured ? "Save & verify" : "Set & verify"}
                       </button>
                     </div>
                   </label>
+                  {factoryKeyFeedback && (
+                    <div
+                      className={`${styles.feedbackBanner} ${
+                        factoryKeyFeedback.type === "success"
+                          ? styles.feedbackSuccess
+                          : factoryKeyFeedback.type === "error"
+                            ? styles.feedbackError
+                            : styles.feedbackInfo
+                      }`}
+                    >
+                      {factoryKeyFeedback.message}
+                    </div>
+                  )}
                   {setupStatus?.auto_configured?.encryption_key && (
                     <p className={styles.cursorBackendHint}>Encryption key auto-generated and stored on the workspace volume.</p>
                   )}
                 </div>
+                {cursorFeedback && (
+                  <div
+                    className={`${styles.feedbackBanner} ${
+                      cursorFeedback.type === "success"
+                        ? styles.feedbackSuccess
+                        : cursorFeedback.type === "error"
+                          ? styles.feedbackError
+                          : styles.feedbackInfo
+                    }`}
+                  >
+                    {cursorFeedback.message}
+                  </div>
+                )}
                 {!cursorStatus?.connected ? (
                   <div className={styles.cursorConnect}>
                     <p>
                       Connect your Cursor API key to see token usage, budget remaining, and cloud agents.
+                      The key is tested against Cursor before it is saved.
                     </p>
                     <a
                       href="https://cursor.com/dashboard/api"
@@ -1052,7 +1138,7 @@ export default function DashboardPage() {
                         required
                       />
                       <button type="submit" className={styles.btnPrimary} disabled={cursorLoading}>
-                        Connect account
+                        {cursorLoading ? "Verifying…" : "Connect account"}
                       </button>
                     </form>
                   </div>
@@ -1063,7 +1149,19 @@ export default function DashboardPage() {
                       {cursorStatus.api_key_name && (
                         <span className={styles.cursorKeyName}>{cursorStatus.api_key_name}</span>
                       )}
+                      {cursorStatus.masked_api_key && (
+                        <span className={styles.cursorKeySaved}>{cursorStatus.masked_api_key} · saved</span>
+                      )}
                     </div>
+                    {cursorStatus.connected_at && (
+                      <p className={styles.cursorSavedNote}>
+                        Cursor API key verified and stored on the server
+                        {cursorStatus.models_available != null
+                          ? ` · ${cursorStatus.models_available} models available`
+                          : ""}
+                        .
+                      </p>
+                    )}
                     {cursorUsage?.tokens && (
                       <div className={styles.cursorUsageGrid}>
                         <div className={styles.cursorStat}>
@@ -1208,6 +1306,13 @@ export default function DashboardPage() {
       {error && (
         <div className={styles.error} onClick={() => setError(null)}>
           {error} <span className={styles.dismiss}>✕</span>
+        </div>
+      )}
+
+      {setupStatus?.api_key_required && !browserHasFactoryKey && (
+        <div className={styles.apiKeyBanner}>
+          <strong>Factory API key required.</strong> Open the Cursor menu → Deployment and enter the same key
+          you configured on the server. Without it, the dashboard cannot reach the API (failed to fetch).
         </div>
       )}
 

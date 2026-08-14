@@ -38,6 +38,11 @@ async def cursor_connect(body: CursorConnectRequest, db: AsyncSession = Depends(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except CursorApiError as exc:
+        if exc.status in (401, 403):
+            raise HTTPException(
+                status_code=exc.status,
+                detail=f"Cursor rejected this API key: {exc.message}",
+            ) from exc
         raise HTTPException(status_code=exc.status, detail=exc.message) from exc
 
 

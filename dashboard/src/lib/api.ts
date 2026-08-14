@@ -353,23 +353,61 @@ export async function updatePreviewHost(previewHost: string): Promise<SetupStatu
   return res.json();
 }
 
-export async function updateInstanceApiKey(apiKey: string | null): Promise<SetupStatus> {
+export async function updateInstanceApiKey(apiKey: string | null): Promise<SetupStatus & { verified?: boolean; message?: string }> {
+  const trimmed = apiKey?.trim() || "";
+  const authKey = trimmed && !hasStoredFactoryApiKey() ? trimmed : undefined;
   const res = await fetch(`${apiUrl()}/api/settings/factory/api-key`, {
     method: "PUT",
-    headers: headers(),
+    headers: headers(authKey),
     body: JSON.stringify({ api_key: apiKey }),
   });
-  if (!res.ok) throw new Error("Failed to update API key");
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to update API key"));
+  }
   return res.json();
 }
 
-function headers(): HeadersInit {
+export async function verifyFactoryApiKey(apiKey: string): Promise<{ verified: boolean; message: string }> {
+  const res = await fetch(`${apiUrl()}/api/settings/verify-key`, {
+    cache: "no-store",
+    headers: headers(apiKey),
+  });
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Factory API key was not accepted"));
+  }
+  return res.json();
+}
+
+function headers(overrideApiKey?: string | null): HeadersInit {
   const h: HeadersInit = { "Content-Type": "application/json" };
   if (typeof window !== "undefined") {
-    const key = localStorage.getItem("api_key");
+    const key = overrideApiKey ?? localStorage.getItem("api_key");
     if (key) h["X-API-Key"] = key;
   }
   return h;
+}
+
+async function parseApiError(res: Response, fallback: string): Promise<string> {
+  try {
+    const err = await res.json();
+    const detail = (err as { detail?: string | { msg?: string }[] }).detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (Array.isArray(detail) && detail[0]?.msg) return detail[0].msg;
+  } catch {
+    /* ignore */
+  }
+  if (res.status === 401) {
+    return "Factory API key required or invalid — enter it in the Cursor menu under Deployment.";
+  }
+  if (res.status === 403) {
+    return "Access denied — check your factory API key.";
+  }
+  return fallback;
+}
+
+export function hasStoredFactoryApiKey(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean(localStorage.getItem("api_key")?.trim());
 }
 
 export async function fetchProjects(): Promise<Project[]> {
@@ -692,6 +730,9 @@ export interface ConcurrencyBudget {
 
 export interface CursorConnectionStatus {
   connected: boolean;
+  verified?: boolean;
+  message?: string;
+  models_available?: number;
   user_email?: string | null;
   api_key_name?: string | null;
   masked_api_key?: string | null;
@@ -770,7 +811,9 @@ export interface CursorUsage {
 
 export async function fetchCursorStatus(): Promise<CursorConnectionStatus> {
   const res = await fetch(`${apiUrl()}/api/cursor/status`, { cache: "no-store", headers: headers() });
-  if (!res.ok) throw new Error("Failed to fetch Cursor status");
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to fetch Cursor status"));
+  }
   return res.json();
 }
 
@@ -781,14 +824,7 @@ export async function connectCursor(apiKey: string): Promise<CursorConnectionSta
     body: JSON.stringify({ api_key: apiKey }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const detail = (err as { detail?: string }).detail;
-    if (res.status === 401) {
-      throw new Error(
-        detail ?? "API key required — set your factory API key in the Cursor menu before connecting"
-      );
-    }
-    throw new Error(detail ?? "Failed to connect Cursor");
+    throw new Error(await parseApiError(res, "Failed to connect Cursor"));
   }
   return res.json();
 }

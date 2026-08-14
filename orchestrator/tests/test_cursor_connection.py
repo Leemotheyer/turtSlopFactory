@@ -36,6 +36,7 @@ async def test_connect_and_disconnect(mock_client_cls, db_session):
     mock_client.build_usage_summary = AsyncMock(
         return_value=CursorUsageSummary(connected=True, enterprise_billing=False)
     )
+    mock_client.list_models = AsyncMock(return_value=[{"id": "composer-2"}, {"id": "gpt-4"}])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client_cls.return_value = mock_client
@@ -43,6 +44,9 @@ async def test_connect_and_disconnect(mock_client_cls, db_session):
     status = await connect_cursor(db_session, "crsr_test_key")
     assert status["connected"] is True
     assert status["user_email"] == "dev@example.com"
+    assert status["verified"] is True
+    assert status["models_available"] == 2
+    assert "saved securely" in status["message"]
 
     disconnected = await disconnect_cursor(db_session)
     assert disconnected["connected"] is False

@@ -67,16 +67,20 @@ async def connect_cursor(session: AsyncSession, api_key: str) -> dict[str, Any]:
     async with CursorClient(api_key) as client:
         me = await client.get_me()
         summary = await client.build_usage_summary()
+        models = await client.list_models()
 
     existing = await get_connection_row(session)
     if existing:
         await session.delete(existing)
         await session.flush()
 
+    user_email = me.get("userEmail")
+    api_key_name = me.get("apiKeyName")
+
     row = CursorConnectionRow(
         encrypted_api_key=encrypt_value(api_key),
-        api_key_name=me.get("apiKeyName"),
-        user_email=me.get("userEmail"),
+        api_key_name=api_key_name,
+        user_email=user_email,
         user_id=me.get("userId"),
         enterprise_billing=summary.enterprise_billing,
         connected_at=datetime.utcnow(),
@@ -86,7 +90,17 @@ async def connect_cursor(session: AsyncSession, api_key: str) -> dict[str, Any]:
     await session.commit()
     await session.refresh(row)
 
-    return await get_connection_status(session)
+    status = await get_connection_status(session)
+    label = api_key_name or "API key"
+    email_part = f" for {user_email}" if user_email else ""
+    models_count = len(models)
+    models_part = f" · {models_count} model{'s' if models_count != 1 else ''} available"
+    return {
+        **status,
+        "verified": True,
+        "models_available": models_count,
+        "message": f"{label} verified and saved securely{email_part}{models_part}.",
+    }
 
 
 async def disconnect_cursor(session: AsyncSession) -> dict[str, Any]:

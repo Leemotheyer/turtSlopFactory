@@ -129,4 +129,16 @@ async def update_api_key(
 ) -> dict:
     result = await set_instance_api_key(db, body.api_key, request)
     await refresh_api_key_cache(db)
+    if body.api_key:
+        result["verified"] = True
+        result["message"] = "Factory API key saved. Use the same value in this browser to access the API."
+    else:
+        result["verified"] = True
+        result["message"] = "Factory API key removed. API access is no longer protected."
     return result
+
+
+@router.get("/verify-key")
+async def verify_api_key() -> dict:
+    """Confirm the caller's X-API-Key is accepted (requires a configured factory key)."""
+    return {"verified": True, "message": "Factory API key is valid."}

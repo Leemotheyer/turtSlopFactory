@@ -861,6 +861,62 @@
   color: var(--muted);
 }
 
+.cursorKeySaved {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--accent);
+  margin-top: 0.2rem;
+  font-family: var(--font-mono, monospace);
+}
+
+.cursorSavedNote {
+  margin: 0.5rem 1rem 0;
+  font-size: 0.75rem;
+  color: #3dd68c;
+  line-height: 1.4;
+}
+
+.feedbackBanner {
+  margin: 0.5rem 1rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.feedbackSuccess {
+  background: rgba(61, 214, 140, 0.12);
+  border: 1px solid rgba(61, 214, 140, 0.35);
+  color: #3dd68c;
+}
+
+.feedbackError {
+  background: rgba(239, 91, 91, 0.1);
+  border: 1px solid rgba(239, 91, 91, 0.35);
+  color: #ef5b5b;
+}
+
+.feedbackInfo {
+  background: rgba(91, 141, 239, 0.1);
+  border: 1px solid rgba(91, 141, 239, 0.3);
+  color: var(--accent);
+}
+
+.apiKeyBanner {
+  margin: 0 1.5rem 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 180, 91, 0.45);
+  background: rgba(239, 180, 91, 0.1);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.apiKeyBanner strong {
+  color: #efb45b;
+}
+
 .cursorUsageGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
