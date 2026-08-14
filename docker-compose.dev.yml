@@ -1,9 +1,0 @@
-# Dev override — build the all-in-one image from source
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-
-services:
-  factory:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: turtslopfactory:local
