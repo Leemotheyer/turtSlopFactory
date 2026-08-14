@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>turtSlopFactory</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🐢</span>
+      <div>
+        <h1>turtSlopFactory</h1>
+        <p class="tagline">Start a project. Come back later to a finished app.</p>
+      </div>
+    </div>
+    <div id="status-pill" class="pill ok">Agents idle</div>
+  </header>
+
+  <main class="layout">
+    <section class="card start-card">
+      <h2>New project</h2>
+      <p class="muted">One name is enough — agents handle the rest.</p>
+      <form id="start-form" class="stack">
+        <input id="project-name" placeholder="My home lab dashboard" required maxlength="200" />
+        <textarea id="project-idea" placeholder="Optional: one-line idea (agents will expand it)" rows="2"></textarea>
+        <button type="submit" class="primary">Start building</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>Your projects</h2>
+        <button id="refresh-btn" class="ghost" type="button">Refresh</button>
+      </div>
+      <div id="projects" class="projects"></div>
+    </section>
+
+    <section id="detail" class="card detail hidden">
+      <div class="section-head">
+        <h2 id="detail-title">Project</h2>
+        <button id="close-detail" class="ghost" type="button">Close</button>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div id="detail-progress" class="progress-fill"></div></div>
+        <span id="detail-phase" class="phase"></span>
+      </div>
+      <ul id="detail-events" class="events"></ul>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
