@@ -208,7 +208,7 @@ async def submit_intake(
         project_id,
         "discovery",
         "Intake submitted",
-        "Scope locked in — ready to start the build pipeline",
+        "Scope locked in — build pipeline is starting",
     )
 
     return _session_from_row(row)

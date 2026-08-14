@@ -185,6 +185,7 @@ export default function DashboardPage() {
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const discoveryKickoff = useRef<string | null>(null);
+  const pipelineKickoff = useRef<string | null>(null);
 
   function selectProject(id: string) {
     setSelectedId(id);
@@ -368,6 +369,19 @@ export default function DashboardPage() {
   }, [selectedId, detail?.state, refresh]);
 
   useEffect(() => {
+    if (!selectedId || !detail) return;
+    if (detail.state !== "PLANNING" || detail.pipeline_running) return;
+    if (pipelineKickoff.current === selectedId) return;
+    pipelineKickoff.current = selectedId;
+    runPipeline(selectedId)
+      .then(() => refresh())
+      .catch((err) => {
+        pipelineKickoff.current = null;
+        setError(err instanceof Error ? err.message : "Failed to start pipeline");
+      });
+  }, [selectedId, detail?.state, detail?.pipeline_running, refresh]);
+
+  useEffect(() => {
     let ws: WebSocket | null = null;
     let cancelled = false;
 
@@ -402,6 +416,7 @@ export default function DashboardPage() {
     try {
       await deleteProject(selectedId);
       discoveryKickoff.current = null;
+      pipelineKickoff.current = null;
       setSelectedId(null);
       setDetail(null);
       setDiscovery(null);
@@ -550,6 +565,7 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       await submitIntake(selectedId, intakeAnswers);
+      pipelineKickoff.current = selectedId;
       await refresh();
       setTab("overview");
     } catch (err) {
@@ -1632,6 +1648,8 @@ export default function DashboardPage() {
                     <button className={styles.btnPrimary} onClick={() => setTab("intake")}>
                       Complete intake form
                     </button>
+                  ) : detail.state === "PLANNING" && !detail.pipeline_running ? (
+                    <span className={styles.running}>Starting build pipeline…</span>
                   ) : (
                     <>
                       {detail.state !== "PRODUCTION" && (
@@ -1814,7 +1832,13 @@ export default function DashboardPage() {
                     )}
                   </div>
                   {progress.summary_lines.length === 0 ? (
-                    <p className={styles.emptyHint}>Pipeline not started yet — progress will appear here as agents work.</p>
+                    <p className={styles.emptyHint}>
+                      {detail.state === "PLANNING" && !detail.pipeline_running
+                        ? "Build pipeline is starting — architect agent will plan the project first."
+                        : detail.state === "PLANNING" || detail.pipeline_running
+                          ? "Pipeline running — progress will appear here as agents work."
+                          : "Pipeline not started yet — progress will appear here as agents work."}
+                    </p>
                   ) : (
                     <ul className={styles.progressList}>
                       {progress.summary_lines.map((line, i) => (
@@ -1901,7 +1925,7 @@ export default function DashboardPage() {
                       ) : (
                         <div className={styles.intakeDone}>
                           <h3>Intake complete</h3>
-                          <p>Scope locked in. You can start the build pipeline when ready.</p>
+                          <p>Scope locked in. The build pipeline is starting automatically.</p>
                         </div>
                       )}
                     </>

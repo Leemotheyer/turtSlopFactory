@@ -41,9 +41,15 @@ class PipelineExecutor:
         self.workspace = WorkspaceManager()
         self.runner = create_agent_runner(self.workspace)
         self._running: set[UUID] = set()
+        self._locks: dict[UUID, asyncio.Lock] = {}
 
     def is_running(self, project_id: UUID) -> bool:
         return project_id in self._running
+
+    def _lock_for(self, project_id: UUID) -> asyncio.Lock:
+        if project_id not in self._locks:
+            self._locks[project_id] = asyncio.Lock()
+        return self._locks[project_id]
 
     async def emit(
         self,
@@ -246,9 +252,10 @@ class PipelineExecutor:
         return success
 
     async def run_pipeline(self, project_id: UUID) -> None:
-        if project_id in self._running:
-            return
-        self._running.add(project_id)
+        async with self._lock_for(project_id):
+            if project_id in self._running:
+                return
+            self._running.add(project_id)
 
         try:
             async with SessionLocal() as session:
@@ -345,7 +352,8 @@ class PipelineExecutor:
                         action="guidance",
                     )
         finally:
-            self._running.discard(project_id)
+            async with self._lock_for(project_id):
+                self._running.discard(project_id)
 
     def _is_before(self, current: ProjectState, target: ProjectState) -> bool:
         order = list(ProjectState)
@@ -447,6 +455,12 @@ class PipelineExecutor:
     ) -> tuple[bool, str]:
         units, plan, budget = await self._build_work_plan(session, project, context)
         context["work_plan"] = plan
+
+        if budget.max_parallel < 1:
+            return False, (
+                "No Cursor Cloud agent slots available for parallel implementation. "
+                "Wait for running agents to finish or archive idle cloud agents, then retry."
+            )
 
         task_rows: list[tuple] = []
         for unit in units:

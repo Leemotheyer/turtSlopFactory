@@ -12,8 +12,8 @@ from app.services.secrets import get_github_token, maybe_request_github_token
 from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
 from app.services.factory_settings import get_preview_host
+from app.services.pipeline_launcher import schedule_pipeline
 from app.services.preview import preview_from_metadata
-from app.worker import pipeline_queue
 from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
@@ -94,8 +94,10 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
             detail=f"Cannot run pipeline from state {row.state}",
         )
 
-    await pipeline_queue.enqueue_pipeline(project_id)
-    return {"status": "queued", "project_id": str(project_id)}
+    started = schedule_pipeline(project_id)
+    if not started:
+        return {"status": "already_running", "project_id": str(project_id)}
+    return {"status": "started", "project_id": str(project_id)}
 
 
 @router.post("/{project_id}/promote")
