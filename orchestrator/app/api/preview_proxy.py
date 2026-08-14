@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.db_models import ProjectRow
-from app.services.preview import preview_upstream
+from app.services.preview_manager import resolve_preview_upstream
 from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(tags=["preview"])
@@ -39,7 +39,7 @@ async def proxy_preview(
 ) -> Response:
     project_id = await _resolve_project_id(project_ref, db)
     meta = workspace.load_metadata(project_id)
-    upstream = preview_upstream(project_id, meta)
+    upstream = await resolve_preview_upstream(project_id, meta)
     if not upstream:
         raise HTTPException(status_code=503, detail="Preview is not running")
 

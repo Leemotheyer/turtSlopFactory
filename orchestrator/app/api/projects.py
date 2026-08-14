@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -25,6 +25,7 @@ from app.services.discovery import run_discovery
 from app.services.git_branching import apply_isolated_branch_fields, setup_project_branches
 from app.services.project_lifecycle import delete_project as delete_project_record
 from app.services.preview import preview_from_metadata
+from app.services.factory_settings import get_preview_origin
 from app.services.secrets import get_github_token, maybe_request_github_token
 from app.workspace.provisioner import normalize_repo_url
 from app.pipeline.executor import pipeline_executor
@@ -70,12 +71,13 @@ def _task_from_row(row: TaskRow) -> Task:
 
 
 @router.get("", response_model=list[Project])
-async def list_projects(db: AsyncSession = Depends(get_db)) -> list[Project]:
+async def list_projects(request: Request, db: AsyncSession = Depends(get_db)) -> list[Project]:
+    origin = await get_preview_origin(db, request)
     result = await db.execute(select(ProjectRow).order_by(ProjectRow.created_at.desc()))
     projects = []
     for row in result.scalars():
         meta = workspace.load_metadata(row.id)
-        preview_url = preview_from_metadata(meta, project_id=row.id)["preview_url"]
+        preview_url = preview_from_metadata(meta, origin=origin, project_id=row.id)["preview_url"]
         projects.append(_project_from_row(row, preview_url=preview_url))
     return projects
 
@@ -139,18 +141,19 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
 
 
 @router.get("/{project_id}", response_model=Project)
-async def get_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -> Project:
+async def get_project(project_id: UUID, request: Request, db: AsyncSession = Depends(get_db)) -> Project:
     row = await db.get(ProjectRow, project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
+    origin = await get_preview_origin(db, request)
     meta = workspace.load_metadata(project_id)
-    preview_url = preview_from_metadata(meta, project_id=project_id)["preview_url"]
+    preview_url = preview_from_metadata(meta, origin=origin, project_id=project_id)["preview_url"]
     return _project_from_row(row, preview_url=preview_url)
 
 
 @router.patch("/{project_id}", response_model=Project)
 async def update_project(
-    project_id: UUID, body: ProjectUpdate, db: AsyncSession = Depends(get_db)
+    project_id: UUID, body: ProjectUpdate, request: Request, db: AsyncSession = Depends(get_db)
 ) -> Project:
     row = await db.get(ProjectRow, project_id)
     if not row:
@@ -233,8 +236,9 @@ async def update_project(
     elif repo_changed and not row.repo_url:
         workspace.append_log(row.id, "pipeline.log", "[setup] GitHub repository unlinked")
 
+    origin = await get_preview_origin(db, request)
     meta = workspace.load_metadata(project_id)
-    preview_url = preview_from_metadata(meta, project_id=project_id)["preview_url"]
+    preview_url = preview_from_metadata(meta, origin=origin, project_id=project_id)["preview_url"]
     return _project_from_row(row, preview_url=preview_url)
 
 

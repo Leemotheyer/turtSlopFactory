@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from app.config import settings
+from app.services.deployment_urls import build_public_origin
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +16,25 @@ def preview_path(project_id: UUID) -> str:
     return f"/preview/{str(project_id)[:8]}/"
 
 
-def build_preview_url(project_id: UUID, host: str | None = None) -> str:
+def build_preview_url(
+    project_id: UUID,
+    *,
+    origin: str | None = None,
+    host: str | None = None,
+) -> str:
     """Public URL for a project preview — always via the factory gateway path."""
     path = preview_path(project_id)
-    host = (host or settings.public_host or settings.preview_host).strip()
-    if host.startswith("http://") or host.startswith("https://"):
-        base = host.rstrip("/")
-        return f"{base}{path}"
-    return f"http://{host.rstrip('/')}{path}"
+    if origin:
+        return f"{origin.rstrip('/')}{path}"
+    base = build_public_origin(
+        host or settings.public_host or settings.preview_host,
+        public_port=settings.dashboard_port,
+    )
+    return f"{base}{path}"
 
 
 def preview_upstream(project_id: UUID, meta: dict[str, Any]) -> str | None:
-    """Internal URL the API proxy uses to reach a running preview."""
+    """Internal URL the API proxy uses to reach a running preview (sync fallback)."""
     backend = meta.get("preview_backend")
     if backend == "docker":
         container = meta.get("preview_container") or meta.get("preview_container_id")
@@ -70,35 +78,48 @@ def update_preview_metadata(
     preview_type: str,
     status: str,
     backend: str,
+    origin: str | None = None,
     host: str | None = None,
     container_id: str | None = None,
     container_name: str | None = None,
     process_id: str | None = None,
 ) -> dict[str, Any]:
-    url = build_preview_url(project_id, host=host)
+    url = build_preview_url(project_id, origin=origin, host=host)
     meta["preview_url"] = url
     meta["staging_url"] = url
     meta["preview_type"] = preview_type
     meta["preview_status"] = status
-    meta["preview_backend"] = backend
+    meta["preview_backend"] = backend if status == "running" else None
     if port is not None:
         meta["preview_internal_port"] = port
         meta["preview_port"] = port
         meta["staging_port"] = port
-    if container_id:
-        meta["preview_container_id"] = container_id
-    if container_name:
-        meta["preview_container"] = container_name
-    if process_id:
-        meta["preview_process_id"] = process_id
+    if status == "running":
+        if container_id:
+            meta["preview_container_id"] = container_id
+        if container_name:
+            meta["preview_container"] = container_name
+        if process_id:
+            meta["preview_process_id"] = process_id
+    else:
+        meta.pop("preview_container_id", None)
+        meta.pop("preview_container", None)
+        meta.pop("preview_process_id", None)
     return meta
 
 
-def preview_from_metadata(meta: dict[str, Any], host: str | None = None, project_id: UUID | None = None) -> dict[str, Any]:
+def preview_from_metadata(
+    meta: dict[str, Any],
+    *,
+    origin: str | None = None,
+    host: str | None = None,
+    project_id: UUID | None = None,
+) -> dict[str, Any]:
     port = get_preview_port(meta)
-    url = meta.get("preview_url") or meta.get("staging_url")
-    if not url and project_id:
-        url = build_preview_url(project_id, host=host)
+    if project_id is not None:
+        url = build_preview_url(project_id, origin=origin, host=host)
+    else:
+        url = meta.get("preview_url") or meta.get("staging_url")
     return {
         "preview_url": url,
         "preview_port": port,

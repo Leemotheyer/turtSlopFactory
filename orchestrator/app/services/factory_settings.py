@@ -10,7 +10,11 @@ from app.config import settings
 from app.db_models import FactorySettingsRow
 from app.services.crypto import encrypt_value
 from app.services.cursor_connection import get_connection_row
-from app.services.deployment_urls import maybe_auto_configure, resolve_request_context
+from app.services.deployment_urls import (
+    build_public_origin,
+    maybe_auto_configure,
+    resolve_request_context,
+)
 
 VALID_AGENT_BACKENDS = frozenset({"cursor_cloud", "cursor_local", "local"})
 CURSOR_MODEL_ROLES = ("architect", "developer", "reviewer")
@@ -36,6 +40,19 @@ async def get_or_create_settings_row(session: AsyncSession) -> FactorySettingsRo
 async def get_preview_host(session: AsyncSession) -> str:
     row = await get_or_create_settings_row(session)
     return row.preview_host or settings.public_host or settings.preview_host
+
+
+async def get_preview_origin(session: AsyncSession, request: Request | None = None) -> str:
+    """Public factory origin for live preview links (includes gateway port when needed)."""
+    row = await get_or_create_settings_row(session)
+    stored = row.preview_host or settings.public_host or settings.preview_host
+
+    if request is not None and settings.trust_proxy_headers:
+        _, api_url, _, gateway = resolve_request_context(request)
+        if gateway:
+            return api_url.rstrip("/")
+
+    return build_public_origin(stored, public_port=settings.dashboard_port)
 
 
 async def get_agent_backend(session: AsyncSession) -> str:

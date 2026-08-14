@@ -25,7 +25,7 @@ from app.services.agent_concurrency import (
     resolve_concurrency_budget,
     wait_for_cursor_capacity,
 )
-from app.services.factory_settings import get_agent_backend, get_preview_host
+from app.services.factory_settings import get_preview_origin
 from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
 from app.state_machine import (
     advance_project,
@@ -242,7 +242,7 @@ class PipelineExecutor:
         context["base_branch"] = plan.base_branch
         context["work_branch"] = plan.work_branch
         context["isolate_branch"] = plan.isolated
-        context["preview_host"] = await get_preview_host(session)
+        context["preview_origin"] = await get_preview_origin(session)
         repo = self.workspace.repo_dir(project.id)
         context["incremental"] = context.get("fix_attempt", 0) > 0 or (repo / "app" / "main.py").exists()
 
@@ -269,8 +269,8 @@ class PipelineExecutor:
     ) -> bool:
         """Start or replace a project preview (internal port or isolated Docker network)."""
         meta = self.workspace.load_metadata(project.id)
-        host = context.get("preview_host") or await get_preview_host(session)
-        preview_url = build_preview_url(project.id, host=host)
+        origin = context.get("preview_origin") or await get_preview_origin(session)
+        preview_url = build_preview_url(project.id, origin=origin)
         runtime_env = await get_secrets_for_runtime(session, project.id)
 
         await stop_preview(project.id, container_name=meta.get("preview_container"))
@@ -320,7 +320,8 @@ class PipelineExecutor:
             preview_type=preview_type,
             status=status,
             backend=backend,
-            host=host,
+            origin=origin,
+            host=None,
             container_id=container_id,
             container_name=container_name,
             process_id=process_id,
@@ -970,7 +971,8 @@ class PipelineExecutor:
 
     async def _stage_production(self, session, project, context) -> bool:
         meta = self.workspace.load_metadata(project.id)
-        preview = preview_from_metadata(meta, project_id=project.id)
+        origin = context.get("preview_origin") or await get_preview_origin(session)
+        preview = preview_from_metadata(meta, origin=origin, project_id=project.id)
         prod_url = preview["preview_url"] or ""
         port = preview.get("preview_port") or context.get("staging_port")
 

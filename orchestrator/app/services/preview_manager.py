@@ -83,6 +83,66 @@ async def _wait_for_health(url: str, *, attempts: int = 30, delay: float = 1.0) 
     return False
 
 
+async def _docker_inspect(field: str, container_ref: str) -> str | None:
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "inspect",
+        "-f",
+        field,
+        container_ref,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    if proc.returncode != 0:
+        return None
+    value = stdout.decode().strip()
+    return value or None
+
+
+async def container_is_running(container_ref: str) -> bool:
+    state = await _docker_inspect("{{.State.Running}}", container_ref)
+    return state == "true"
+
+
+async def container_ip_on_network(container_ref: str, network: str) -> str | None:
+    field = f"{{{{(index .NetworkSettings.Networks \"{network}\").IPAddress}}}}"
+    ip = await _docker_inspect(field, container_ref)
+    if ip and ip != "<no value>":
+        return ip
+    return None
+
+
+async def resolve_preview_upstream(project_id: UUID, meta: dict) -> str | None:
+    """Resolve a reachable internal URL for the project preview proxy."""
+    backend = meta.get("preview_backend")
+    if backend == "docker":
+        ensure_preview_network()
+        name = meta.get("preview_container")
+        if not name or len(str(name)) <= 12:
+            name = preview_container_name(project_id)
+        if not await container_is_running(name):
+            logger.warning("Preview container %s is not running for project %s", name, project_id)
+            return None
+        ip = await container_ip_on_network(name, settings.preview_docker_network)
+        host = ip or name
+        return f"http://{host}:8080"
+
+    port = meta.get("preview_internal_port") or meta.get("preview_port") or meta.get("staging_port")
+    if port:
+        key = str(project_id)
+        proc = _dev_processes.get(key)
+        if proc is not None and proc.returncode is not None:
+            logger.warning("Dev preview process exited for project %s", project_id)
+            return None
+        health_url = f"http://127.0.0.1:{port}/health"
+        if not await _wait_for_health(health_url, attempts=1, delay=0):
+            logger.warning("Dev preview on port %s is not healthy for project %s", port, project_id)
+            return None
+        return f"http://127.0.0.1:{port}"
+    return None
+
+
 async def start_dev_preview(
     project_id: UUID,
     repo_path: Path,

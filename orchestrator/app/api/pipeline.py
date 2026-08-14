@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +11,7 @@ from app.services.git_branching import merge_work_branch_to_base, resolve_branch
 from app.services.secrets import get_github_token, maybe_request_github_token
 from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
-from app.services.factory_settings import get_preview_host
+from app.services.factory_settings import get_preview_origin
 from app.services.pipeline_launcher import schedule_pipeline
 from app.services.preview import preview_from_metadata
 from app.workspace.manager import WorkspaceManager
@@ -21,15 +21,15 @@ workspace = WorkspaceManager()
 
 
 @router.get("/{project_id}/detail")
-async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+async def get_project_detail(project_id: UUID, request: Request, db: AsyncSession = Depends(get_db)) -> dict:
     row = await db.get(ProjectRow, project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
 
     meta = workspace.load_metadata(project_id)
     discovery = await get_discovery(db, project_id)
-    host = await get_preview_host(db)
-    preview = preview_from_metadata(meta, host=host, project_id=project_id)
+    origin = await get_preview_origin(db, request)
+    preview = preview_from_metadata(meta, origin=origin, project_id=project_id)
     return {
         "id": str(row.id),
         "name": row.name,

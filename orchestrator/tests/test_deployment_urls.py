@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from app.services.deployment_urls import resolve_request_context
+from app.services.deployment_urls import build_public_origin, resolve_request_context
 
 
 def test_resolve_gateway_from_forwarded_headers():
@@ -64,3 +64,19 @@ def test_resolve_gateway_localhost_name_nonstandard_port():
     assert host == "localhost"
     assert api_url == "http://localhost:8044"
     assert gateway is True
+
+
+def test_build_public_origin_localhost_adds_dashboard_port():
+    assert build_public_origin("localhost") == "http://localhost:8044"
+
+
+def test_build_public_origin_ip_without_port():
+    assert build_public_origin("192.168.1.204") == "http://192.168.1.204:8044"
+
+
+def test_build_public_origin_stored_host_port():
+    assert build_public_origin("192.168.1.204:8044") == "http://192.168.1.204:8044"
+
+
+def test_build_public_origin_domain_unchanged():
+    assert build_public_origin("factory.example.com") == "http://factory.example.com"
