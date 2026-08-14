@@ -83,6 +83,10 @@ async def _ensure_factory_settings_columns() -> None:
         "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS agent_models JSONB",
         "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS max_parallel_agents INTEGER",
         "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS cursor_concurrent_limit INTEGER",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS base_branch VARCHAR(64) DEFAULT 'main'",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS work_branch VARCHAR(255)",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS isolate_branch BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS merge_status VARCHAR(32)",
     ]
     async with engine.begin() as conn:
         for stmt in statements:

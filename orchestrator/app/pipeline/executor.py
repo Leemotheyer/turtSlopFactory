@@ -13,6 +13,7 @@ from app.database import SessionLocal
 from app.db_models import DeploymentRow, EventRow, ProjectRow, TaskRow
 from app.events import event_bus
 from app.models import AgentRole, EventType, FactoryEvent, NotificationType, ProjectState, TaskStatus
+from app.services.git_branching import resolve_branch_plan, setup_project_branches
 from app.services.discovery import get_discovery
 from app.services.input_requests import create_input_request, get_input_responses_for_agents
 from app.services.notifications import create_notification
@@ -126,7 +127,11 @@ class PipelineExecutor:
         context["project_state"] = project.state
         context["env_status"] = await get_env_status_for_agents(session, project.id)
         context["repo_url"] = project.repo_url
-        context["branch"] = project.branch
+        plan = resolve_branch_plan(project)
+        context["branch"] = plan.active_branch
+        context["base_branch"] = plan.base_branch
+        context["work_branch"] = plan.work_branch
+        context["isolate_branch"] = plan.isolated
         context["preview_host"] = await get_preview_host(session)
         repo = self.workspace.repo_dir(project.id)
         context["incremental"] = context.get("fix_attempt", 0) > 0 or (repo / "app" / "main.py").exists()
@@ -260,6 +265,17 @@ class PipelineExecutor:
                     "notes": [],
                 }
                 await self._refresh_context(session, project, context)
+
+                if project.repo_url:
+                    secrets = await get_secrets_for_runtime(session, project_id)
+                    setup_msg = await setup_project_branches(
+                        self.workspace,
+                        project,
+                        github_token=secrets.get("GITHUB_TOKEN"),
+                    )
+                    await session.commit()
+                    self.workspace.append_log(project_id, "pipeline.log", f"[setup] {setup_msg}")
+                    await self._refresh_context(session, project, context)
 
                 discovery = await get_discovery(session, project_id)
                 if discovery and discovery.responses:
@@ -688,6 +704,35 @@ class PipelineExecutor:
                 f"{project.name} passed review. Promote to production when ready.",
                 action="overview",
             )
+            plan = resolve_branch_plan(project)
+            if plan.isolated and plan.work_branch:
+                await create_notification(
+                    session,
+                    project.id,
+                    NotificationType.MERGE_READY,
+                    "Merge to main?",
+                    (
+                        f"Factory work is on `{plan.work_branch}`. Your production branch "
+                        f"(`{plan.base_branch}`) is unchanged. Merge when you're ready, "
+                        f"or keep iterating on the factory branch."
+                    ),
+                    action="merge",
+                )
+                await create_input_request(
+                    session,
+                    project.id,
+                    agent_id="pipeline",
+                    role="reviewer",
+                    question=(
+                        f"Merge factory branch `{plan.work_branch}` into `{plan.base_branch}` now?"
+                    ),
+                    default_decision="Keep on factory branch for now",
+                    context_detail=(
+                        "Use the dashboard Merge to main button when you want production updated. "
+                        "The factory never merges without your approval."
+                    ),
+                    options=["Merge to main now", "Keep on factory branch"],
+                )
         return run.success
 
     async def _stage_production(self, session, project, context) -> bool:

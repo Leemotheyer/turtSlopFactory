@@ -26,6 +26,10 @@ export interface Project {
   repo_url: string | null;
   state: ProjectState;
   branch: string;
+  base_branch: string;
+  work_branch: string | null;
+  isolate_branch: boolean;
+  merge_status: string | null;
   image_tag: string | null;
   preview_url: string | null;
   created_at: string;
@@ -140,6 +144,7 @@ export type NotificationType =
   | "project_finished"
   | "intake_ready"
   | "review_ready"
+  | "merge_ready"
   | "pipeline_blocked"
   | "preview_ready";
 
@@ -346,7 +351,7 @@ export async function fetchProjectDetail(id: string): Promise<ProjectDetail> {
 export async function createProject(
   name: string,
   description: string,
-  options?: { repo_url?: string | null; branch?: string }
+  options?: { repo_url?: string | null; branch?: string; base_branch?: string; isolate_branch?: boolean }
 ): Promise<Project> {
   const res = await fetch(`${apiUrl()}/api/projects`, {
     method: "POST",
@@ -355,7 +360,9 @@ export async function createProject(
       name,
       description,
       repo_url: options?.repo_url || null,
-      branch: options?.branch || "main",
+      branch: options?.branch || options?.base_branch || "main",
+      base_branch: options?.base_branch || options?.branch || "main",
+      isolate_branch: options?.isolate_branch ?? true,
     }),
   });
   if (!res.ok) {
@@ -367,7 +374,14 @@ export async function createProject(
 
 export async function updateProjectRepo(
   projectId: string,
-  params: { repo_url?: string | null; branch?: string; clear_repo?: boolean }
+  params: {
+    repo_url?: string | null;
+    branch?: string;
+    base_branch?: string;
+    work_branch?: string;
+    isolate_branch?: boolean;
+    clear_repo?: boolean;
+  }
 ): Promise<Project> {
   const res = await fetch(`${apiUrl()}/api/projects/${projectId}`, {
     method: "PATCH",
@@ -451,6 +465,20 @@ export async function promoteProject(projectId: string): Promise<{ production_ur
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Failed to promote");
+  }
+  return res.json();
+}
+
+export async function mergeToMain(
+  projectId: string
+): Promise<{ status: string; message: string; base_branch: string; work_branch: string }> {
+  const res = await fetch(`${apiUrl()}/api/projects/${projectId}/merge-to-main`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to merge to main");
   }
   return res.json();
 }

@@ -29,6 +29,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   promoteProject,
+  mergeToMain,
   respondToInput,
   runPipeline,
   setSecret,
@@ -150,8 +151,10 @@ export default function DashboardPage() {
   const [instanceApiKey, setInstanceApiKey] = useState("");
   const [newRepoUrl, setNewRepoUrl] = useState("");
   const [newBranch, setNewBranch] = useState("main");
+  const [newIsolateBranch, setNewIsolateBranch] = useState(true);
   const [editRepoUrl, setEditRepoUrl] = useState("");
   const [editBranch, setEditBranch] = useState("main");
+  const [editIsolateBranch, setEditIsolateBranch] = useState(true);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [repoNote, setRepoNote] = useState<string | null>(null);
@@ -270,9 +273,10 @@ export default function DashboardPage() {
   useEffect(() => {
     if (detail) {
       setEditRepoUrl(detail.repo_url ?? "");
-      setEditBranch(detail.branch ?? "main");
+      setEditBranch(detail.base_branch ?? detail.branch ?? "main");
+      setEditIsolateBranch(detail.isolate_branch ?? true);
     }
-  }, [detail?.id, detail?.repo_url, detail?.branch]);
+  }, [detail?.id, detail?.repo_url, detail?.branch, detail?.base_branch, detail?.isolate_branch]);
 
   useEffect(() => {
     if (showCursor) loadCursor();
@@ -340,12 +344,14 @@ export default function DashboardPage() {
     try {
       const p = await createProject(newName, newDesc, {
         repo_url: newRepoUrl || null,
-        branch: newBranch || "main",
+        base_branch: newBranch || "main",
+        isolate_branch: newRepoUrl ? newIsolateBranch : false,
       });
       setNewName("");
       setNewDesc("");
       setNewRepoUrl("");
       setNewBranch("main");
+      setNewIsolateBranch(true);
       setSelectedId(p.id);
       await refresh();
     } catch (err) {
@@ -362,7 +368,8 @@ export default function DashboardPage() {
     try {
       await updateProjectRepo(selectedId, {
         repo_url: editRepoUrl || null,
-        branch: editBranch || "main",
+        base_branch: editBranch || "main",
+        isolate_branch: editRepoUrl ? editIsolateBranch : false,
         clear_repo: !editRepoUrl,
       });
       await refresh();
@@ -398,6 +405,25 @@ export default function DashboardPage() {
       setLoading(false);
     }
   }
+
+  async function handleMergeToMain() {
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await mergeToMain(selectedId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Merge failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const repoSettingsDirty =
+    !!detail &&
+    (editRepoUrl !== (detail.repo_url ?? "") ||
+      editBranch !== (detail.base_branch ?? detail.branch ?? "main") ||
+      editIsolateBranch !== (detail.isolate_branch ?? true));
 
   async function viewArtifact(name: string) {
     if (!selectedId) return;
@@ -1277,15 +1303,25 @@ export default function DashboardPage() {
               </p>
             )}
             {newRepoUrl && (
-              <label className={styles.repoField}>
-                Branch
-                <input
-                  type="text"
-                  value={newBranch}
-                  onChange={(e) => setNewBranch(e.target.value)}
-                  placeholder="main"
-                />
-              </label>
+              <>
+                <label className={styles.repoField}>
+                  Production branch
+                  <input
+                    type="text"
+                    value={newBranch}
+                    onChange={(e) => setNewBranch(e.target.value)}
+                    placeholder="main"
+                  />
+                </label>
+                <label className={styles.repoCheckbox}>
+                  <input
+                    type="checkbox"
+                    checked={newIsolateBranch}
+                    onChange={(e) => setNewIsolateBranch(e.target.checked)}
+                  />
+                  Develop on a separate factory branch (keeps production branch untouched)
+                </label>
+              </>
             )}
             <button type="submit" className={styles.btnPrimary} disabled={loading}>
               Create project
@@ -1318,9 +1354,21 @@ export default function DashboardPage() {
                         </button>
                       )}
                       {detail.state === "REVIEW" && (
-                        <button className={styles.btnSuccess} onClick={handlePromote} disabled={loading}>
-                          Promote to production
-                        </button>
+                        <>
+                          {detail.isolate_branch && detail.merge_status !== "merged" && (
+                            <button
+                              className={styles.btnSecondary}
+                              onClick={handleMergeToMain}
+                              disabled={loading}
+                              title="Merge factory work branch into production"
+                            >
+                              Merge to main
+                            </button>
+                          )}
+                          <button className={styles.btnSuccess} onClick={handlePromote} disabled={loading}>
+                            Promote to production
+                          </button>
+                        </>
                       )}
                     </>
                   )}
@@ -1342,7 +1390,8 @@ export default function DashboardPage() {
                     <h3>GitHub repository</h3>
                     <p className={styles.repoHint}>
                       Link an empty or existing repo from your Cursor-connected GitHub account.
-                      Cloud agents will work directly in that repository.
+                      When branch isolation is on, agents work on a factory branch and only merge
+                      to your production branch when you approve.
                     </p>
                   </div>
                   {cursorStatus?.connected && (
@@ -1369,7 +1418,7 @@ export default function DashboardPage() {
                     </select>
                   </label>
                   <label className={styles.repoField}>
-                    Branch
+                    {editIsolateBranch ? "Production branch" : "Branch"}
                     <input
                       type="text"
                       value={editBranch}
@@ -1378,11 +1427,30 @@ export default function DashboardPage() {
                       disabled={!editRepoUrl}
                     />
                   </label>
+                  {editRepoUrl && (
+                    <label className={styles.repoCheckbox}>
+                      <input
+                        type="checkbox"
+                        checked={editIsolateBranch}
+                        onChange={(e) => setEditIsolateBranch(e.target.checked)}
+                      />
+                      Isolate from production branch (factory work branch)
+                    </label>
+                  )}
+                  {editRepoUrl && editIsolateBranch && detail.work_branch && (
+                    <div className={styles.repoField}>
+                      <span>Factory work branch</span>
+                      <code className={styles.workBranch}>{detail.work_branch}</code>
+                      {detail.merge_status === "merged" && (
+                        <span className={styles.mergeBadge}>Merged to main</span>
+                      )}
+                    </div>
+                  )}
                   <div className={styles.repoFormActions}>
                     <button
                       type="submit"
                       className={styles.btnPrimary}
-                      disabled={loading || (editRepoUrl === (detail.repo_url ?? "") && editBranch === (detail.branch ?? "main"))}
+                      disabled={loading || !repoSettingsDirty}
                     >
                       Save repository
                     </button>

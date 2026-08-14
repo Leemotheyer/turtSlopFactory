@@ -41,6 +41,18 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
             sections.append(f"- Q: {resp.get('question', '')}")
             sections.append(f"  A: {decision}")
 
+    if context.get("isolate_branch") and context.get("work_branch"):
+        base = context.get("base_branch", "main")
+        work = context["work_branch"]
+        sections.append(
+            f"""
+## Git workflow (isolated branch)
+- **Production branch:** `{base}` — do NOT commit or push here.
+- **Your working branch:** `{work}` — all commits and pushes go here only.
+- The factory will ask before merging into `{base}`.
+"""
+        )
+
     if role == AgentRole.ARCHITECT:
         sections.append(
             """
