@@ -99,7 +99,6 @@ const AUTO_START_PIPELINE_STATES = new Set([
   "DOCKER_BUILD",
   "STAGING_DEPLOY",
   "SMOKE_TESTING",
-  "REVIEW",
 ]);
 
 const STATE_COLORS: Record<string, string> = {
