@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>turtSlopFactory</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0b0d12;
+      color: #eef1f6;
+      --card: #151922;
+      --muted: #8b93a7;
+      --accent: #5b8def;
+      --ok: #3ecf8e;
+      --warn: #f5a623;
+    }
+    * { box-sizing: border-box; }
+    body {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 1rem 1rem 3rem;
+    }
+    header { margin-bottom: 1.5rem; }
+    h1 { margin: 0 0 0.25rem; font-size: clamp(1.5rem, 4vw, 2rem); }
+    .tagline { color: var(--muted); margin: 0; line-height: 1.5; }
+    .panel {
+      background: var(--card);
+      border: 1px solid #232838;
+      border-radius: 14px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .start-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: stretch;
+    }
+    input, textarea, button {
+      font: inherit;
+      border-radius: 10px;
+      border: 1px solid #2a3142;
+      padding: 0.75rem 0.9rem;
+    }
+    input, textarea {
+      flex: 1 1 220px;
+      background: #0f1219;
+      color: inherit;
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      min-width: 140px;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: transparent;
+      border: 1px solid #334;
+      color: inherit;
+    }
+    .projects { display: grid; gap: 0.75rem; }
+    .project {
+      display: grid;
+      gap: 0.5rem;
+      padding: 1rem;
+      background: #11151d;
+      border-radius: 12px;
+      border: 1px solid #222838;
+    }
+    .project-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      align-items: start;
+      flex-wrap: wrap;
+    }
+    .status {
+      font-size: 0.85rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      background: #1f2635;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .status.complete { color: var(--ok); }
+    .status.implementing, .status.testing, .status.planning { color: var(--accent); }
+    .events {
+      margin: 0;
+      padding-left: 1.1rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+    .empty { color: var(--muted); text-align: center; padding: 2rem 1rem; }
+    @media (max-width: 640px) {
+      .start-row { flex-direction: column; }
+      button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>turtSlopFactory</h1>
+    <p class="tagline">
+      Start a project and walk away. Self-propelled agents plan, build, test, and iterate while you check back on your schedule.
+    </p>
+  </header>
+
+  <section class="panel">
+    <h2 style="margin-top:0;font-size:1.05rem;">Start a project</h2>
+    <div class="start-row">
+      <input id="name" placeholder="Optional name (auto-generated if blank)" />
+      <textarea id="description" placeholder="Optional idea — agents will fill in the rest"></textarea>
+      <button id="startBtn" type="button">Start project</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+      <h2 style="margin:0;font-size:1.05rem;">Your projects</h2>
+      <button class="secondary" id="refreshBtn" type="button">Refresh</button>
+    </div>
+    <div id="projects" class="projects" style="margin-top:1rem;">
+      <div class="empty">No projects yet — start one above.</div>
+    </div>
+  </section>
+
+  <script>
+    const projectsEl = document.getElementById('projects');
+
+    async function fetchProjects() {
+      const res = await fetch('/api/projects');
+      return res.json();
+    }
+
+    async function fetchEvents(id) {
+      const res = await fetch(`/api/projects/${id}/events`);
+      return res.json();
+    }
+
+    function statusClass(status) {
+      return `status ${status || ''}`.trim();
+    }
+
+    async function renderProjects() {
+      const projects = await fetchProjects();
+      if (!projects.length) {
+        projectsEl.innerHTML = '<div class="empty">No projects yet — start one above.</div>';
+        return;
+      }
+
+      const cards = await Promise.all(projects.map(async (p) => {
+        const events = await fetchEvents(p.id);
+        const eventItems = events.slice(0, 4).map(e =>
+          `<li>${new Date(e.created_at).toLocaleString()} — ${e.message}</li>`
+        ).join('');
+        return `
+          <article class="project">
+            <div class="project-head">
+              <div>
+                <strong>${p.name}</strong>
+                <div style="color:var(--muted);font-size:0.92rem;margin-top:0.25rem;">
+                  Iteration ${p.iteration}
+                </div>
+              </div>
+              <span class="${statusClass(p.status)}">${p.status}</span>
+            </div>
+            ${p.description ? `<div style="color:var(--muted);">${p.description}</div>` : ''}
+            <ul class="events">${eventItems || '<li>Waiting for agent activity…</li>'}</ul>
+          </article>
+        `;
+      }));
+
+      projectsEl.innerHTML = cards.join('');
+    }
+
+    document.getElementById('startBtn').onclick = async () => {
+      const name = document.getElementById('name').value.trim();
+      const description = document.getElementById('description').value.trim();
+      await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description })
+      });
+      document.getElementById('name').value = '';
+      document.getElementById('description').value = '';
+      await renderProjects();
+    };
+
+    document.getElementById('refreshBtn').onclick = renderProjects;
+    renderProjects();
+    setInterval(renderProjects, 8000);
+  </script>
+</body>
+</html>
