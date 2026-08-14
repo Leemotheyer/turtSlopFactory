@@ -1,0 +1,31 @@
+application:
+  name: turtslopfactory
+  type: api
+
+requirements:
+  - id: R1
+    description: Expose /health endpoint
+  - id: R2
+    description: REST API for items CRUD
+  - id: R3
+    description: Web UI accessible in browser
+  - id: R4
+    description: Self-propelled agents advance projects autonomously
+  - id: R5
+    description: PostgreSQL persistence for projects
+
+deployment:
+  healthcheck:
+    type: http
+    path: /health
+    port: 8080
+
+tests:
+  unit: true
+  integration: true
+  smoke: true
+
+gates:
+  max_fix_attempts: 5
+  require_reviewer: true
+  require_human_for_production: false
