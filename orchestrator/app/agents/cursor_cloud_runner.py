@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 _TERMINAL_OK = {"FINISHED"}
 
 
+def _as_dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
 class CursorCloudRunner:
     def __init__(self, workspace: WorkspaceManager) -> None:
         self.workspace = workspace
@@ -63,8 +67,8 @@ class CursorCloudRunner:
                     return False, f"Cursor cloud capacity unavailable: {exc.message}", ""
                 return False, f"Cursor cloud create failed: {exc.message}", ""
 
-            agent = created.get("agent") or {}
-            run = created.get("run") or {}
+            agent = _as_dict(created.get("agent"))
+            run = _as_dict(created.get("run"))
             agent_id = agent.get("id") or ""
             run_id = run.get("id") or agent.get("latestRunId") or ""
             if not agent_id or not run_id:
@@ -91,8 +95,10 @@ class CursorCloudRunner:
                 return False, str(exc), agent_id
 
             status = (final_run.get("status") or "").upper()
-            result = final_run.get("result") or {}
+            result = _as_dict(final_run.get("result"))
             text = result.get("text") or final_run.get("text") or ""
+            if isinstance(final_run.get("result"), str) and not text:
+                text = str(final_run.get("result"))
 
             if status not in _TERMINAL_OK:
                 err = result.get("error") or final_run.get("error") or status
@@ -135,12 +141,16 @@ class CursorCloudRunner:
         repo_url: str,
         final_run: dict,
     ) -> str:
-        git_info = final_run.get("git") or (final_run.get("result") or {}).get("git") or {}
+        git_info = _as_dict(final_run.get("git")) or _as_dict(_as_dict(final_run.get("result")).get("git"))
         branches = git_info.get("branches") or []
         if not branches:
             return "Cloud agent finished; no pushed branch to sync locally."
 
-        branch = branches[0].get("branch")
+        first = branches[0]
+        if isinstance(first, dict):
+            branch = first.get("branch")
+        else:
+            branch = str(first)
         if not branch:
             return ""
 

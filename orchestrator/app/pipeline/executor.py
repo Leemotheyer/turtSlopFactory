@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from uuid import UUID
 
@@ -156,16 +157,48 @@ class PipelineExecutor:
                 scaffold_base(repo, project.name, project.description)
 
     async def _ensure_runnable_app(self, project: ProjectRow) -> None:
-        """Guarantee app/main.py, tests, and deps exist before preview or pytest."""
+        """Guarantee app/main.py imports cleanly and tests exist before preview or pytest."""
         repo = self.workspace.repo_dir(project.id)
-        needs_base = not (repo / "app" / "main.py").exists() or not (repo / "tests" / "test_app.py").exists()
-        if needs_base:
+        repaired = False
+
+        if not await self._app_imports_cleanly(repo):
             scaffold_base(repo, project.name, project.description)
+            repaired = True
             self.workspace.append_log(
                 project.id,
                 "pipeline.log",
-                "[scaffold] Ensured minimal app/main.py and tests/test_app.py",
+                "[scaffold] Repaired broken or missing app/main.py and test harness",
             )
+        elif not (repo / "tests" / "test_app.py").exists():
+            scaffold_base(repo, project.name, project.description)
+            repaired = True
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[scaffold] Added missing tests/test_app.py",
+            )
+
+        if repaired and not await self._app_imports_cleanly(repo):
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[scaffold] WARNING: app.main still fails to import after repair",
+            )
+
+    async def _app_imports_cleanly(self, repo) -> bool:
+        if not (repo / "app" / "main.py").exists():
+            return False
+        proc = await asyncio.create_subprocess_exec(
+            "python3",
+            "-c",
+            "from app.main import app; assert app is not None",
+            cwd=str(repo),
+            env={**os.environ, "PYTHONPATH": str(repo)},
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        return proc.returncode == 0
 
     def _persist_last_failure(self, project_id: UUID, context: dict) -> None:
         failure = context.get("last_failure")
