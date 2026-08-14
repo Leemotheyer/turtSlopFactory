@@ -19,25 +19,31 @@ curl -fsSL https://raw.githubusercontent.com/Leemotheyer/turtSlopFactory/main/in
 
 | URL | Purpose |
 |-----|---------|
-| http://localhost:8044 | Dashboard + API (single port via gateway) |
+| http://localhost:8044 | Dashboard + API (single port) |
 | http://localhost:9010–9039 | Live project previews |
 
 Everything else — encryption key, hostname, Cursor, API key — is auto-configured or set in the dashboard.
 
 ## What runs
 
-| Container | Role |
-|-----------|------|
-| **gateway** (Caddy) | Serves dashboard + proxies `/api` and `/ws` on port 8044 |
-| **factory** | API + pipeline worker in one container (Docker socket for builds) |
-| **dashboard** | Next.js UI |
-| **postgres** / **redis** | Internal data stores |
+**One container** (`factory`) includes everything:
 
-**4 app containers** instead of 5 — no separate worker service.
+| Component | Role |
+|-----------|------|
+| **Caddy** | Gateway — dashboard + `/api` + `/ws` on port 80 |
+| **FastAPI** | API + pipeline worker (Docker socket for builds) |
+| **Next.js** | Dashboard UI |
+| **PostgreSQL** | Projects, settings, secrets metadata |
+| **Redis** | Task queue + WebSocket fan-out |
+
+Only two mounts are required:
+
+- `FACTORY_DATA` → `/data` (all persistent state)
+- `/var/run/docker.sock` (pipeline builds)
 
 ## Portainer
 
-Paste [`portainer-stack.yml`](portainer-stack.yml) into **Stacks → Web editor**. No bind mounts, no env vars. Open `http://<server-ip>`.
+Paste [`portainer-stack.yml`](portainer-stack.yml) into **Stacks → Web editor**. One service, one named volume. Open `http://<server-ip>:8044`.
 
 See [docs/PORTAINER.md](docs/PORTAINER.md).
 
@@ -59,43 +65,48 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 | Setting | How |
 |---------|-----|
-| Encryption key | Generated on first boot, saved on workspace volume |
-| API + dashboard URL | Single origin on port 80 (gateway) |
+| Encryption key | Generated on first boot, saved under `FACTORY_DATA` |
+| API + dashboard URL | Single origin on port 8044 |
 | Preview hostname | Auto-detected from your browser / `X-Forwarded-Host` |
-| Database / Redis | Internal compose defaults |
+| Database / Redis | Embedded in the container, data under `FACTORY_DATA` |
 | CORS | Open for self-hosted |
 
 ## Persistent data
 
-All state survives `docker compose down` and image upgrades via bind mounts:
+Set **`FACTORY_DATA`** to control where all state lives (default `./data`). Only the Docker socket is mounted separately.
 
 ```
-./data/
-  config/       → /data/factory   encryption key, optional local.env
-  workspaces/   → project repos, artifacts, logs
-  postgres/     → database (projects, settings, secrets metadata)
+${FACTORY_DATA}/
+  config/       encryption key, optional local.env
+  workspaces/   project repos, artifacts, logs
+  postgres/     database files
+  redis/        queue / pubsub persistence
 ```
 
-Copy `data/config/local.env.example` to `data/config/local.env` for optional env overrides without editing compose.
+Copy `data/config/local.env.example` to `${FACTORY_DATA}/config/local.env` for optional env overrides.
 
-Change the host path with `FACTORY_DATA_DIR=/mnt/factory docker compose up -d`.
+```bash
+FACTORY_DATA=/mnt/factory docker compose up -d
+```
 
-**Portainer** uses named volumes `factory_config`, `workspace_data`, and `pgdata` instead (no host paths required).
+Legacy installs that used `FACTORY_DATA_DIR` still work — compose falls back to it when `FACTORY_DATA` is unset.
 
 ## Optional env overrides
 
 ```env
-FACTORY_DATA_DIR=./data  # host path for config/workspaces/postgres (default)
-HTTP_PORT=8044           # default; change if 8044 is taken
-IMAGE_TAG=latest         # pin GHCR release
+FACTORY_DATA=./data     # host path for all persistent data (default)
+HTTP_PORT=8044          # default; change if 8044 is taken
+IMAGE_TAG=latest        # pin GHCR release
 PUBLIC_HOST=factory.example.com
 ```
 
 ## Local development
 
+Run API + dashboard on the host with postgres/redis from compose:
+
 ```bash
 cd orchestrator && pip install -e ".[dev,cursor]"
-docker compose up postgres redis -d
+docker compose -f docker-compose.deps.yml up -d
 uvicorn app.main:app --reload --port 8000
 
 # Worker (separate terminal, only for non-combined dev)

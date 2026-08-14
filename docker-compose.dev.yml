@@ -1,15 +1,9 @@
-# Dev override — build images from source instead of pulling from GHCR
+# Dev override — build the all-in-one image from source
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 services:
   factory:
     build:
-      context: ./orchestrator
+      context: .
       dockerfile: Dockerfile
-    image: turtslopfactory-orchestrator:local
-
-  dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
-    image: turtslopfactory-dashboard:local
+    image: turtslopfactory:local

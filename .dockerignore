@@ -1,0 +1,13 @@
+.git
+.github
+data/postgres
+data/workspaces
+data/redis
+**/__pycache__
+**/.pytest_cache
+**/.next
+**/node_modules
+dashboard/node_modules
+orchestrator/.pytest_cache
+*.md
+!data/config/README.md

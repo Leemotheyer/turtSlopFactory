@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO="${FACTORY_REPO:-https://github.com/Leemotheyer/turtSlopFactory.git}"
 DIR="${FACTORY_DIR:-turtslopfactory}"
+DATA="${FACTORY_DATA:-./data}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required. Install Docker first: https://docs.docker.com/get-docker/"
@@ -25,19 +26,21 @@ if [ ! -d "$DIR" ]; then
 fi
 
 cd "$DIR"
-mkdir -p data/config data/workspaces data/postgres
-if [ ! -f data/config/local.env ] && [ -f data/config/local.env.example ]; then
-  cp data/config/local.env.example data/config/local.env
+mkdir -p "${DATA}/config" "${DATA}/workspaces" "${DATA}/postgres" "${DATA}/redis"
+if [ ! -f "${DATA}/config/local.env" ] && [ -f "${DATA}/config/local.env.example" ]; then
+  cp "${DATA}/config/local.env.example" "${DATA}/config/local.env"
 fi
-echo "Pulling images ..."
-$COMPOSE pull
+echo "Pulling image ..."
+FACTORY_DATA="$DATA" $COMPOSE pull
 echo "Starting turtSlopFactory ..."
-$COMPOSE up -d
+FACTORY_DATA="$DATA" $COMPOSE up -d
 
 HOST="${FACTORY_HOST:-localhost}"
+PORT="${HTTP_PORT:-8044}"
 echo ""
-echo "✓ turtSlopFactory is running"
-echo "  Dashboard: http://${HOST}:8044"
+echo "✓ turtSlopFactory is running (single container)"
+echo "  Dashboard: http://${HOST}:${PORT}"
+echo "  Data directory: ${DATA}"
 echo "  Live previews: http://${HOST}:9010–9039"
 echo ""
 echo "Optional: connect Cursor and set an API key from the Cursor menu in the dashboard."

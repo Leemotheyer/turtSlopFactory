@@ -1,114 +1,33 @@
-# Paste into Portainer → Stacks → Web editor (zero env vars, no bind mounts)
-# Open http://<server-ip> after deploy
-
-configs:
-  caddyfile:
-    content: |
-      :80 {
-        encode gzip
-        handle /api/* { reverse_proxy factory:8000 }
-        handle /docs* { reverse_proxy factory:8000 }
-        handle /openapi.json { reverse_proxy factory:8000 }
-        handle /redoc* { reverse_proxy factory:8000 }
-        handle /health { reverse_proxy factory:8000 }
-        handle /ws/* { reverse_proxy factory:8000 }
-        handle { reverse_proxy dashboard:3000 }
-      }
+# Paste into Portainer → Stacks → Web editor
+# Open http://<server-ip>:8044 after deploy
+#
+# All persistent data lives in the factory_data volume (config, workspaces, postgres, redis).
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: factory
-      POSTGRES_PASSWORD: factory
-      POSTGRES_DB: factory
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - factory
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - factory
-
   factory:
-    image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:latest
+    image: ghcr.io/leemotheyer/turtslopfactory:latest
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
-      REDIS_URL: redis://redis:6379/0
+      FACTORY_DATA: /data
+      FACTORY_CONFIG_DIR: /data/config
       WORKSPACE_ROOT: /data/workspaces
-      FACTORY_CONFIG_DIR: /data/factory
+      DATABASE_URL: postgresql+asyncpg://factory:factory@127.0.0.1:5432/factory
+      REDIS_URL: redis://127.0.0.1:6379/0
       WORKER_ENABLED: "true"
       CORS_ALLOW_ALL: "true"
       TRUST_PROXY_HEADERS: "true"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     volumes:
-      - factory_config:/data/factory
-      - workspace_data:/data/workspaces
+      - factory_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
+      - "8044:80"
       - "9010-9039:9010-9039"
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
-        ]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/health"]
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 20s
-    networks:
-      - factory
-
-  dashboard:
-    image: ghcr.io/leemotheyer/turtslopfactory-dashboard:latest
-    restart: unless-stopped
-    depends_on:
-      factory:
-        condition: service_healthy
-    networks:
-      - factory
-
-  gateway:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "8044:80"
-    configs:
-      - source: caddyfile
-        target: /etc/caddy/Caddyfile
-    depends_on:
-      - factory
-      - dashboard
-    networks:
-      - factory
+      start_period: 45s
 
 volumes:
-  pgdata:
-  factory_config:
-  workspace_data:
-
-networks:
-  factory:
-    driver: bridge
+  factory_data:

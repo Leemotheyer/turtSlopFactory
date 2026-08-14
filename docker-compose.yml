@@ -1,101 +1,36 @@
-# turtSlopFactory — recommended deploy (zero config)
+# turtSlopFactory — single-container deploy
 #   docker compose up -d
 #   open http://localhost:8044
 #
-# Persistent data: ./data/config, ./data/workspaces, ./data/postgres (bind-mounted)
-# Optional dev build: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# Set FACTORY_DATA to choose where all persistent data lives (default: ./data).
+# FACTORY_DATA_DIR is supported as a legacy alias.
+# Only the Docker socket is mounted separately (for pipeline builds).
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: factory
-      POSTGRES_PASSWORD: factory
-      POSTGRES_DB: factory
-    volumes:
-      - ${FACTORY_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - factory
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - factory
-
   factory:
-    image: ghcr.io/leemotheyer/turtslopfactory-orchestrator:${IMAGE_TAG:-latest}
+    image: ghcr.io/leemotheyer/turtslopfactory:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
-      - path: ${FACTORY_DATA_DIR:-./data}/config/local.env
+      - path: ${FACTORY_DATA:-${FACTORY_DATA_DIR:-./data}}/config/local.env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
-      REDIS_URL: redis://redis:6379/0
+      FACTORY_DATA: /data
+      FACTORY_CONFIG_DIR: /data/config
       WORKSPACE_ROOT: /data/workspaces
-      FACTORY_CONFIG_DIR: /data/factory
+      DATABASE_URL: postgresql+asyncpg://factory:factory@127.0.0.1:5432/factory
+      REDIS_URL: redis://127.0.0.1:6379/0
       WORKER_ENABLED: "true"
       CORS_ALLOW_ALL: "true"
       TRUST_PROXY_HEADERS: "true"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     volumes:
-      - ${FACTORY_DATA_DIR:-./data}/config:/data/factory
-      - ${FACTORY_DATA_DIR:-./data}/workspaces:/data/workspaces
+      - ${FACTORY_DATA:-${FACTORY_DATA_DIR:-./data}}:/data
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
+      - "${HTTP_PORT:-8044}:80"
       - "9010-9039:9010-9039"
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
-        ]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/health"]
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 20s
-    networks:
-      - factory
-
-  dashboard:
-    image: ghcr.io/leemotheyer/turtslopfactory-dashboard:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    depends_on:
-      factory:
-        condition: service_healthy
-    networks:
-      - factory
-
-  gateway:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "${HTTP_PORT:-8044}:80"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-    depends_on:
-      - factory
-      - dashboard
-    networks:
-      - factory
-
-networks:
-  factory:
-    driver: bridge
+      start_period: 45s

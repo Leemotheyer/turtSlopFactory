@@ -24,9 +24,10 @@ def _config_dir() -> Path:
 
 
 def _key_paths() -> list[Path]:
-    """Preferred config dir, with legacy workspace path for upgrades."""
+    """Preferred config dir, with legacy paths for upgrades."""
     return [
         _config_dir() / "encryption.key",
+        Path("/data/factory") / "encryption.key",
         Path(settings.workspace_root) / ".factory" / "encryption.key",
     ]
 

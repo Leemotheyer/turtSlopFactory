@@ -1,6 +1,6 @@
-.PHONY: up down dev logs test build install
+.PHONY: up down dev deps logs test build install
 
-# Production deploy (pull GHCR images, single URL on :8044)
+# Production deploy (pull GHCR image, single container on :8044)
 up:
 	docker compose pull
 	docker compose up -d
@@ -8,6 +8,10 @@ up:
 # Build from source
 dev:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# Postgres + redis only for host-based API/dashboard dev
+deps:
+	docker compose -f docker-compose.deps.yml up -d
 
 down:
 	docker compose down

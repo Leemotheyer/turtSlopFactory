@@ -4,14 +4,10 @@
 
 1. **Stacks** → **Add stack**
 2. Paste the contents of [`portainer-stack.yml`](../portainer-stack.yml) into the **Web editor**
-3. **Deploy** — no environment variables, no bind mounts
+3. **Deploy** — one service, one named volume, no env vars required
 4. Open `http://<your-server-ip>:8044`
 
-The stack includes:
-
-- **gateway** — Caddy on port 80 (dashboard + API at one URL)
-- **factory** — API + worker combined, with Docker socket for pipeline builds
-- **dashboard**, **postgres**, **redis**
+The stack runs a **single container** with the dashboard, API, worker, gateway, PostgreSQL, and Redis.
 
 Live previews: `http://<server-ip>:9010` … `:9039`
 
@@ -22,29 +18,30 @@ Live previews: `http://<server-ip>:9010` … `:9039`
 | Repository URL | `https://github.com/Leemotheyer/turtSlopFactory` |
 | Compose path | `docker-compose.yml` |
 
-Requires the repo checkout on the Portainer host (for `deploy/Caddyfile`). Use the web-editor stack above if you prefer paste-only deploy.
-
-The stack uses **named Docker volumes** for persistence (no host bind mounts required):
-
-| Volume | Mount | Contents |
-|--------|-------|----------|
-| `factory_config` | `/data/factory` | Encryption key, optional `local.env` |
-| `workspace_data` | `/data/workspaces` | Project repos and artifacts |
-| `pgdata` | PostgreSQL data | Database (dashboard settings, projects) |
-
-To edit config on the host, attach a bind mount in Portainer:
+Set `FACTORY_DATA` in the stack environment if you want a host bind mount instead of the default `./data`:
 
 ```yaml
-factory:
-  volumes:
-    - /opt/turtslopfactory/config:/data/factory
+services:
+  factory:
+    volumes:
+      - /opt/turtslopfactory:/data
+      - /var/run/docker.sock:/var/run/docker.sock
 ```
 
-Or use the git-clone compose file (`docker-compose.yml`) which defaults to `./data/config`.
+## Persistence
+
+| Path in container | Contents |
+|-------------------|----------|
+| `/data/config` | Encryption key, optional `local.env` |
+| `/data/workspaces` | Project repos and artifacts |
+| `/data/postgres` | Database |
+| `/data/redis` | Queue / pubsub |
+
+Portainer’s web-editor stack uses one named volume `factory_data` mounted at `/data`.
 
 ## Requirements
 
-- **Docker Standalone** endpoint (worker needs `/var/run/docker.sock`)
+- **Docker Standalone** endpoint (needs `/var/run/docker.sock` for pipeline builds)
 - Port **8044** available (or set `HTTP_PORT` in compose)
 - Ports **9010–9039** for live previews
 

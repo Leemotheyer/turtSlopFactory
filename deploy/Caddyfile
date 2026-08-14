@@ -1,34 +1,32 @@
-# Single-port gateway — dashboard + API (host port 8044 → container :80)
-# Factory API and worker run on factory:8000 (internal only).
-
+# All-in-one container — dashboard + API on port 80
 :80 {
 	encode gzip
 
 	handle /api/* {
-		reverse_proxy factory:8000
+		reverse_proxy 127.0.0.1:8000
 	}
 
 	handle /docs* {
-		reverse_proxy factory:8000
+		reverse_proxy 127.0.0.1:8000
 	}
 
 	handle /openapi.json {
-		reverse_proxy factory:8000
+		reverse_proxy 127.0.0.1:8000
 	}
 
 	handle /redoc* {
-		reverse_proxy factory:8000
+		reverse_proxy 127.0.0.1:8000
 	}
 
 	handle /health {
-		reverse_proxy factory:8000
+		reverse_proxy 127.0.0.1:8000
 	}
 
 	handle /ws/* {
-		reverse_proxy factory:8000
+		reverse_proxy 127.0.0.1:8000
 	}
 
 	handle {
-		reverse_proxy dashboard:3000
+		reverse_proxy 127.0.0.1:3000
 	}
 }

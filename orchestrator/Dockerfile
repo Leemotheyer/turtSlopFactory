@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+# Legacy image — used for host-only API dev. Production deploy uses the root Dockerfile.
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

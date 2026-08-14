@@ -1,0 +1,25 @@
+# Optional — postgres + redis only for local API/dashboard dev (not needed for `docker compose up`)
+#   docker compose -f docker-compose.deps.yml up -d
+#
+# Uses the same FACTORY_DATA layout as the all-in-one container.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: factory
+      POSTGRES_DB: factory
+    volumes:
+      - ${FACTORY_DATA:-${FACTORY_DATA_DIR:-./data}}/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ${FACTORY_DATA:-${FACTORY_DATA_DIR:-./data}}/redis:/data
+    ports:
+      - "6379:6379"
