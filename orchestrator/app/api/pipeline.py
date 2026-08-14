@@ -50,6 +50,8 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
         "preview_status": preview["preview_status"],
         "artifacts": workspace.list_artifacts(project_id),
         "pipeline_running": pipeline_executor.is_running(project_id),
+        "failed_gate": meta.get("failed_gate"),
+        "failed_substage": meta.get("failed_substage"),
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "created_at": row.created_at.isoformat(),
@@ -77,6 +79,7 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
         ProjectState.REVIEW.value,
         ProjectState.DIAGNOSING.value,
         ProjectState.FIXING.value,
+        ProjectState.AUTONOMOUSLY_BLOCKED.value,
     }
     if row.state == ProjectState.INTAKE_PENDING.value:
         raise HTTPException(

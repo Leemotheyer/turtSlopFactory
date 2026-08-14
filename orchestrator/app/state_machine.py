@@ -39,6 +39,10 @@ def normalize_pipeline_gate(
         if failed_gate and failed_gate in _PIPELINE_GATE_INDEX:
             return failed_gate
         return ProjectState.IMPLEMENTING
+    if state == ProjectState.AUTONOMOUSLY_BLOCKED:
+        if failed_gate and failed_gate in _PIPELINE_GATE_INDEX:
+            return failed_gate
+        return ProjectState.PLANNING
     return None
 
 

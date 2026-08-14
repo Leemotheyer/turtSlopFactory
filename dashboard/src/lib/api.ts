@@ -45,6 +45,8 @@ export interface ProjectDetail extends Project {
   preview_status: string | null;
   artifacts: string[];
   pipeline_running: boolean;
+  failed_gate: string | null;
+  failed_substage: string | null;
   discovery_status: string | null;
   intake_ready: boolean;
 }
@@ -621,7 +623,10 @@ export async function runPipeline(projectId: string): Promise<{ status: string }
     method: "POST",
     headers: headers(),
   });
-  if (!res.ok) throw new Error("Failed to start pipeline");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to start pipeline");
+  }
   return res.json();
 }
 

@@ -1664,6 +1664,11 @@ export default function DashboardPage() {
                     <span className={styles.running}>Build pipeline starting…</span>
                   ) : (
                     <>
+                      {detail.state === "AUTONOMOUSLY_BLOCKED" && (
+                        <button className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
+                          Resume pipeline
+                        </button>
+                      )}
                       {detail.state !== "PRODUCTION" && detail.state !== "AUTONOMOUSLY_BLOCKED" && (
                         <button className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
                           Re-run pipeline
@@ -1703,6 +1708,14 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
+
+              {detail.state === "AUTONOMOUSLY_BLOCKED" && (
+                <p className={styles.repoHint}>
+                  The build stopped after repeated failures
+                  {detail.failed_gate ? ` at ${detail.failed_gate.replace(/_/g, " ").toLowerCase()}` : ""}.
+                  Review the pipeline log, then click Resume pipeline to try again with a fresh fix budget.
+                </p>
+              )}
 
               <div className={styles.meta}>
                 {detail.image_tag && <span>Image: <code>{detail.image_tag}</code></span>}

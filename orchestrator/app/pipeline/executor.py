@@ -416,6 +416,21 @@ class PipelineExecutor:
                 if failed_gate:
                     context["failed_gate"] = failed_gate.value
 
+                if ProjectState(project.state) == ProjectState.AUTONOMOUSLY_BLOCKED:
+                    resume_gate = failed_gate or ProjectState.PLANNING
+                    await self.transition(
+                        session,
+                        project,
+                        resume_gate,
+                        reason="manual_resume",
+                    )
+                    context.pop("fix_attempt", None)
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        f"[resume] Unblocked — restarting from {resume_gate.value}",
+                    )
+
                 async def request_input(**kwargs):
                     return await create_input_request(session, project_id, **kwargs)
 

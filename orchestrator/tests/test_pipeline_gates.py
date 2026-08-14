@@ -30,6 +30,19 @@ def test_normalize_diagnosing_defaults_to_implementing():
     assert gate == ProjectState.IMPLEMENTING
 
 
+def test_normalize_blocked_uses_failed_gate():
+    gate = normalize_pipeline_gate(
+        ProjectState.AUTONOMOUSLY_BLOCKED,
+        ProjectState.DOCKER_BUILD,
+    )
+    assert gate == ProjectState.DOCKER_BUILD
+
+
+def test_normalize_blocked_defaults_to_planning():
+    gate = normalize_pipeline_gate(ProjectState.AUTONOMOUSLY_BLOCKED, None)
+    assert gate == ProjectState.PLANNING
+
+
 def test_fail_from_planning_and_implementing():
     assert fail_project(ProjectState.PLANNING) == ProjectState.DIAGNOSING
     assert fail_project(ProjectState.IMPLEMENTING) == ProjectState.DIAGNOSING
