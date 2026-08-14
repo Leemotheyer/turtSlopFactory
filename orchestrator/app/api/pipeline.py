@@ -29,7 +29,7 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
     meta = workspace.load_metadata(project_id)
     discovery = await get_discovery(db, project_id)
     host = await get_preview_host(db)
-    preview = preview_from_metadata(meta, host=host)
+    preview = preview_from_metadata(meta, host=host, project_id=project_id)
     return {
         "id": str(row.id),
         "name": row.name,

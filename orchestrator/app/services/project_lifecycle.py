@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db_models import DeploymentRow, EventRow, ProjectRow
 from app.pipeline.executor import pipeline_executor
+from app.services.preview_manager import stop_preview
 from app.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,12 @@ async def delete_project(
         raise RuntimeError("Cannot delete project while pipeline is running")
 
     ws = workspace or WorkspaceManager()
+
+    meta = ws.load_metadata(project_id)
+    try:
+        await stop_preview(project_id, container_name=meta.get("preview_container"))
+    except Exception:
+        logger.exception("Failed to stop preview for project %s", project_id)
 
     await session.execute(delete(DeploymentRow).where(DeploymentRow.project_id == project_id))
     await session.execute(delete(EventRow).where(EventRow.project_id == project_id))

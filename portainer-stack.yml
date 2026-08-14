@@ -24,7 +24,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8044:80"
-      - "9010-9039:9010-9039"
     healthcheck:
       test: ["CMD", "/deploy/healthcheck.sh"]
       interval: 15s

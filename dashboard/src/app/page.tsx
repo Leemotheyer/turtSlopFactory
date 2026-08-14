@@ -1828,8 +1828,10 @@ export default function DashboardPage() {
                     >
                       Open web app ↗
                     </a>
-                    {detail.preview_port && (
-                      <span className={styles.previewPort}>Port {detail.preview_port}</span>
+                    {detail.preview_port && detail.preview_type !== "docker" && (
+                      <span className={styles.previewPort} title="Internal process port (proxied via gateway)">
+                        Internal {detail.preview_port}
+                      </span>
                     )}
                   </div>
                 </div>

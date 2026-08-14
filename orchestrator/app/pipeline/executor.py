@@ -39,7 +39,14 @@ from app.services.preview import (
     build_preview_url,
     get_preview_port,
     preview_from_metadata,
+    preview_upstream,
     update_preview_metadata,
+)
+from app.services.preview_manager import (
+    preview_container_name,
+    start_dev_preview,
+    start_docker_preview,
+    stop_preview,
 )
 from app.workspace.manager import WorkspaceManager
 from app.workspace.scaffolder import scaffold_base
@@ -260,47 +267,66 @@ class PipelineExecutor:
         image_tag: str | None = None,
         notify: bool = False,
     ) -> bool:
-        """Deploy or replace the live preview container. Reuses the same port per project."""
+        """Start or replace a project preview (internal port or isolated Docker network)."""
         meta = self.workspace.load_metadata(project.id)
-        port = await allocate_preview_port(meta)
-        context["staging_port"] = port
-        context["preview_port"] = port
-
-        runtime_env = await get_secrets_for_runtime(session, project.id)
         host = context.get("preview_host") or await get_preview_host(session)
-        preview_url = build_preview_url(port, host=host)
+        preview_url = build_preview_url(project.id, host=host)
+        runtime_env = await get_secrets_for_runtime(session, project.id)
 
-        if self.runner.docker_available():
-            if preview_type == "dev":
-                repo = self.workspace.repo_dir(project.id)
-                success, output, container_id = await self.runner.deploy_dev_preview(
-                    project.id, port, repo, env_vars=runtime_env
-                )
+        await stop_preview(project.id, container_name=meta.get("preview_container"))
+
+        port: int | None = None
+        container_id: str | None = None
+        container_name: str | None = None
+        process_id: str | None = None
+        backend = "simulated"
+
+        if preview_type == "dev":
+            port = await allocate_preview_port(meta)
+            repo = self.workspace.repo_dir(project.id)
+            log_path = self.workspace.logs_dir(project.id) / "preview-dev.log"
+            success, output, process_id = await start_dev_preview(
+                project.id, repo, port, log_path
+            )
+            backend = "subprocess"
+            context["preview_backend"] = backend
+            context["staging_port"] = port
+            context["preview_port"] = port
+        elif self.runner.docker_available():
+            tag = image_tag or project.image_tag or context.get("image_tag", "none")
+            if tag == "none":
+                success, output, container_id = False, "No image tag", None
             else:
-                tag = image_tag or project.image_tag or context.get("image_tag", "none")
-                if tag == "none":
-                    success, output, container_id = False, "No image tag", None
-                else:
-                    success, output, container_id = await self.runner.deploy_staging(
-                        project.id, tag, port, env_vars=runtime_env
-                    )
-            status = "running" if success else "failed"
+                container_name = preview_container_name(project.id)
+                success, output, container_id = await start_docker_preview(
+                    project.id, tag, env_vars=runtime_env
+                )
+                backend = "docker"
+                context["preview_backend"] = backend
+                context["preview_container"] = container_name
         else:
             success = True
-            output = f"Docker unavailable — simulated preview at {preview_url}"
-            container_id = None
-            status = "simulated"
-            self.workspace.append_log(project.id, "pipeline.log", f"[preview] simulated {preview_url}")
+            output = f"No Docker — simulated preview at {preview_url}"
+            backend = "simulated"
+
+        status = "running" if success else "failed"
+        if not success:
+            self.workspace.append_log(project.id, "pipeline.log", f"[preview] failed: {output[:500]}")
 
         update_preview_metadata(
             meta,
+            project_id=project.id,
             port=port,
             preview_type=preview_type,
             status=status,
-            container_id=container_id,
+            backend=backend,
             host=host,
+            container_id=container_id,
+            container_name=container_name,
+            process_id=process_id,
         )
         self.workspace.save_metadata(project.id, meta)
+        context["preview_upstream"] = preview_upstream(project.id, meta)
 
         dep = DeploymentRow(
             project_id=project.id,
@@ -929,7 +955,7 @@ class PipelineExecutor:
 
     async def _stage_production(self, session, project, context) -> bool:
         meta = self.workspace.load_metadata(project.id)
-        preview = preview_from_metadata(meta)
+        preview = preview_from_metadata(meta, project_id=project.id)
         prod_url = preview["preview_url"] or ""
         port = preview.get("preview_port") or context.get("staging_port")
 

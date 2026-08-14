@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/Leemotheyer/turtSlopFactory/main/in
 | URL | Purpose |
 |-----|---------|
 | http://localhost:8044 | Dashboard + API (single port) |
-| http://localhost:9010–9039 | Live project previews |
+| http://localhost:8044/preview/{project-id}/ | Live project previews (via gateway) |
 
 Everything else — encryption key, hostname, Cursor, API key — is auto-configured or set in the dashboard.
 

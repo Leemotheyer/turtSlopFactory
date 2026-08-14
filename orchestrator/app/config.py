@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     intake_form_timeout_hours: int = 72  # Auto-submit intake with defaults after 72h
     secrets_encryption_key: str | None = None  # Fernet key or passphrase; required in production
     preview_host: str = "localhost"  # Hostname used in live preview URLs shown in the dashboard
-    preview_port_start: int = 9010
+    preview_internal_port_start: int = 10000
+    preview_internal_port_end: int = 10099
+    preview_docker_network: str = "factory-preview"
+    preview_port_start: int = 9010  # legacy — not published on host in gateway deploys
     preview_port_end: int = 9039
     # Agent backend: cursor_cloud (default), cursor_local, or local (deterministic scaffold)
     agent_backend: str = "cursor_cloud"

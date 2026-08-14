@@ -12,6 +12,7 @@ from app.api import events as events_api
 from app.api import feedback as feedback_api
 from app.api import notifications as notifications_api
 from app.api import pipeline as pipeline_api
+from app.api import preview_proxy as preview_proxy_api
 from app.api import projects as projects_api
 from app.api import secrets as secrets_api
 from app.api import settings as settings_api
@@ -24,6 +25,7 @@ from app.models import FactoryEvent
 from app.services.discovery import auto_submit_expired_intake
 from app.services.input_requests import expire_stale_requests
 from app.services.instance_bootstrap import run_instance_bootstrap
+from app.services.preview_manager import cleanup_orphan_preview_containers, ensure_preview_network
 from app.worker import pipeline_queue
 
 router = APIRouter()
@@ -66,6 +68,8 @@ async def _expire_input_requests_loop() -> None:
 async def lifespan(app: FastAPI):
     await init_db()
     await run_instance_bootstrap()
+    ensure_preview_network()
+    await cleanup_orphan_preview_containers()
     await event_bus.connect()
     await pipeline_queue.connect()
 
@@ -114,6 +118,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router)
+    app.include_router(preview_proxy_api.router)
     app.include_router(projects_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(events_api.router, prefix="/api")

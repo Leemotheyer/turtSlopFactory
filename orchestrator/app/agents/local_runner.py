@@ -4,6 +4,8 @@ import re
 import subprocess
 from uuid import UUID
 
+import httpx
+
 from app.agents.base import AgentRun, AgentRunner
 from app.models import AgentRole
 from app.workspace.manager import WorkspaceManager
@@ -351,13 +353,15 @@ class LocalAgentRunner(AgentRunner):
         return success, output
 
     async def _run_smoke(self, project_id: UUID, context: dict) -> tuple[bool, str]:
-        port = context.get("staging_port")
-        if not port:
-            return False, "No staging port configured"
+        upstream = context.get("preview_upstream")
+        if upstream:
+            url = f"{upstream.rstrip('/')}/health"
+        else:
+            port = context.get("staging_port")
+            if not port:
+                return False, "No preview backend configured"
+            url = f"http://127.0.0.1:{port}/health"
 
-        import httpx
-
-        url = f"http://127.0.0.1:{port}/health"
         self.workspace.append_log(project_id, "pipeline.log", f"[tester] Smoke test {url}")
 
         try:

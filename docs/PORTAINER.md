@@ -9,7 +9,7 @@
 
 The stack runs a **single container** with the dashboard, API, worker, gateway, PostgreSQL, and Redis.
 
-Live previews: `http://<server-ip>:9010` … `:9039`
+Live previews are served through the factory gateway at `/preview/{project-id}/` — no extra host ports required.
 
 ### `Error response from daemon: denied`
 
@@ -90,7 +90,7 @@ The default web-editor stack uses one named volume `factory_data` mounted at `/d
 
 - **Docker Standalone** endpoint (needs `/var/run/docker.sock` for pipeline builds)
 - Port **8044** available (or change the host port mapping)
-- Ports **9010–9039** for live previews
+- Live previews use the gateway path `/preview/…` (no extra host ports)
 
 ## After deploy
 

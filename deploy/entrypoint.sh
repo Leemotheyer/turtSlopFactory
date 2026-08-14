@@ -32,4 +32,9 @@ fi
 
 chown -R postgres:postgres "${PGDATA}"
 
+if [ -S /var/run/docker.sock ]; then
+  docker network create factory-preview 2>/dev/null || true
+  docker network connect factory-preview "${HOSTNAME}" 2>/dev/null || true
+fi
+
 exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf

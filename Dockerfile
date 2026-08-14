@@ -81,7 +81,6 @@ ENV FACTORY_DATA=/data \
     TRUST_PROXY_HEADERS=true
 
 EXPOSE 80
-EXPOSE 9010-9039
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=8 --start-period=90s \
     CMD /deploy/healthcheck.sh

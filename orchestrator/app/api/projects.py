@@ -24,6 +24,7 @@ from app.models import (
 from app.services.discovery import run_discovery
 from app.services.git_branching import apply_isolated_branch_fields, setup_project_branches
 from app.services.project_lifecycle import delete_project as delete_project_record
+from app.services.preview import preview_from_metadata
 from app.services.secrets import get_github_token, maybe_request_github_token
 from app.workspace.provisioner import normalize_repo_url
 from app.pipeline.executor import pipeline_executor
@@ -74,7 +75,7 @@ async def list_projects(db: AsyncSession = Depends(get_db)) -> list[Project]:
     projects = []
     for row in result.scalars():
         meta = workspace.load_metadata(row.id)
-        preview_url = meta.get("preview_url") or meta.get("staging_url")
+        preview_url = preview_from_metadata(meta, project_id=row.id)["preview_url"]
         projects.append(_project_from_row(row, preview_url=preview_url))
     return projects
 
@@ -143,7 +144,7 @@ async def get_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -> P
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
     meta = workspace.load_metadata(project_id)
-    preview_url = meta.get("preview_url") or meta.get("staging_url")
+    preview_url = preview_from_metadata(meta, project_id=project_id)["preview_url"]
     return _project_from_row(row, preview_url=preview_url)
 
 
