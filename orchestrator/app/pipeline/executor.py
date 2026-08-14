@@ -20,10 +20,20 @@ from app.services.notifications import create_notification
 from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
 from app.services.secrets import get_env_status_for_agents, get_github_token, get_secrets_for_runtime, maybe_request_github_token, request_env_var
-from app.services.factory_settings import get_preview_host
-from app.services.agent_concurrency import concurrency_budget_to_dict, resolve_concurrency_budget
+from app.services.agent_concurrency import (
+    concurrency_budget_to_dict,
+    resolve_concurrency_budget,
+    wait_for_cursor_capacity,
+)
+from app.services.factory_settings import get_agent_backend, get_preview_host
 from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
-from app.state_machine import advance_project, block_autonomous, fail_project
+from app.state_machine import (
+    advance_project,
+    block_autonomous,
+    fail_project,
+    normalize_pipeline_gate,
+    pipeline_gate_index,
+)
 from app.services.preview import (
     allocate_preview_port,
     build_preview_url,
@@ -32,8 +42,13 @@ from app.services.preview import (
     update_preview_metadata,
 )
 from app.workspace.manager import WorkspaceManager
+from app.workspace.scaffolder import scaffold_base
 
 logger = logging.getLogger(__name__)
+
+# Two substages run while the project state remains IMPLEMENTING.
+_STAGE_IMPLEMENTING = "implementing"
+_STAGE_UNIT_TESTING = "unit_testing"
 
 
 class PipelineExecutor:
@@ -50,6 +65,88 @@ class PipelineExecutor:
         if project_id not in self._locks:
             self._locks[project_id] = asyncio.Lock()
         return self._locks[project_id]
+
+    def _load_failed_gate(self, project_id: UUID, context: dict) -> ProjectState | None:
+        raw = context.get("failed_gate")
+        substage = context.get("failed_substage")
+        meta = self.workspace.load_metadata(project_id)
+        if not raw:
+            raw = meta.get("failed_gate")
+        if not substage:
+            substage = meta.get("failed_substage")
+        if substage == _STAGE_UNIT_TESTING:
+            context["implementation_complete"] = True
+        if not raw:
+            return None
+        try:
+            return ProjectState(raw)
+        except ValueError:
+            return None
+
+    def _save_failed_gate(
+        self,
+        project_id: UUID,
+        gate: ProjectState | None,
+        substage: str | None = None,
+    ) -> None:
+        meta = self.workspace.load_metadata(project_id)
+        if gate:
+            meta["failed_gate"] = gate.value
+            if substage:
+                meta["failed_substage"] = substage
+            else:
+                meta.pop("failed_substage", None)
+        else:
+            meta.pop("failed_gate", None)
+            meta.pop("failed_substage", None)
+        self.workspace.save_metadata(project_id, meta)
+
+    def _should_skip_stage(
+        self,
+        *,
+        gate: ProjectState,
+        substage: str | None,
+        context: dict,
+    ) -> bool:
+        if substage == _STAGE_IMPLEMENTING and context.get("implementation_complete"):
+            return True
+        return False
+
+    def _stage_is_due(
+        self,
+        *,
+        current_gate: ProjectState,
+        expected_gate: ProjectState,
+        substage: str | None,
+        context: dict,
+    ) -> bool:
+        if self._should_skip_stage(gate=expected_gate, substage=substage, context=context):
+            return False
+
+        current_idx = pipeline_gate_index(current_gate)
+        expected_idx = pipeline_gate_index(expected_gate)
+        if current_idx is None or expected_idx is None:
+            return False
+
+        if current_idx > expected_idx:
+            return False
+        if current_idx < expected_idx:
+            return True
+        # Same gate — run substages in order (implementing before unit tests).
+        if expected_gate == ProjectState.IMPLEMENTING:
+            if substage == _STAGE_UNIT_TESTING:
+                return context.get("implementation_complete", False)
+            return not context.get("implementation_complete", False)
+        return True
+
+    async def _ensure_repo_scaffold(self, project: ProjectRow, context: dict) -> None:
+        repo = self.workspace.repo_dir(project.id)
+        if context.get("incremental") or (repo / "requirements.txt").exists():
+            return
+        lock = context.setdefault("_scaffold_lock", asyncio.Lock())
+        async with lock:
+            if not (repo / "requirements.txt").exists():
+                scaffold_base(repo, project.name, project.description)
 
     async def emit(
         self,
@@ -289,6 +386,10 @@ class PipelineExecutor:
                     context["intake"] = discovery.responses
                     context["loose_plan"] = discovery.loose_plan
 
+                failed_gate = self._load_failed_gate(project_id, context)
+                if failed_gate:
+                    context["failed_gate"] = failed_gate.value
+
                 async def request_input(**kwargs):
                     return await create_input_request(session, project_id, **kwargs)
 
@@ -301,39 +402,64 @@ class PipelineExecutor:
                 meta["pipeline_started_at"] = datetime.utcnow().isoformat()
                 self.workspace.save_metadata(project_id, meta)
 
-                stages = [
-                    (ProjectState.PLANNING, self._stage_planning),
-                    (ProjectState.IMPLEMENTING, self._stage_implementing),
-                    (ProjectState.IMPLEMENTING, self._stage_unit_testing),
-                    (ProjectState.UNIT_TESTING, self._stage_integration_testing),
-                    (ProjectState.INTEGRATION_TESTING, self._stage_docker_build),
-                    (ProjectState.DOCKER_BUILD, self._stage_staging_deploy),
-                    (ProjectState.STAGING_DEPLOY, self._stage_smoke_testing),
-                    (ProjectState.SMOKE_TESTING, self._stage_review),
-                    # PRODUCTION requires explicit promote via dashboard
+                stages: list[tuple[ProjectState, str | None, object]] = [
+                    (ProjectState.PLANNING, None, self._stage_planning),
+                    (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
+                    (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
+                    (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
+                    (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
+                    (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
+                    (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
+                    (ProjectState.SMOKE_TESTING, None, self._stage_review),
                 ]
 
-                for expected_state, stage_fn in stages:
+                for expected_gate, substage, stage_fn in stages:
                     await session.refresh(project)
                     current = ProjectState(project.state)
 
                     if current == ProjectState.AUTONOMOUSLY_BLOCKED:
                         break
+                    if current == ProjectState.PRODUCTION:
+                        break
 
-                    if current != expected_state:
-                        if current == ProjectState.PRODUCTION:
-                            break
-                        # Auto-advance to expected if behind
-                        if self._is_before(current, expected_state):
-                            await self.transition(session, project, expected_state)
-                        else:
-                            break
+                    failed = self._load_failed_gate(project_id, context)
+                    current_gate = normalize_pipeline_gate(current, failed)
+                    if current_gate is None:
+                        logger.warning(
+                            "Pipeline stopped for %s: state %s is not runnable",
+                            project_id,
+                            current.value,
+                        )
+                        break
+
+                    if not self._stage_is_due(
+                        current_gate=current_gate,
+                        expected_gate=expected_gate,
+                        substage=substage,
+                        context=context,
+                    ):
+                        continue
+
+                    if current_gate != expected_gate:
+                        await self.transition(session, project, expected_gate)
 
                     success = await stage_fn(session, project, context)
                     await self._refresh_context(session, project, context)
                     if not success:
-                        await self._handle_failure(session, project, context)
+                        await self._handle_failure(
+                            session,
+                            project,
+                            context,
+                            failed_at=expected_gate,
+                            failed_substage=substage,
+                        )
                         break
+
+                    if substage == _STAGE_IMPLEMENTING:
+                        context["implementation_complete"] = True
+                    self._save_failed_gate(project_id, None)
+                    context.pop("failed_gate", None)
+                    context.pop("failed_substage", None)
 
         except Exception:
             logger.exception("Pipeline failed for project %s", project_id)
@@ -355,17 +481,28 @@ class PipelineExecutor:
             async with self._lock_for(project_id):
                 self._running.discard(project_id)
 
-    def _is_before(self, current: ProjectState, target: ProjectState) -> bool:
-        order = list(ProjectState)
-        try:
-            return order.index(current) < order.index(target)
-        except ValueError:
-            return False
+    async def _handle_failure(
+        self,
+        session: AsyncSession,
+        project: ProjectRow,
+        context: dict,
+        *,
+        failed_at: ProjectState,
+        failed_substage: str | None = None,
+    ) -> None:
+        context["failed_gate"] = failed_at.value
+        if failed_substage:
+            context["failed_substage"] = failed_substage
+        self._save_failed_gate(project.id, failed_at, failed_substage)
 
-    async def _handle_failure(self, session: AsyncSession, project: ProjectRow, context: dict) -> None:
+        if failed_substage == _STAGE_UNIT_TESTING:
+            context["implementation_complete"] = True
+        elif failed_at == ProjectState.PLANNING:
+            context.pop("implementation_complete", None)
+
         current = ProjectState(project.state)
         try:
-            await self.transition(session, project, fail_project(current))
+            await self.transition(session, project, fail_project(failed_at))
         except Exception:
             await self.transition(session, project, ProjectState.DIAGNOSING)
 
@@ -385,30 +522,55 @@ class PipelineExecutor:
             return
 
         await self.transition(session, project, ProjectState.FIXING)
-        await self.transition(session, project, ProjectState.IMPLEMENTING)
+        await self.transition(session, project, failed_at)
 
-        # Retry remaining stages inline
-        retry_stages = [
-            self._stage_implementing,
-            self._stage_unit_testing,
-            self._stage_integration_testing,
-            self._stage_docker_build,
-            self._stage_staging_deploy,
-            self._stage_smoke_testing,
-            self._stage_review,
+        retry_stages: list[tuple[ProjectState, str | None, object]] = [
+            (ProjectState.PLANNING, None, self._stage_planning),
+            (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
+            (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
+            (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
+            (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
+            (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
+            (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
+            (ProjectState.SMOKE_TESTING, None, self._stage_review),
         ]
-        for stage_fn in retry_stages:
+
+        failed_idx = pipeline_gate_index(failed_at) or 0
+        for expected_gate, substage, stage_fn in retry_stages:
+            if (pipeline_gate_index(expected_gate) or 0) < failed_idx:
+                continue
+            if substage == _STAGE_UNIT_TESTING and not context.get("implementation_complete"):
+                continue
+            if substage == _STAGE_IMPLEMENTING and context.get("implementation_complete"):
+                continue
+
             await session.refresh(project)
             if ProjectState(project.state) in (
                 ProjectState.AUTONOMOUSLY_BLOCKED,
                 ProjectState.PRODUCTION,
             ):
                 break
+
+            if ProjectState(project.state) != expected_gate:
+                await self.transition(session, project, expected_gate)
+
             success = await stage_fn(session, project, context)
             await self._refresh_context(session, project, context)
             if not success:
-                await self._handle_failure(session, project, context)
+                await self._handle_failure(
+                    session,
+                    project,
+                    context,
+                    failed_at=expected_gate,
+                    failed_substage=substage,
+                )
                 break
+
+            if substage == _STAGE_IMPLEMENTING:
+                context["implementation_complete"] = True
+            self._save_failed_gate(project.id, None)
+            context.pop("failed_gate", None)
+            context.pop("failed_substage", None)
 
     async def _build_work_plan(self, session, project, context: dict) -> tuple[list, dict]:
         budget = await resolve_concurrency_budget(session)
@@ -456,11 +618,24 @@ class PipelineExecutor:
         units, plan, budget = await self._build_work_plan(session, project, context)
         context["work_plan"] = plan
 
+        backend = await get_agent_backend(session)
+        if backend == "cursor_cloud":
+            budget = await wait_for_cursor_capacity(
+                session, min_slots=1, timeout_seconds=600, poll_seconds=20
+            )
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[concurrency] {budget.strategy}",
+            )
+
         if budget.max_parallel < 1:
             return False, (
                 "No Cursor Cloud agent slots available for parallel implementation. "
                 "Wait for running agents to finish or archive idle cloud agents, then retry."
             )
+
+        await self._ensure_repo_scaffold(project, context)
 
         task_rows: list[tuple] = []
         for unit in units:
@@ -548,7 +723,6 @@ class PipelineExecutor:
             preview_type="dev",
             notify=first_preview,
         )
-        await self.transition(session, project, advance_project(ProjectState.PLANNING))
         return True
 
     async def _stage_unit_testing(self, session, project, context) -> bool:
@@ -634,6 +808,8 @@ class PipelineExecutor:
                 f"Tagged as {tag}",
             )
             await self.transition(session, project, advance_project(ProjectState.INTEGRATION_TESTING))
+        else:
+            context["last_failure"] = output
         return success
 
     async def _stage_staging_deploy(self, session, project, context) -> bool:
@@ -656,6 +832,8 @@ class PipelineExecutor:
 
         if success:
             await self.transition(session, project, advance_project(ProjectState.DOCKER_BUILD))
+        else:
+            context["last_failure"] = "Staging deploy failed"
         return success
 
     async def _stage_smoke_testing(self, session, project, context) -> bool:

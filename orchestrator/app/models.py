@@ -316,6 +316,8 @@ FORWARD_TRANSITIONS: dict[ProjectState, ProjectState] = {
 }
 
 FAILURE_TRANSITIONS: dict[ProjectState, ProjectState] = {
+    ProjectState.PLANNING: ProjectState.DIAGNOSING,
+    ProjectState.IMPLEMENTING: ProjectState.DIAGNOSING,
     ProjectState.UNIT_TESTING: ProjectState.DIAGNOSING,
     ProjectState.INTEGRATION_TESTING: ProjectState.DIAGNOSING,
     ProjectState.DOCKER_BUILD: ProjectState.DIAGNOSING,

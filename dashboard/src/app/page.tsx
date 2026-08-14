@@ -89,6 +89,19 @@ const PIPELINE = [
   "PRODUCTION",
 ] as const;
 
+const AUTO_START_PIPELINE_STATES = new Set([
+  "PLANNING",
+  "DIAGNOSING",
+  "FIXING",
+  "IMPLEMENTING",
+  "UNIT_TESTING",
+  "INTEGRATION_TESTING",
+  "DOCKER_BUILD",
+  "STAGING_DEPLOY",
+  "SMOKE_TESTING",
+  "REVIEW",
+]);
+
 const STATE_COLORS: Record<string, string> = {
   REQUESTED: "#6b7280",
   DISCOVERY: "#5b8def",
@@ -370,7 +383,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!selectedId || !detail) return;
-    if (detail.state !== "PLANNING" || detail.pipeline_running) return;
+    if (!AUTO_START_PIPELINE_STATES.has(detail.state) || detail.pipeline_running) return;
     if (pipelineKickoff.current === selectedId) return;
     pipelineKickoff.current = selectedId;
     runPipeline(selectedId)
@@ -1648,13 +1661,13 @@ export default function DashboardPage() {
                     <button className={styles.btnPrimary} onClick={() => setTab("intake")}>
                       Complete intake form
                     </button>
-                  ) : detail.state === "PLANNING" && !detail.pipeline_running ? (
-                    <span className={styles.running}>Starting build pipeline…</span>
+                  ) : AUTO_START_PIPELINE_STATES.has(detail.state) ? (
+                    <span className={styles.running}>Build pipeline starting…</span>
                   ) : (
                     <>
-                      {detail.state !== "PRODUCTION" && (
+                      {detail.state !== "PRODUCTION" && detail.state !== "AUTONOMOUSLY_BLOCKED" && (
                         <button className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
-                          {detail.state === "PLANNING" ? "Start pipeline" : "Re-run pipeline"}
+                          Re-run pipeline
                         </button>
                       )}
                       {detail.state === "REVIEW" && (

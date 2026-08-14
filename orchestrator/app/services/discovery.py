@@ -304,6 +304,9 @@ async def auto_submit_expired_intake(session: AsyncSession) -> int:
         )
         await session.commit()
         count += 1
+        from app.services.pipeline_launcher import schedule_pipeline
+
+        schedule_pipeline(row.project_id)
         logger.info("Auto-submitted intake for project %s", row.project_id)
 
     return count

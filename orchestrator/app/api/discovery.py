@@ -8,7 +8,6 @@ from app.db_models import ProjectRow
 from app.models import DiscoverySession, IntakeSubmit, ProjectState
 from app.services.discovery import get_discovery, run_discovery, submit_intake
 from app.services.pipeline_launcher import schedule_pipeline
-from app.worker import pipeline_queue
 
 router = APIRouter(prefix="/projects", tags=["discovery"])
 

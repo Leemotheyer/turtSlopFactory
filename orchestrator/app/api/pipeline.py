@@ -83,12 +83,17 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
             status_code=400,
             detail="Complete the intake form before starting the build pipeline",
         )
+    if row.state == ProjectState.PRODUCTION.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Project is already in production — nothing to run",
+        )
     if row.state in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value):
         raise HTTPException(
             status_code=400,
             detail="Discovery is still in progress — wait for the intake form",
         )
-    if row.state not in allowed_states and row.state != ProjectState.PRODUCTION.value:
+    if row.state not in allowed_states:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot run pipeline from state {row.state}",

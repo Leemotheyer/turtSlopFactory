@@ -192,8 +192,10 @@ class LocalAgentRunner(AgentRunner):
         repo = self.workspace.repo_dir(project_id)
         incremental = context.get("incremental", False)
 
-        if not incremental and not (repo / "requirements.txt").exists():
-            scaffold_base(repo, name, description)
+        lock = context.setdefault("_scaffold_lock", asyncio.Lock())
+        async with lock:
+            if not incremental and not (repo / "requirements.txt").exists():
+                scaffold_base(repo, name, description)
 
         input_section = self._format_input_section(context.get("input_responses", []))
         if input_section:
