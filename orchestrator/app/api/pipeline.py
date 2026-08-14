@@ -14,6 +14,12 @@ from app.pipeline.executor import pipeline_executor
 from app.services.factory_settings import get_preview_host
 from app.services.pipeline_launcher import schedule_pipeline
 from app.services.preview import preview_from_metadata
+from app.services.self_propelled import (
+    get_self_propelled_meta,
+    is_self_propelled_enabled,
+    set_self_propelled_enabled,
+)
+from app.worker import pipeline_queue
 from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
@@ -30,6 +36,7 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
     discovery = await get_discovery(db, project_id)
     host = await get_preview_host(db)
     preview = preview_from_metadata(meta, host=host, project_id=project_id)
+    sp = get_self_propelled_meta(meta)
     return {
         "id": str(row.id),
         "name": row.name,
@@ -54,6 +61,11 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
         "failed_substage": meta.get("failed_substage"),
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
+        "self_propelled_enabled": is_self_propelled_enabled(meta),
+        "self_propelled_iteration": int(sp.get("iteration", 0)),
+        "self_propelled_max_iterations": int(sp.get("max_iterations", 20)),
+        "self_propelled_paused_reason": sp.get("paused_reason"),
+        "self_propelled_last_improvements": sp.get("last_improvements") or [],
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }
@@ -203,3 +215,52 @@ async def list_deployments(project_id: UUID, db: AsyncSession = Depends(get_db))
         )
         for r in result.scalars()
     ]
+
+
+@router.patch("/{project_id}/self-propelled")
+async def update_self_propelled(
+    project_id: UUID,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    enabled = body.get("enabled")
+    if enabled is None:
+        raise HTTPException(status_code=400, detail="Missing 'enabled' field")
+
+    sp = set_self_propelled_enabled(workspace, project_id, bool(enabled))
+    return {
+        "project_id": str(project_id),
+        "self_propelled_enabled": sp.get("enabled", True),
+        "self_propelled_iteration": int(sp.get("iteration", 0)),
+        "self_propelled_max_iterations": int(sp.get("max_iterations", 20)),
+        "self_propelled_paused_reason": sp.get("paused_reason"),
+    }
+
+
+@router.post("/{project_id}/self-propelled/resume")
+async def resume_self_propelled(project_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    """Re-enable self-propelled development and queue another pipeline run from REVIEW."""
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if row.state not in (ProjectState.REVIEW.value, ProjectState.PRODUCTION.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can only resume self-propelled from REVIEW or PRODUCTION, got {row.state}",
+        )
+
+    set_self_propelled_enabled(workspace, project_id, True)
+    if row.state == ProjectState.PRODUCTION.value:
+        row.state = ProjectState.REVIEW.value
+        await db.commit()
+
+    if pipeline_executor.is_running(project_id):
+        return {"status": "already_running", "project_id": str(project_id)}
+
+    await pipeline_queue.enqueue_pipeline(project_id)
+    return {"status": "queued", "project_id": str(project_id)}

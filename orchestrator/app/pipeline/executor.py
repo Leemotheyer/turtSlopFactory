@@ -27,6 +27,12 @@ from app.services.agent_concurrency import (
 )
 from app.services.factory_settings import get_agent_backend, get_preview_host
 from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
+from app.services.self_propelled import (
+    get_iteration,
+    get_self_propelled_meta,
+    is_self_propelled_enabled,
+    start_next_iteration,
+)
 from app.state_machine import (
     advance_project,
     block_autonomous,
@@ -374,6 +380,76 @@ class PipelineExecutor:
 
         return success
 
+    def _implementation_stages(self) -> list[tuple[ProjectState, str | None, object]]:
+        return [
+            (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
+            (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
+            (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
+            (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
+            (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
+            (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
+            (ProjectState.SMOKE_TESTING, None, self._stage_review),
+        ]
+
+    async def _run_stage_list(
+        self,
+        session: AsyncSession,
+        project: ProjectRow,
+        project_id: UUID,
+        context: dict,
+        stages: list[tuple[ProjectState, str | None, object]],
+    ) -> bool:
+        """Run pipeline stages; return False on failure."""
+        for expected_gate, substage, stage_fn in stages:
+            await session.refresh(project)
+            current = ProjectState(project.state)
+
+            if current == ProjectState.AUTONOMOUSLY_BLOCKED:
+                return True
+            if current == ProjectState.PRODUCTION:
+                return True
+
+            failed = self._load_failed_gate(project_id, context)
+            current_gate = normalize_pipeline_gate(current, failed)
+            if current_gate is None:
+                logger.warning(
+                    "Pipeline stopped for %s: state %s is not runnable",
+                    project_id,
+                    current.value,
+                )
+                return True
+
+            if not self._stage_is_due(
+                current_gate=current_gate,
+                expected_gate=expected_gate,
+                substage=substage,
+                context=context,
+            ):
+                continue
+
+            if current_gate != expected_gate:
+                await self.transition(session, project, expected_gate)
+
+            success = await stage_fn(session, project, context)
+            await self._refresh_context(session, project, context)
+            if not success:
+                await self._handle_failure(
+                    session,
+                    project,
+                    context,
+                    failed_at=expected_gate,
+                    failed_substage=substage,
+                )
+                return False
+
+            if substage == _STAGE_IMPLEMENTING:
+                context["implementation_complete"] = True
+            self._save_failed_gate(project_id, None)
+            context.pop("failed_gate", None)
+            context.pop("failed_substage", None)
+
+        return True
+
     async def run_pipeline(self, project_id: UUID) -> None:
         async with self._lock_for(project_id):
             if project_id in self._running:
@@ -443,64 +519,57 @@ class PipelineExecutor:
                 meta["pipeline_started_at"] = datetime.utcnow().isoformat()
                 self.workspace.save_metadata(project_id, meta)
 
-                stages: list[tuple[ProjectState, str | None, object]] = [
-                    (ProjectState.PLANNING, None, self._stage_planning),
-                    (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
-                    (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
-                    (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
-                    (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
-                    (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
-                    (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
-                    (ProjectState.SMOKE_TESTING, None, self._stage_review),
-                ]
+                iteration = get_iteration(meta)
+                planning_stages: list[tuple[ProjectState, str | None, object]] = []
+                if iteration == 0:
+                    planning_stages = [(ProjectState.PLANNING, None, self._stage_planning)]
 
-                for expected_gate, substage, stage_fn in stages:
+                implementation_stages = self._implementation_stages()
+                initial_stages = planning_stages + implementation_stages
+
+                if not await self._run_stage_list(
+                    session, project, project_id, context, initial_stages
+                ):
+                    return
+
+                # Self-propelled loop: after review passes, plan improvements and iterate
+                while True:
                     await session.refresh(project)
-                    current = ProjectState(project.state)
-
-                    if current == ProjectState.AUTONOMOUSLY_BLOCKED:
-                        break
-                    if current == ProjectState.PRODUCTION:
+                    if ProjectState(project.state) != ProjectState.REVIEW:
                         break
 
-                    failed = self._load_failed_gate(project_id, context)
-                    current_gate = normalize_pipeline_gate(current, failed)
-                    if current_gate is None:
-                        logger.warning(
-                            "Pipeline stopped for %s: state %s is not runnable",
-                            project_id,
-                            current.value,
-                        )
+                    meta = self.workspace.load_metadata(project_id)
+                    if not is_self_propelled_enabled(meta):
                         break
 
-                    if not self._stage_is_due(
-                        current_gate=current_gate,
-                        expected_gate=expected_gate,
-                        substage=substage,
-                        context=context,
-                    ):
-                        continue
+                    started = await start_next_iteration(session, self.workspace, project, context)
+                    if not started:
+                        break
 
-                    if current_gate != expected_gate:
-                        await self.transition(session, project, expected_gate)
-
-                    success = await stage_fn(session, project, context)
+                    context["fix_attempt"] = 0
+                    context["implementation_complete"] = False
                     await self._refresh_context(session, project, context)
-                    if not success:
-                        await self._handle_failure(
-                            session,
-                            project,
-                            context,
-                            failed_at=expected_gate,
-                            failed_substage=substage,
-                        )
-                        break
+                    await self.transition(session, project, ProjectState.IMPLEMENTING)
 
-                    if substage == _STAGE_IMPLEMENTING:
-                        context["implementation_complete"] = True
-                    self._save_failed_gate(project_id, None)
-                    context.pop("failed_gate", None)
-                    context.pop("failed_substage", None)
+                    if not await self._run_stage_list(
+                        session, project, project_id, context, implementation_stages
+                    ):
+                        return
+
+                    await self.emit(
+                        session,
+                        EventType.ITERATION_COMPLETED,
+                        project.id,
+                        payload={"iteration": get_iteration(self.workspace.load_metadata(project_id))},
+                    )
+
+                await session.refresh(project)
+                if ProjectState(project.state) == ProjectState.REVIEW:
+                    meta = self.workspace.load_metadata(project_id)
+                    if not is_self_propelled_enabled(meta) or get_self_propelled_meta(meta).get(
+                        "paused_reason"
+                    ):
+                        await self._notify_review_ready(session, project)
 
         except Exception:
             logger.exception("Pipeline failed for project %s", project_id)
@@ -911,6 +980,45 @@ class PipelineExecutor:
             context["last_failure"] = output
         return success
 
+    async def _notify_review_ready(self, session, project: ProjectRow) -> None:
+        await create_notification(
+            session,
+            project.id,
+            NotificationType.REVIEW_READY,
+            "Ready for production",
+            f"{project.name} passed review. Promote to production when ready.",
+            action="overview",
+        )
+        plan = resolve_branch_plan(project)
+        if plan.isolated and plan.work_branch:
+            await create_notification(
+                session,
+                project.id,
+                NotificationType.MERGE_READY,
+                "Merge to main?",
+                (
+                    f"Factory work is on `{plan.work_branch}`. Your production branch "
+                    f"(`{plan.base_branch}`) is unchanged. Merge when you're ready, "
+                    f"or keep iterating on the factory branch."
+                ),
+                action="merge",
+            )
+            await create_input_request(
+                session,
+                project.id,
+                agent_id="pipeline",
+                role="reviewer",
+                question=(
+                    f"Merge factory branch `{plan.work_branch}` into `{plan.base_branch}` now?"
+                ),
+                default_decision="Keep on factory branch for now",
+                context_detail=(
+                    "Use the dashboard Merge to main button when you want production updated. "
+                    "The factory never merges without your approval."
+                ),
+                options=["Merge to main now", "Keep on factory branch"],
+            )
+
     async def _stage_review(self, session, project, context) -> bool:
         await self._refresh_context(session, project, context)
         task = await self.create_task(
@@ -929,43 +1037,10 @@ class PipelineExecutor:
                 "All acceptance criteria met — ready for production promotion",
             )
             await self.transition(session, project, advance_project(ProjectState.SMOKE_TESTING))
-            await create_notification(
-                session,
-                project.id,
-                NotificationType.REVIEW_READY,
-                "Ready for production",
-                f"{project.name} passed review. Promote to production when ready.",
-                action="overview",
-            )
-            plan = resolve_branch_plan(project)
-            if plan.isolated and plan.work_branch:
-                await create_notification(
-                    session,
-                    project.id,
-                    NotificationType.MERGE_READY,
-                    "Merge to main?",
-                    (
-                        f"Factory work is on `{plan.work_branch}`. Your production branch "
-                        f"(`{plan.base_branch}`) is unchanged. Merge when you're ready, "
-                        f"or keep iterating on the factory branch."
-                    ),
-                    action="merge",
-                )
-                await create_input_request(
-                    session,
-                    project.id,
-                    agent_id="pipeline",
-                    role="reviewer",
-                    question=(
-                        f"Merge factory branch `{plan.work_branch}` into `{plan.base_branch}` now?"
-                    ),
-                    default_decision="Keep on factory branch for now",
-                    context_detail=(
-                        "Use the dashboard Merge to main button when you want production updated. "
-                        "The factory never merges without your approval."
-                    ),
-                    options=["Merge to main now", "Keep on factory branch"],
-                )
+
+            meta = self.workspace.load_metadata(project.id)
+            if not is_self_propelled_enabled(meta):
+                await self._notify_review_ready(session, project)
         return run.success
 
     async def _stage_production(self, session, project, context) -> bool:

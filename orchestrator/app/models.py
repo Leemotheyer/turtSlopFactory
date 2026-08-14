@@ -112,6 +112,8 @@ class EventType(StrEnum):
     INTAKE_SUBMITTED = "intake.submitted"
     NOTIFICATION_CREATED = "notification.created"
     ENV_REQUIRED = "env.required"
+    ITERATION_STARTED = "iteration.started"
+    ITERATION_COMPLETED = "iteration.completed"
 
 
 class NotificationType(StrEnum):
@@ -123,6 +125,8 @@ class NotificationType(StrEnum):
     MERGE_READY = "merge_ready"
     PIPELINE_BLOCKED = "pipeline_blocked"
     PREVIEW_READY = "preview_ready"
+    ITERATION_UPDATE = "iteration_update"
+    ITERATION_PAUSED = "iteration_paused"
 
 
 class Notification(BaseModel):
@@ -298,6 +302,10 @@ class ProjectDetail(Project):
     pipeline_running: bool = False
     discovery_status: str | None = None
     intake_ready: bool = False
+    self_propelled_enabled: bool = True
+    self_propelled_iteration: int = 0
+    self_propelled_max_iterations: int = 20
+    self_propelled_paused_reason: str | None = None
 
 
 # Valid forward transitions for the happy path

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     worker_enabled: bool = True
     input_request_timeout_seconds: int = 300  # Auto-resolve after 5 min without human response
     intake_form_timeout_hours: int = 72  # Auto-submit intake with defaults after 72h
+    # Self-propelled development: agents propose improvements and re-implement autonomously
+    self_propelled_enabled: bool = True
+    max_self_propelled_iterations: int = 20
+    self_propelled_improvements_per_iteration: int = 2
     secrets_encryption_key: str | None = None  # Fernet key or passphrase; required in production
     preview_host: str = "localhost"  # Hostname used in live preview URLs shown in the dashboard
     preview_internal_port_start: int = 10000
