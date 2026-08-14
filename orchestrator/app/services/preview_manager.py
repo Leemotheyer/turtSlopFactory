@@ -152,6 +152,10 @@ async def start_dev_preview(
     """Run uvicorn from the project repo on an internal port (no host publish)."""
     await stop_preview(project_id)
 
+    main_module = repo_path / "app" / "main.py"
+    if not main_module.exists():
+        return False, f"Dev preview aborted — missing {main_module.relative_to(repo_path)}", None
+
     req = repo_path / "requirements.txt"
     if req.exists():
         install = await asyncio.create_subprocess_exec(
@@ -188,7 +192,13 @@ async def start_dev_preview(
     health_url = f"http://127.0.0.1:{port}/health"
     if not await _wait_for_health(health_url, attempts=45):
         await stop_preview(project_id)
-        return False, f"Dev preview failed to become healthy at {health_url}", None
+        log_handle.close()
+        tail = ""
+        if log_path.exists():
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            tail = "\n".join(lines[-20:])
+        detail = tail or "no log output"
+        return False, f"Dev preview failed to become healthy at {health_url}\n{detail}", None
 
     return True, f"Dev preview on internal port {port}", str(proc.pid)
 

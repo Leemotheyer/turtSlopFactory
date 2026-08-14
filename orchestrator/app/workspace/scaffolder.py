@@ -386,8 +386,18 @@ def apply_incremental_fix(repo: Path, failure_output: str) -> list[str]:
     created: list[str] = []
     log_hint = failure_output.lower()
 
-    if "404" in log_hint and (repo / "app" / "main.py").exists():
-        main = repo / "app" / "main.py"
+    test_file = repo / "tests" / "test_app.py"
+    main_file = repo / "app" / "main.py"
+    if not test_file.exists() or not main_file.exists():
+        created.extend(scaffold_base(repo, "app", "auto-fix"))
+        return created
+
+    if "modulenotfounderror" in log_hint or "no module named" in log_hint:
+        created.extend(scaffold_base(repo, "app", "auto-fix"))
+        return created
+
+    if "404" in log_hint and main_file.exists():
+        main = main_file
         text = main.read_text()
         if "/api/items" not in text:
             scaffold_backend(repo, "app", "fix")

@@ -81,8 +81,8 @@ class PipelineExecutor:
             raw = meta.get("failed_gate")
         if not substage:
             substage = meta.get("failed_substage")
-        if substage == _STAGE_UNIT_TESTING:
-            context["implementation_complete"] = True
+        if substage:
+            context["failed_substage"] = substage
         if not raw:
             return None
         try:
@@ -154,6 +154,63 @@ class PipelineExecutor:
         async with lock:
             if not (repo / "requirements.txt").exists():
                 scaffold_base(repo, project.name, project.description)
+
+    async def _ensure_runnable_app(self, project: ProjectRow) -> None:
+        """Guarantee app/main.py, tests, and deps exist before preview or pytest."""
+        repo = self.workspace.repo_dir(project.id)
+        needs_base = not (repo / "app" / "main.py").exists() or not (repo / "tests" / "test_app.py").exists()
+        if needs_base:
+            scaffold_base(repo, project.name, project.description)
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[scaffold] Ensured minimal app/main.py and tests/test_app.py",
+            )
+
+    def _persist_last_failure(self, project_id: UUID, context: dict) -> None:
+        failure = context.get("last_failure")
+        if not failure:
+            return
+        meta = self.workspace.load_metadata(project_id)
+        meta["last_failure"] = str(failure)[:4000]
+        self.workspace.save_metadata(project_id, meta)
+
+    async def _stage_fix_from_failure(self, session: AsyncSession, project: ProjectRow, context: dict) -> bool:
+        """Run a developer pass to fix the last failing stage before retrying."""
+        failure = context.get("last_failure")
+        if not failure:
+            return True
+
+        await self._ensure_runnable_app(project)
+        task = await self.create_task(
+            session,
+            project.id,
+            "Fix failing stage",
+            str(failure)[:500],
+            AgentRole.DEVELOPER,
+        )
+        run = await self.runner.run(
+            AgentRole.DEVELOPER,
+            project.id,
+            task.id,
+            str(self.workspace.repo_dir(project.id)),
+            context,
+        )
+        await self.complete_task(session, task, run.success, run.output)
+        if not run.success:
+            context["last_failure"] = run.output
+            self._persist_last_failure(project.id, context)
+            return False
+
+        substage = context.get("failed_substage")
+        if substage in (_STAGE_UNIT_TESTING, _STAGE_IMPLEMENTING, None):
+            await self._deploy_live_preview(
+                session,
+                project,
+                context,
+                preview_type="dev",
+            )
+        return True
 
     async def emit(
         self,
@@ -269,6 +326,9 @@ class PipelineExecutor:
     ) -> bool:
         """Start or replace a project preview (internal port or isolated Docker network)."""
         meta = self.workspace.load_metadata(project.id)
+        if preview_type == "dev":
+            await self._ensure_runnable_app(project)
+
         origin = context.get("preview_origin") or await get_preview_origin(session)
         preview_url = build_preview_url(project.id, origin=origin)
         runtime_env = await get_secrets_for_runtime(session, project.id)
@@ -417,6 +477,10 @@ class PipelineExecutor:
                 if failed_gate:
                     context["failed_gate"] = failed_gate.value
 
+                meta = self.workspace.load_metadata(project_id)
+                if meta.get("last_failure"):
+                    context["last_failure"] = meta["last_failure"]
+
                 if ProjectState(project.state) == ProjectState.AUTONOMOUSLY_BLOCKED:
                     resume_gate = failed_gate or ProjectState.PLANNING
                     await self.transition(
@@ -426,6 +490,18 @@ class PipelineExecutor:
                         reason="manual_resume",
                     )
                     context.pop("fix_attempt", None)
+                    context.pop("implementation_complete", None)
+                    failed_substage = context.get("failed_substage") or meta.get("failed_substage")
+                    if failed_substage == _STAGE_UNIT_TESTING:
+                        await self._ensure_runnable_app(project)
+                        await self._stage_fix_from_failure(session, project, context)
+                        await self._deploy_live_preview(
+                            session,
+                            project,
+                            context,
+                            preview_type="dev",
+                        )
+                        context["implementation_complete"] = True
                     self.workspace.append_log(
                         project_id,
                         "pipeline.log",
@@ -440,7 +516,6 @@ class PipelineExecutor:
 
                 context["request_input"] = request_input
                 context["request_env_var"] = request_env
-                meta = self.workspace.load_metadata(project_id)
                 meta["pipeline_started_at"] = datetime.utcnow().isoformat()
                 self.workspace.save_metadata(project_id, meta)
 
@@ -538,9 +613,12 @@ class PipelineExecutor:
         self._save_failed_gate(project.id, failed_at, failed_substage)
 
         if failed_substage == _STAGE_UNIT_TESTING:
-            context["implementation_complete"] = True
+            context.pop("implementation_complete", None)
         elif failed_at == ProjectState.PLANNING:
             context.pop("implementation_complete", None)
+
+        if context.get("last_failure"):
+            self._persist_last_failure(project.id, context)
 
         current = ProjectState(project.state)
         try:
@@ -565,6 +643,19 @@ class PipelineExecutor:
 
         await self.transition(session, project, ProjectState.FIXING)
         await self.transition(session, project, failed_at)
+
+        if failed_substage == _STAGE_UNIT_TESTING:
+            fixed = await self._stage_fix_from_failure(session, project, context)
+            if not fixed:
+                await self._handle_failure(
+                    session,
+                    project,
+                    context,
+                    failed_at=failed_at,
+                    failed_substage=failed_substage,
+                )
+                return
+            context["implementation_complete"] = True
 
         retry_stages: list[tuple[ProjectState, str | None, object]] = [
             (ProjectState.PLANNING, None, self._stage_planning),
@@ -768,6 +859,7 @@ class PipelineExecutor:
         return True
 
     async def _stage_unit_testing(self, session, project, context) -> bool:
+        await self._ensure_runnable_app(project)
         task = await self.create_task(
             session, project.id, "Unit tests", "Run pytest unit tests", AgentRole.TESTER
         )
