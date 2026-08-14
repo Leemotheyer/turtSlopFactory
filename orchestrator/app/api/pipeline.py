@@ -9,6 +9,7 @@ from app.db_models import DeploymentRow, ProjectRow
 from app.models import Deployment, ProjectState
 from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
+from app.services.factory_settings import get_preview_host
 from app.services.preview import preview_from_metadata
 from app.worker import pipeline_queue
 from app.workspace.manager import WorkspaceManager
@@ -25,7 +26,8 @@ async def get_project_detail(project_id: UUID, db: AsyncSession = Depends(get_db
 
     meta = workspace.load_metadata(project_id)
     discovery = await get_discovery(db, project_id)
-    preview = preview_from_metadata(meta)
+    host = await get_preview_host(db)
+    preview = preview_from_metadata(meta, host=host)
     return {
         "id": str(row.id),
         "name": row.name,

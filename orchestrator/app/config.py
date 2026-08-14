@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     cursor_agent_model: str = "composer-2"
     cursor_cloud_poll_seconds: float = 5.0
     cursor_cloud_timeout_seconds: int = 3600
+    # Deployment — optional overrides; most settings are auto or configured in the dashboard
+    public_host: str | None = None  # Hostname for preview links and public API URLs
+    api_port: int = 8000
+    dashboard_port: int = 3000
+    cors_allow_all: bool = True  # Allow any origin when True (simple self-hosted deploy)
+
+    @field_validator("cors_allow_all", mode="before")
+    @classmethod
+    def parse_cors_allow_all(cls, v):
+        if isinstance(v, str):
+            return v.lower() in ("1", "true", "yes")
+        return v
 
     @field_validator("worker_enabled", mode="before")
     @classmethod

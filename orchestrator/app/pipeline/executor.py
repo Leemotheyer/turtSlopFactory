@@ -19,6 +19,7 @@ from app.services.notifications import create_notification
 from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
 from app.services.secrets import get_env_status_for_agents, get_secrets_for_runtime, request_env_var
+from app.services.factory_settings import get_preview_host
 from app.services.work_planner import plan_parallel_work, work_plan_to_dict
 from app.state_machine import advance_project, block_autonomous, fail_project
 from app.services.preview import (
@@ -125,6 +126,7 @@ class PipelineExecutor:
         context["env_status"] = await get_env_status_for_agents(session, project.id)
         context["repo_url"] = project.repo_url
         context["branch"] = project.branch
+        context["preview_host"] = await get_preview_host(session)
         repo = self.workspace.repo_dir(project.id)
         context["incremental"] = context.get("fix_attempt", 0) > 0 or (repo / "app" / "main.py").exists()
 
@@ -156,7 +158,8 @@ class PipelineExecutor:
         context["preview_port"] = port
 
         runtime_env = await get_secrets_for_runtime(session, project.id)
-        preview_url = build_preview_url(port)
+        host = context.get("preview_host") or await get_preview_host(session)
+        preview_url = build_preview_url(port, host=host)
 
         if self.runner.docker_available():
             if preview_type == "dev":
@@ -186,6 +189,7 @@ class PipelineExecutor:
             preview_type=preview_type,
             status=status,
             container_id=container_id,
+            host=host,
         )
         self.workspace.save_metadata(project.id, meta)
 

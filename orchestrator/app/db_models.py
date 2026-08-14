@@ -93,6 +93,9 @@ class FactorySettingsRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     agent_backend: Mapped[str] = mapped_column(String(32), nullable=False, default="cursor_cloud")
+    preview_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    setup_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

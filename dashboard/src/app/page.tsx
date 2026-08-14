@@ -33,7 +33,13 @@ import {
   submitIntake,
   updateAgentBackend,
   agentBackendLabel,
+  ensurePublicConfig,
+  completeSetup,
+  fetchSetupStatus,
+  updatePreviewHost,
+  updateInstanceApiKey,
   type AgentBackend,
+  type SetupStatus,
   type CursorConnectionStatus,
   type CursorUsage,
   type Deployment,
@@ -129,8 +135,31 @@ export default function DashboardPage() {
   const [cursorUsage, setCursorUsage] = useState<CursorUsage | null>(null);
   const [cursorApiKey, setCursorApiKey] = useState("");
   const [cursorLoading, setCursorLoading] = useState(false);
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const [setupPreviewHost, setSetupPreviewHost] = useState("");
+  const [setupApiKey, setSetupApiKey] = useState("");
+  const [instanceApiKey, setInstanceApiKey] = useState("");
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadSetup = useCallback(async () => {
+    await ensurePublicConfig();
+    try {
+      const status = await fetchSetupStatus();
+      setSetupStatus(status);
+      if (!setupPreviewHost) {
+        setSetupPreviewHost(
+          status.preview_host !== "localhost" && status.preview_host
+            ? status.preview_host
+            : typeof window !== "undefined"
+              ? window.location.hostname
+              : status.preview_host
+        );
+      }
+    } catch {
+      setSetupStatus(null);
+    }
+  }, [setupPreviewHost]);
 
   const refresh = useCallback(async () => {
     try {
@@ -192,6 +221,10 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    loadSetup().then(() => refresh());
+  }, []);
+
+  useEffect(() => {
     loadCursor();
   }, [loadCursor]);
 
@@ -212,18 +245,26 @@ export default function DashboardPage() {
   }, [refresh, detail?.pipeline_running]);
 
   useEffect(() => {
-    const ws = new WebSocket(`${getWebSocketUrl()}/ws/events`);
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onmessage = (msg) => {
-      const data = JSON.parse(msg.data);
-      if (data.type === "ping") return;
-      setEvents((prev) => [...prev.slice(-199), data]);
-      if (refreshTimer.current) clearTimeout(refreshTimer.current);
-      refreshTimer.current = setTimeout(() => refresh(), 400);
-    };
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+
+    ensurePublicConfig().then(() => {
+      if (cancelled) return;
+      ws = new WebSocket(`${getWebSocketUrl()}/ws/events`);
+      ws.onopen = () => setConnected(true);
+      ws.onclose = () => setConnected(false);
+      ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.type === "ping") return;
+        setEvents((prev) => [...prev.slice(-199), data]);
+        if (refreshTimer.current) clearTimeout(refreshTimer.current);
+        refreshTimer.current = setTimeout(() => refresh(), 400);
+      };
+    });
+
     return () => {
-      ws.close();
+      cancelled = true;
+      ws?.close();
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
   }, [refresh]);
@@ -411,6 +452,56 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleCompleteSetup(e: React.FormEvent) {
+    e.preventDefault();
+    setCursorLoading(true);
+    try {
+      const status = await completeSetup({
+        preview_host: setupPreviewHost.trim() || undefined,
+        api_key: setupApiKey.trim() || undefined,
+      });
+      if (setupApiKey.trim()) {
+        localStorage.setItem("api_key", setupApiKey.trim());
+      }
+      setSetupStatus(status);
+      setSetupApiKey("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Setup failed");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
+  async function handleSaveInstanceApiKey() {
+    setCursorLoading(true);
+    try {
+      const key = instanceApiKey.trim();
+      await updateInstanceApiKey(key || null);
+      if (key) localStorage.setItem("api_key", key);
+      else localStorage.removeItem("api_key");
+      setInstanceApiKey("");
+      await loadSetup();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save API key");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
+  async function handleSavePreviewHost() {
+    if (!setupPreviewHost.trim()) return;
+    setCursorLoading(true);
+    try {
+      const status = await updatePreviewHost(setupPreviewHost.trim());
+      setSetupStatus(status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update host");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
   async function handleAgentBackendChange(backend: AgentBackend) {
     setCursorLoading(true);
     try {
@@ -589,6 +680,51 @@ export default function DashboardPage() {
                     Default is Cursor Cloud Agents. Local Cursor runs in your workspace; scaffold mode needs no API key.
                   </p>
                 </div>
+                <div className={styles.cursorDeploy}>
+                  <h4>Deployment</h4>
+                  <label>
+                    Preview hostname
+                    <div className={styles.inlineField}>
+                      <input
+                        type="text"
+                        value={setupPreviewHost}
+                        onChange={(e) => setSetupPreviewHost(e.target.value)}
+                        placeholder={setupStatus?.preview_host ?? "localhost"}
+                      />
+                      <button
+                        type="button"
+                        className={styles.btnSecondary}
+                        onClick={handleSavePreviewHost}
+                        disabled={cursorLoading}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </label>
+                  <label>
+                    Factory API key (optional)
+                    <div className={styles.inlineField}>
+                      <input
+                        type="password"
+                        value={instanceApiKey}
+                        onChange={(e) => setInstanceApiKey(e.target.value)}
+                        placeholder={setupStatus?.api_key_configured ? "Set new key or leave blank" : "Protect API access"}
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        className={styles.btnSecondary}
+                        onClick={handleSaveInstanceApiKey}
+                        disabled={cursorLoading}
+                      >
+                        {setupStatus?.api_key_configured ? "Update" : "Set"}
+                      </button>
+                    </div>
+                  </label>
+                  {setupStatus?.auto_configured?.encryption_key && (
+                    <p className={styles.cursorBackendHint}>Encryption key auto-generated and stored on the workspace volume.</p>
+                  )}
+                </div>
                 {!cursorStatus?.connected ? (
                   <div className={styles.cursorConnect}>
                     <p>
@@ -757,6 +893,42 @@ export default function DashboardPage() {
         <div className={styles.error} onClick={() => setError(null)}>
           {error} <span className={styles.dismiss}>✕</span>
         </div>
+      )}
+
+      {setupStatus && !setupStatus.setup_complete && (
+        <section className={styles.setupBanner}>
+          <div>
+            <h2>Quick setup</h2>
+            <p>
+              No .env file required — confirm how you reach this server so live preview links work.
+              Connect Cursor and lock down API access anytime from the Cursor menu.
+            </p>
+          </div>
+          <form className={styles.setupForm} onSubmit={handleCompleteSetup}>
+            <label>
+              Server hostname
+              <input
+                type="text"
+                value={setupPreviewHost}
+                onChange={(e) => setSetupPreviewHost(e.target.value)}
+                placeholder="192.168.1.50 or factory.example.com"
+              />
+            </label>
+            <label>
+              API key (optional)
+              <input
+                type="password"
+                value={setupApiKey}
+                onChange={(e) => setSetupApiKey(e.target.value)}
+                placeholder="Leave empty for open access"
+                autoComplete="off"
+              />
+            </label>
+            <button type="submit" className={styles.btnPrimary} disabled={cursorLoading}>
+              Save &amp; continue
+            </button>
+          </form>
+        </section>
       )}
 
       <div className={styles.body}>

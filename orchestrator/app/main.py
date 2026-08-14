@@ -22,6 +22,7 @@ from app.middleware import APIKeyMiddleware
 from app.models import FactoryEvent
 from app.services.discovery import auto_submit_expired_intake
 from app.services.input_requests import expire_stale_requests
+from app.services.instance_bootstrap import run_instance_bootstrap
 from app.worker import pipeline_queue
 
 router = APIRouter()
@@ -62,6 +63,7 @@ async def _expire_input_requests_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await run_instance_bootstrap()
     await event_bus.connect()
     await pipeline_queue.connect()
     await init_db()
@@ -101,10 +103,11 @@ def create_app() -> FastAPI:
     app = FastAPI(title="turtSlopFactory Control Plane", version="1.0.0", lifespan=lifespan)
 
     app.add_middleware(APIKeyMiddleware)
+    cors_origins = ["*"] if settings.cors_allow_all else settings.cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=not settings.cors_allow_all,
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -1,15 +1,19 @@
+# turtSlopFactory — zero-config stack (build from source)
+# Deploy: docker compose up -d --build
+# Configure after launch in the dashboard (hostname, API key, Cursor).
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-factory}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-factory}
-      POSTGRES_DB: ${POSTGRES_DB:-factory}
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: factory
+      POSTGRES_DB: factory
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-factory} -d ${POSTGRES_DB:-factory}"]
+      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -33,14 +37,13 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-factory}:${POSTGRES_PASSWORD:-factory}@postgres:5432/${POSTGRES_DB:-factory}
+      DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
       REDIS_URL: redis://redis:6379/0
-      CORS_ORIGINS: '["http://localhost:3000","http://localhost:${DASHBOARD_PORT:-3000}"]'
       WORKSPACE_ROOT: /data/workspaces
       WORKER_ENABLED: "false"
-      API_KEY: ${API_KEY:-}
+      CORS_ALLOW_ALL: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,10 +63,10 @@ services:
     ports:
       - "8081-8099:8081-8099"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-factory}:${POSTGRES_PASSWORD:-factory}@postgres:5432/${POSTGRES_DB:-factory}
+      DATABASE_URL: postgresql+asyncpg://factory:factory@postgres:5432/factory
       REDIS_URL: redis://redis:6379/0
       WORKSPACE_ROOT: /data/workspaces
-      PREVIEW_HOST: ${PREVIEW_HOST:-localhost}
+      CORS_ALLOW_ALL: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,12 +84,9 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
     restart: unless-stopped
     ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
+      - "3000:3000"
     depends_on:
       - orchestrator
     networks:
