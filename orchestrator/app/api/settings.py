@@ -11,6 +11,7 @@ from app.services.factory_settings import (
     get_setup_status,
     set_agent_backend,
     set_agent_model,
+    set_agent_models,
     set_instance_api_key,
     set_preview_host,
 )
@@ -25,6 +26,12 @@ class AgentBackendRequest(BaseModel):
 
 class AgentModelRequest(BaseModel):
     agent_model: str
+
+
+class AgentModelsRequest(BaseModel):
+    architect: str | None = None
+    developer: str | None = None
+    reviewer: str | None = None
 
 
 class PreviewHostRequest(BaseModel):
@@ -83,6 +90,23 @@ async def update_agent_backend(
 async def update_agent_model(body: AgentModelRequest, db: AsyncSession = Depends(get_db)) -> dict:
     try:
         result = await set_agent_model(db, body.agent_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    pipeline_executor.runner.invalidate_settings_cache()
+    return result
+
+
+@router.put("/factory/agent-models")
+async def update_agent_models(body: AgentModelsRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    updates = {
+        role: value
+        for role, value in body.model_dump().items()
+        if value is not None
+    }
+    if not updates:
+        raise HTTPException(status_code=400, detail="Provide at least one role model to update")
+    try:
+        result = await set_agent_models(db, updates)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     pipeline_executor.runner.invalidate_settings_cache()

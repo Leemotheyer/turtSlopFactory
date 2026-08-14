@@ -638,6 +638,7 @@ export interface CursorConnectionStatus {
   default_agent_backend?: AgentBackend;
   valid_backends?: AgentBackend[];
   agent_model?: string;
+  agent_models?: AgentRoleModels;
   default_agent_model?: string;
   cursor_model?: string;
   max_parallel_agents?: number;
@@ -658,6 +659,14 @@ export interface CursorModelsResponse {
   models: CursorModel[];
   note?: string;
   error?: string;
+}
+
+export type AgentRoleModelKey = "architect" | "developer" | "reviewer";
+
+export interface AgentRoleModels {
+  architect: string;
+  developer: string;
+  reviewer: string;
 }
 
 export type AgentBackend = "cursor_cloud" | "cursor_local" | "local";
@@ -747,6 +756,7 @@ export async function updateAgentBackend(agentBackend: AgentBackend): Promise<{
 
 export async function updateAgentModel(agentModel: string): Promise<{
   agent_model: string;
+  agent_models?: AgentRoleModels;
   default_agent_model?: string;
 }> {
   const res = await fetch(`${apiUrl()}/api/settings/factory/agent-model`, {
@@ -757,6 +767,24 @@ export async function updateAgentModel(agentModel: string): Promise<{
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Failed to update agent model");
+  }
+  return res.json();
+}
+
+export async function updateAgentModels(
+  models: Partial<AgentRoleModels>
+): Promise<{
+  agent_models: AgentRoleModels;
+  agent_model: string;
+}> {
+  const res = await fetch(`${apiUrl()}/api/settings/factory/agent-models`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify(models),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update agent models");
   }
   return res.json();
 }

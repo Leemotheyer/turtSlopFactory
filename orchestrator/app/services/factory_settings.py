@@ -13,6 +13,7 @@ from app.services.cursor_connection import get_connection_row
 from app.services.deployment_urls import maybe_auto_configure, resolve_request_context
 
 VALID_AGENT_BACKENDS = frozenset({"cursor_cloud", "cursor_local", "local"})
+CURSOR_MODEL_ROLES = ("architect", "developer", "reviewer")
 
 
 async def get_or_create_settings_row(session: AsyncSession) -> FactorySettingsRow:
@@ -46,8 +47,23 @@ async def get_agent_backend(session: AsyncSession) -> str:
 
 
 async def get_agent_model(session: AsyncSession) -> str:
+    models = await get_agent_models(session)
+    return models["developer"]
+
+
+async def get_agent_models(session: AsyncSession) -> dict[str, str]:
     row = await get_or_create_settings_row(session)
-    return row.agent_model or settings.cursor_agent_model
+    base = row.agent_model or settings.cursor_agent_model
+    stored = row.agent_models if isinstance(row.agent_models, dict) else {}
+    return {
+        role: (stored.get(role) or base).strip() or settings.cursor_agent_model
+        for role in CURSOR_MODEL_ROLES
+    }
+
+
+async def get_agent_model_for_role(session: AsyncSession, role: str) -> str:
+    models = await get_agent_models(session)
+    return models.get(role, settings.cursor_agent_model)
 
 
 async def get_max_parallel_agents(session: AsyncSession) -> int:
@@ -79,6 +95,25 @@ async def set_agent_model(session: AsyncSession, model: str) -> dict:
         raise ValueError("agent_model is required")
     row = await get_or_create_settings_row(session)
     row.agent_model = model_id
+    row.agent_models = {role: model_id for role in CURSOR_MODEL_ROLES}
+    await session.commit()
+    return await get_factory_settings(session)
+
+
+async def set_agent_models(session: AsyncSession, updates: dict[str, str | None]) -> dict:
+    row = await get_or_create_settings_row(session)
+    current = dict(row.agent_models) if isinstance(row.agent_models, dict) else {}
+    for role, model_id in updates.items():
+        if role not in CURSOR_MODEL_ROLES:
+            raise ValueError(f"Unknown role: {role}")
+        if model_id is None or not str(model_id).strip():
+            current.pop(role, None)
+            continue
+        cleaned = str(model_id).strip()
+        if not cleaned:
+            raise ValueError(f"agent model for {role} cannot be blank")
+        current[role] = cleaned
+    row.agent_models = current or None
     await session.commit()
     return await get_factory_settings(session)
 
@@ -144,7 +179,8 @@ async def get_setup_status(session: AsyncSession, request: Request | None = None
         "cursor_connected": cursor is not None,
         "agent_backend": await get_agent_backend(session),
         "valid_backends": sorted(VALID_AGENT_BACKENDS),
-        "agent_model": await get_agent_model(session),
+        "agent_model": (await get_agent_models(session))["developer"],
+        "agent_models": await get_agent_models(session),
         "max_parallel_agents": await get_max_parallel_agents(session),
         "cursor_concurrent_limit": await get_cursor_concurrent_limit(session),
         "auto_configured": {
@@ -161,13 +197,14 @@ async def get_factory_settings(session: AsyncSession, request: Request | None = 
         "agent_backend": status["agent_backend"],
         "default_agent_backend": settings.agent_backend,
         "valid_backends": status["valid_backends"],
-        "agent_model": await get_agent_model(session),
+        "agent_model": (await get_agent_models(session))["developer"],
+        "agent_models": await get_agent_models(session),
         "default_agent_model": settings.cursor_agent_model,
         "max_parallel_agents": await get_max_parallel_agents(session),
         "default_max_parallel_agents": settings.max_parallel_agents,
         "cursor_concurrent_limit": await get_cursor_concurrent_limit(session),
         "default_cursor_concurrent_limit": settings.cursor_concurrent_agent_limit,
-        "cursor_model": await get_agent_model(session),
+        "cursor_model": (await get_agent_models(session))["developer"],
         "preview_host": status["preview_host"],
         "setup_complete": status["setup_complete"],
     }

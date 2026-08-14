@@ -35,6 +35,7 @@ import {
   submitIntake,
   updateAgentBackend,
   updateAgentModel,
+  updateAgentModels,
   fetchCursorModels,
   agentBackendLabel,
   ensurePublicConfig,
@@ -45,6 +46,8 @@ import {
   type GithubRepository,
   type CursorModel,
   type AgentBackend,
+  type AgentRoleModelKey,
+  type AgentRoleModels,
   type SetupStatus,
   type CursorConnectionStatus,
   type CursorUsage,
@@ -586,14 +589,15 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleAgentModelChange(modelId: string) {
+  async function handleRoleModelChange(role: AgentRoleModelKey, modelId: string) {
     setCursorLoading(true);
     try {
-      const result = await updateAgentModel(modelId);
+      const result = await updateAgentModels({ [role]: modelId });
       setCursorStatus((prev) =>
         prev
           ? {
               ...prev,
+              agent_models: result.agent_models,
               agent_model: result.agent_model,
               cursor_model: result.agent_model,
             }
@@ -601,6 +605,27 @@ export default function DashboardPage() {
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update agent model");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
+  async function handleSetAllRoleModels(modelId: string) {
+    setCursorLoading(true);
+    try {
+      const result = await updateAgentModel(modelId);
+      setCursorStatus((prev) =>
+        prev
+          ? {
+              ...prev,
+              agent_models: result.agent_models,
+              agent_model: result.agent_model,
+              cursor_model: result.agent_model,
+            }
+          : prev
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update agent models");
     } finally {
       setCursorLoading(false);
     }
@@ -706,24 +731,58 @@ export default function DashboardPage() {
   const livePreviewUrl = detail?.preview_url ?? detail?.staging_url;
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
 
-  const selectedAgentModel =
-    cursorStatus?.agent_model ?? cursorStatus?.cursor_model ?? "composer-2";
+  const defaultAgentModel =
+    cursorStatus?.default_agent_model ?? cursorStatus?.cursor_model ?? "composer-2";
+
+  const roleModels: AgentRoleModels = cursorStatus?.agent_models ?? {
+    architect: defaultAgentModel,
+    developer: defaultAgentModel,
+    reviewer: defaultAgentModel,
+  };
+
+  const ROLE_MODEL_CONFIG: { key: AgentRoleModelKey; label: string; hint: string }[] = [
+    {
+      key: "architect",
+      label: "Architect",
+      hint: "Planning, requirements, and system design.",
+    },
+    {
+      key: "developer",
+      label: "Developer",
+      hint: "Implementation and parallel build streams.",
+    },
+    {
+      key: "reviewer",
+      label: "Reviewer",
+      hint: "Code review and promotion gate.",
+    },
+  ];
 
   const modelOptions = (() => {
     const byId = new Map<string, CursorModel>();
     for (const model of cursorModels) {
       byId.set(model.id, model);
     }
-    if (selectedAgentModel && !byId.has(selectedAgentModel)) {
-      byId.set(selectedAgentModel, {
-        id: selectedAgentModel,
-        display_name: selectedAgentModel,
-      });
+    for (const modelId of Object.values(roleModels)) {
+      if (modelId && !byId.has(modelId)) {
+        byId.set(modelId, { id: modelId, display_name: modelId });
+      }
     }
     return Array.from(byId.values()).sort((a, b) =>
       a.display_name.localeCompare(b.display_name)
     );
   })();
+
+  function renderModelOptions(currentValue: string) {
+    if (modelOptions.length === 0) {
+      return <option value={currentValue}>{currentValue}</option>;
+    }
+    return modelOptions.map((model) => (
+      <option key={model.id} value={model.id}>
+        {model.display_name}
+      </option>
+    ));
+  }
 
   function repoLabel(url: string): string {
     return url.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
@@ -824,27 +883,44 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <div className={styles.cursorBackend}>
-                  <label htmlFor="agent-model">Agent model</label>
-                  <select
-                    id="agent-model"
-                    value={selectedAgentModel}
-                    onChange={(e) => handleAgentModelChange(e.target.value)}
-                    disabled={cursorLoading || modelsLoading || cursorStatus?.agent_backend === "local"}
-                  >
-                    {modelOptions.length === 0 ? (
-                      <option value={selectedAgentModel}>{selectedAgentModel}</option>
-                    ) : (
-                      modelOptions.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.display_name}
-                        </option>
-                      ))
-                    )}
-                  </select>
+                  <div className={styles.roleModelsHeader}>
+                    <label>Agent models by role</label>
+                    <button
+                      type="button"
+                      className={styles.notifMarkAll}
+                      onClick={() => handleSetAllRoleModels(roleModels.developer)}
+                      disabled={
+                        cursorLoading ||
+                        modelsLoading ||
+                        cursorStatus?.agent_backend === "local"
+                      }
+                      title="Apply the developer model to all roles"
+                    >
+                      Match developer
+                    </button>
+                  </div>
+                  <div className={styles.roleModelGrid}>
+                    {ROLE_MODEL_CONFIG.map(({ key, label, hint }) => (
+                      <label key={key} className={styles.roleModelField}>
+                        <span className={styles.roleModelLabel}>{label}</span>
+                        <select
+                          id={`agent-model-${key}`}
+                          value={roleModels[key]}
+                          onChange={(e) => handleRoleModelChange(key, e.target.value)}
+                          disabled={
+                            cursorLoading || modelsLoading || cursorStatus?.agent_backend === "local"
+                          }
+                        >
+                          {renderModelOptions(roleModels[key])}
+                        </select>
+                        <span className={styles.roleModelHint}>{hint}</span>
+                      </label>
+                    ))}
+                  </div>
                   <p className={styles.cursorBackendHint}>
-                    Used by Cursor Cloud and local agents for architect, developer, and reviewer roles.
+                    Pick the best model per role — e.g. a reasoning model for architecture and a fast model for implementation.
                     {cursorStatus?.agent_backend === "local"
-                      ? " Switch off scaffold mode to use a Cursor model."
+                      ? " Switch off scaffold mode to use Cursor models."
                       : !cursorStatus?.connected
                         ? " Connect Cursor to load your account's available models."
                         : modelsLoading

@@ -14,7 +14,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import AgentRole
 from app.services.cursor_connection import get_api_key
-from app.services.factory_settings import get_agent_backend, get_agent_model
+from app.services.factory_settings import get_agent_backend, get_agent_models
 from app.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class FactoryAgentRunner(LocalAgentRunner):
         self._cloud = CursorCloudRunner(self.workspace)
         self._cursor_local = CursorLocalRunner(self.workspace)
         self._cached_backend: str | None = None
-        self._cached_model: str | None = None
+        self._cached_models: dict[str, str] | None = None
 
     async def _resolve_backend(self) -> str:
         if self._cached_backend:
@@ -40,13 +40,11 @@ class FactoryAgentRunner(LocalAgentRunner):
         self._cached_backend = backend
         return backend
 
-    async def _resolve_model(self) -> str:
-        if self._cached_model:
-            return self._cached_model
-        async with SessionLocal() as session:
-            model = await get_agent_model(session)
-        self._cached_model = model
-        return model
+    async def _resolve_model(self, role: AgentRole) -> str:
+        if self._cached_models is None:
+            async with SessionLocal() as session:
+                self._cached_models = await get_agent_models(session)
+        return self._cached_models.get(role.value, settings.cursor_agent_model)
 
     async def _resolve_api_key(self) -> str | None:
         async with SessionLocal() as session:
@@ -54,7 +52,7 @@ class FactoryAgentRunner(LocalAgentRunner):
 
     def invalidate_settings_cache(self) -> None:
         self._cached_backend = None
-        self._cached_model = None
+        self._cached_models = None
 
     async def run(
         self,
@@ -91,7 +89,12 @@ class FactoryAgentRunner(LocalAgentRunner):
 
         agent_id = f"{effective_backend}-{role.value}-{str(task_id)[:8]}"
         run = AgentRun(task_id=task_id, role=role, agent_id=agent_id)
-        model = await self._resolve_model()
+        model = await self._resolve_model(role)
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[{role.value}] Using model {model}",
+        )
 
         try:
             if effective_backend == "cursor_cloud":

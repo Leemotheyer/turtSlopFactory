@@ -1487,6 +1487,56 @@
   color: var(--text);
 }
 
+.roleModelsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.roleModelsHeader label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.roleModelGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.roleModelField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.roleModelLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.roleModelField select {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.roleModelHint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 @media (max-width: 900px) {
   .repoForm {
     grid-template-columns: 1fr;
