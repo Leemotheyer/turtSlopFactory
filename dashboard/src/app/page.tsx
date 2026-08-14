@@ -1071,10 +1071,19 @@ export default function DashboardPage() {
                         <>
                           {" "}
                           · {cursorStatus.concurrency.active_cursor_agents}/
-                          {cursorStatus.concurrency.cursor_slot_limit} Cursor slots in use
+                          {cursorStatus.concurrency.cursor_slot_limit} Cursor runs in progress
+                          {(cursorStatus.concurrency.idle_agents ?? 0) > 0 && (
+                            <> · {cursorStatus.concurrency.idle_agents} idle ACTIVE agent(s) not counted</>
+                          )}
                         </>
                       )}
                     </p>
+                    {cursorStatus.concurrency.max_parallel === 0 && (
+                      <p className={styles.cursorBackendHint}>
+                        No Cursor slots free for factory agents right now. Running agents will finish first,
+                        or archive idle cloud agents in Cursor to free capacity.
+                      </p>
+                    )}
                     <p className={styles.cursorBackendHint}>{cursorStatus.concurrency.strategy}</p>
                   </div>
                 )}

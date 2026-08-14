@@ -797,6 +797,7 @@ export interface ConcurrencyBudget {
   backend: AgentBackend;
   factory_cap: number;
   strategy: string;
+  idle_agents?: number;
 }
 
 export interface CursorConnectionStatus {

@@ -56,6 +56,11 @@ class CursorCloudRunner:
                     model_id=selected_model,
                 )
             except CursorApiError as exc:
+                if exc.status in (429, 403) or "limit" in exc.message.lower() or "concurrent" in exc.message.lower():
+                    from app.services.agent_concurrency import invalidate_active_agent_cache
+
+                    invalidate_active_agent_cache()
+                    return False, f"Cursor cloud capacity unavailable: {exc.message}", ""
                 return False, f"Cursor cloud create failed: {exc.message}", ""
 
             agent = created.get("agent") or {}
@@ -70,6 +75,10 @@ class CursorCloudRunner:
                 "pipeline.log",
                 f"[{role.value}] Cursor cloud agent {agent_id} run {run_id}",
             )
+
+            from app.services.agent_concurrency import invalidate_active_agent_cache
+
+            invalidate_active_agent_cache()
 
             try:
                 final_run = await client.wait_for_run(

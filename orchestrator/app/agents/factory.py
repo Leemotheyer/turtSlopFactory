@@ -98,6 +98,25 @@ class FactoryAgentRunner(LocalAgentRunner):
 
         try:
             if effective_backend == "cursor_cloud":
+                async with SessionLocal() as session:
+                    from app.services.agent_concurrency import wait_for_cursor_capacity
+
+                    budget = await wait_for_cursor_capacity(
+                        session, min_slots=1, timeout_seconds=600, poll_seconds=20
+                    )
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        f"[concurrency] {budget.strategy}",
+                    )
+                    if budget.max_parallel < 1:
+                        run.success = False
+                        run.output = (
+                            "No Cursor Cloud agent slots available. "
+                            "Archive idle cloud agents or wait for running agents to finish, then retry."
+                        )
+                        return run
+
                 success, output, cursor_id = await self._cloud.run_role(
                     api_key, role, project_id, task_id, workspace, context, model_id=model
                 )
@@ -119,6 +138,18 @@ class FactoryAgentRunner(LocalAgentRunner):
             return await super().run(role, project_id, task_id, workspace, context)
 
         if not success:
+            capacity_blocked = any(
+                phrase in output.lower()
+                for phrase in (
+                    "capacity unavailable",
+                    "no cursor cloud agent slots",
+                    "no cursor agent slots",
+                )
+            )
+            if capacity_blocked:
+                run.success = False
+                run.output = output
+                return run
             self.workspace.append_log(
                 project_id,
                 "pipeline.log",
