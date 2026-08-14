@@ -33,6 +33,10 @@ httpx>=0.28.0
     (repo / "app" / "features").mkdir(parents=True, exist_ok=True)
     write("app/features/__init__.py", "")
 
+    safe_name = json.dumps(name)
+    safe_description = json.dumps(description)
+    safe_slug = json.dumps(slug)
+
     write(
         "app/main.py",
         f'''from pathlib import Path
@@ -43,7 +47,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-app = FastAPI(title="{name}", description="{description}")
+app = FastAPI(title={safe_name}, description={safe_description})
 
 ITEMS: list[dict] = []
 _next_id = 1
@@ -62,12 +66,12 @@ class Item(BaseModel):
 
 @app.get("/health")
 def health():
-    return {{"status": "ok", "service": "{slug}"}}
+    return {{"status": "ok", "service": {safe_slug}}}
 
 
 @app.get("/api/info")
 def info():
-    return {{"name": "{name}", "description": "{description}"}}
+    return {{"name": {safe_name}, "description": {safe_description}}}
 
 
 def _load_feature_routers() -> None:
@@ -100,6 +104,9 @@ if static_dir.exists():
         "",
     )
 
+    safe_name = json.dumps(name)
+    safe_slug = json.dumps(slug)
+
     write(
         "tests/test_app.py",
         f'''from fastapi.testclient import TestClient
@@ -112,13 +119,13 @@ def test_health():
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
-    assert r.json()["service"] == "{slug}"
+    assert r.json()["service"] == {safe_slug}
 
 
 def test_info():
     r = client.get("/api/info")
     assert r.status_code == 200
-    assert r.json()["name"] == "{name}"
+    assert r.json()["name"] == {safe_name}
 
 
 def test_create_and_list_items():
