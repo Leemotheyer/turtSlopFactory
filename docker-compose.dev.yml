@@ -5,5 +5,5 @@ services:
   factory:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.factory
     image: turtslopfactory:local
