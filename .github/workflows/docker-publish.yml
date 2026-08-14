@@ -59,9 +59,12 @@ jobs:
 
       - name: Make GHCR package public
         if: github.event_name != 'pull_request'
+        continue-on-error: true
         run: |
-          gh api --method PATCH \
-            "/users/${{ github.repository_owner }}/packages/container/turtslopfactory" \
-            -f visibility=public
+          if gh api --method PATCH /user/packages/container/turtslopfactory -f visibility=public; then
+            echo "GHCR package turtslopfactory is now public"
+          else
+            echo "::warning::Could not auto-publish GHCR package. In GitHub: Packages → turtslopfactory → Package settings → Change visibility → Public"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
