@@ -1,0 +1,31 @@
+# Run once from GitHub → Actions → "Delete obsolete GHCR packages" → Run workflow
+# Removes turtslopfactory-orchestrator and turtslopfactory-dashboard (pre–single-container deploy).
+# Keeps turtslopfactory. Does not run automatically.
+
+name: Delete obsolete GHCR packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  delete-obsolete-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete turtslopfactory-orchestrator and turtslopfactory-dashboard
+        run: |
+          set -euo pipefail
+          owner="${{ github.repository_owner }}"
+          for pkg in turtslopfactory-orchestrator turtslopfactory-dashboard; do
+            echo "Deleting ${owner}/${pkg}..."
+            if gh api --method DELETE "/users/${owner}/packages/container/${pkg}"; then
+              echo "Deleted ${pkg}"
+            else
+              echo "Skipped ${pkg} (not found or already deleted)"
+            fi
+          done
+          echo "Done. Remaining package should be turtslopfactory only."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

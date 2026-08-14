@@ -68,10 +68,3 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prune old GHCR package versions
-        if: github.event_name != 'pull_request'
-        run: python3 scripts/prune-ghcr-versions.py
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_OWNER: ${{ github.repository_owner }}
