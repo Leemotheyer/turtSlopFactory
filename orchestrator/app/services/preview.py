@@ -36,18 +36,15 @@ def build_preview_url(
 def preview_upstream(project_id: UUID, meta: dict[str, Any]) -> str | None:
     """Internal URL the API proxy uses to reach a running preview (sync fallback)."""
     backend = meta.get("preview_backend")
-    if backend == "docker":
-        container = meta.get("preview_container") or meta.get("preview_container_id")
-        if container and len(str(container)) <= 12:
-            from app.services.preview_manager import preview_container_name
-
-            container = preview_container_name(project_id)
-        if container:
-            return f"http://{container}:8080"
+    if backend not in ("docker", "subprocess"):
         return None
-    port = get_preview_port(meta)
-    if port:
-        return f"http://127.0.0.1:{port}"
+    container = meta.get("preview_container") or meta.get("preview_container_id")
+    if container and len(str(container)) <= 12:
+        from app.services.preview_manager import preview_container_name
+
+        container = preview_container_name(project_id)
+    if container:
+        return f"http://{container}:8080"
     return None
 
 
@@ -83,6 +80,7 @@ def update_preview_metadata(
     container_id: str | None = None,
     container_name: str | None = None,
     process_id: str | None = None,
+    ephemeral_image: str | None = None,
 ) -> dict[str, Any]:
     url = build_preview_url(project_id, origin=origin, host=host)
     meta["preview_url"] = url
@@ -99,12 +97,18 @@ def update_preview_metadata(
             meta["preview_container_id"] = container_id
         if container_name:
             meta["preview_container"] = container_name
+        if ephemeral_image:
+            meta["preview_ephemeral_image"] = ephemeral_image
         if process_id:
             meta["preview_process_id"] = process_id
     else:
         meta.pop("preview_container_id", None)
         meta.pop("preview_container", None)
+        meta.pop("preview_ephemeral_image", None)
         meta.pop("preview_process_id", None)
+        meta.pop("preview_internal_port", None)
+        meta.pop("preview_port", None)
+        meta.pop("staging_port", None)
     return meta
 
 

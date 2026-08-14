@@ -36,7 +36,6 @@ from app.state_machine import (
     pipeline_gate_index,
 )
 from app.services.preview import (
-    allocate_preview_port,
     build_preview_url,
     get_preview_port,
     preview_from_metadata,
@@ -366,25 +365,38 @@ class PipelineExecutor:
         preview_url = build_preview_url(project.id, origin=origin)
         runtime_env = await get_secrets_for_runtime(session, project.id)
 
-        await stop_preview(project.id, container_name=meta.get("preview_container"))
+        await stop_preview(
+            project.id,
+            container_name=meta.get("preview_container"),
+            ephemeral_image=meta.get("preview_ephemeral_image"),
+        )
 
         port: int | None = None
         container_id: str | None = None
         container_name: str | None = None
-        process_id: str | None = None
+        ephemeral_image: str | None = None
         backend = "simulated"
+        success = False
+        output = ""
 
         if preview_type == "dev":
-            port = await allocate_preview_port(meta)
-            repo = self.workspace.repo_dir(project.id)
-            log_path = self.workspace.logs_dir(project.id) / "preview-dev.log"
-            success, output, process_id = await start_dev_preview(
-                project.id, repo, port, log_path
-            )
-            backend = "subprocess"
-            context["preview_backend"] = backend
-            context["staging_port"] = port
-            context["preview_port"] = port
+            if self.runner.docker_available():
+                repo = self.workspace.repo_dir(project.id)
+                log_path = self.workspace.logs_dir(project.id) / "preview-dev.log"
+                container_name = preview_container_name(project.id)
+                success, output, container_id, ephemeral_image = await start_dev_preview(
+                    project.id,
+                    repo,
+                    log_path,
+                    env_vars=runtime_env,
+                )
+                backend = "docker"
+                context["preview_backend"] = backend
+                context["preview_container"] = container_name
+            else:
+                success = False
+                output = "Docker is required for live preview"
+                backend = "simulated"
         elif self.runner.docker_available():
             tag = image_tag or project.image_tag or context.get("image_tag", "none")
             if tag == "none":
@@ -417,7 +429,7 @@ class PipelineExecutor:
             host=None,
             container_id=container_id,
             container_name=container_name,
-            process_id=process_id,
+            ephemeral_image=ephemeral_image,
         )
         self.workspace.save_metadata(project.id, meta)
         context["preview_upstream"] = preview_upstream(project.id, meta)

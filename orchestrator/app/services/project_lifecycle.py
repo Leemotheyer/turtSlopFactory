@@ -32,7 +32,11 @@ async def delete_project(
 
     meta = ws.load_metadata(project_id)
     try:
-        await stop_preview(project_id, container_name=meta.get("preview_container"))
+        await stop_preview(
+            project_id,
+            container_name=meta.get("preview_container"),
+            ephemeral_image=meta.get("preview_ephemeral_image"),
+        )
     except Exception:
         logger.exception("Failed to stop preview for project %s", project_id)
 

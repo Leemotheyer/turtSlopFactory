@@ -1,4 +1,4 @@
-"""Run project live previews inside the factory container or on an isolated Docker network."""
+"""Run project live previews in ephemeral Docker containers on an isolated network."""
 
 from __future__ import annotations
 
@@ -15,12 +15,26 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# project_id -> asyncio subprocess handle
-_dev_processes: dict[str, asyncio.subprocess.Process] = {}
+_DEFAULT_DOCKERFILE = """FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+"""
+
+_PREVIEW_LABELS = (
+    "factory.preview=1",
+)
 
 
 def preview_container_name(project_id: UUID) -> str:
     return f"factory-live-{str(project_id)[:8]}"
+
+
+def dev_preview_image_tag(project_id: UUID) -> str:
+    return f"factory-preview-dev-{str(project_id)[:8]}"
 
 
 def ensure_preview_network() -> None:
@@ -42,32 +56,48 @@ def ensure_preview_network() -> None:
         )
 
 
-async def _remove_container(name: str) -> None:
+async def _run_docker(*args: str, stdin: bytes | None = None, log_path: Path | None = None) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
         "docker",
-        "rm",
-        "-f",
-        name,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+        *args,
+        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
-    await proc.wait()
+    stdout, _ = await proc.communicate(input=stdin)
+    output = stdout.decode(errors="replace")
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as handle:
+            handle.write(output)
+            if not output.endswith("\n"):
+                handle.write("\n")
+    return proc.returncode or 0, output
 
 
-async def stop_preview(project_id: UUID, *, container_name: str | None = None) -> None:
-    """Stop dev subprocess and/or Docker preview for a project."""
-    key = str(project_id)
-    proc = _dev_processes.pop(key, None)
-    if proc and proc.returncode is None:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
+async def _remove_container(name: str) -> None:
+    await _run_docker("rm", "-f", name)
 
+
+async def _remove_image(image_ref: str) -> None:
+    if not image_ref:
+        return
+    await _run_docker("rmi", "-f", image_ref)
+
+
+async def stop_preview(
+    project_id: UUID,
+    *,
+    container_name: str | None = None,
+    ephemeral_image: str | None = None,
+) -> None:
+    """Stop preview container and remove ephemeral preview images (never volumes)."""
     name = container_name or preview_container_name(project_id)
     await _remove_container(name)
+
+    for image in {ephemeral_image, dev_preview_image_tag(project_id)}:
+        if image:
+            await _remove_image(image)
 
 
 async def _wait_for_health(url: str, *, attempts: int = 30, delay: float = 1.0) -> bool:
@@ -84,19 +114,10 @@ async def _wait_for_health(url: str, *, attempts: int = 30, delay: float = 1.0) 
 
 
 async def _docker_inspect(field: str, container_ref: str) -> str | None:
-    proc = await asyncio.create_subprocess_exec(
-        "docker",
-        "inspect",
-        "-f",
-        field,
-        container_ref,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    stdout, _ = await proc.communicate()
-    if proc.returncode != 0:
+    code, output = await _run_docker("inspect", "-f", field, container_ref)
+    if code != 0:
         return None
-    value = stdout.decode().strip()
+    value = output.strip()
     return value or None
 
 
@@ -116,91 +137,137 @@ async def container_ip_on_network(container_ref: str, network: str) -> str | Non
 async def resolve_preview_upstream(project_id: UUID, meta: dict) -> str | None:
     """Resolve a reachable internal URL for the project preview proxy."""
     backend = meta.get("preview_backend")
-    if backend == "docker":
-        ensure_preview_network()
-        name = meta.get("preview_container")
-        if not name or len(str(name)) <= 12:
-            name = preview_container_name(project_id)
-        if not await container_is_running(name):
-            logger.warning("Preview container %s is not running for project %s", name, project_id)
-            return None
-        ip = await container_ip_on_network(name, settings.preview_docker_network)
-        host = ip or name
-        return f"http://{host}:8080"
+    if backend not in ("docker", "subprocess"):
+        return None
 
-    port = meta.get("preview_internal_port") or meta.get("preview_port") or meta.get("staging_port")
-    if port:
-        key = str(project_id)
-        proc = _dev_processes.get(key)
-        if proc is not None and proc.returncode is not None:
-            logger.warning("Dev preview process exited for project %s", project_id)
-            return None
-        health_url = f"http://127.0.0.1:{port}/health"
-        if not await _wait_for_health(health_url, attempts=1, delay=0):
-            logger.warning("Dev preview on port %s is not healthy for project %s", port, project_id)
-            return None
-        return f"http://127.0.0.1:{port}"
-    return None
+    ensure_preview_network()
+    name = meta.get("preview_container")
+    if not name or len(str(name)) <= 12:
+        name = preview_container_name(project_id)
+    if not await container_is_running(name):
+        logger.warning("Preview container %s is not running for project %s", name, project_id)
+        return None
+    ip = await container_ip_on_network(name, settings.preview_docker_network)
+    host = ip or name
+    return f"http://{host}:8080"
+
+
+def _build_label_args(project_id: UUID, *, ephemeral: bool = False) -> list[str]:
+    args = ["--label", "factory.preview=1", "--label", f"factory.project={project_id}"]
+    if ephemeral:
+        args.extend(["--label", "factory.preview.ephemeral=1"])
+    return args
+
+
+async def _build_ephemeral_image(
+    project_id: UUID,
+    repo_path: Path,
+    image_tag: str,
+    log_path: Path,
+) -> tuple[bool, str]:
+    dockerfile = repo_path / "Dockerfile"
+    label_args = _build_label_args(project_id, ephemeral=True)
+
+    if dockerfile.exists():
+        code, output = await _run_docker(
+            "build",
+            "-t",
+            image_tag,
+            *label_args,
+            ".",
+            log_path=log_path,
+        )
+    else:
+        code, output = await _run_docker(
+            "build",
+            "-t",
+            image_tag,
+            "-f",
+            "-",
+            *label_args,
+            str(repo_path),
+            stdin=_DEFAULT_DOCKERFILE.encode(),
+            log_path=log_path,
+        )
+
+    if code != 0:
+        await _remove_image(image_tag)
+        tail = "\n".join(output.splitlines()[-20:])
+        return False, f"Docker build failed:\n{tail}"
+    return True, f"Built ephemeral preview image {image_tag}"
+
+
+async def _run_preview_container(
+    project_id: UUID,
+    image_tag: str,
+    *,
+    env_vars: dict[str, str] | None = None,
+    ephemeral: bool = False,
+) -> tuple[bool, str, str | None]:
+    ensure_preview_network()
+    name = preview_container_name(project_id)
+    await _remove_container(name)
+
+    cmd = [
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--network",
+        settings.preview_docker_network,
+        *_build_label_args(project_id, ephemeral=ephemeral),
+    ]
+    for key, value in (env_vars or {}).items():
+        cmd.extend(["-e", f"{key}={value}"])
+    cmd.append(image_tag)
+
+    code, output = await _run_docker(*cmd)
+    if code != 0:
+        return False, output or "docker run failed", None
+
+    container_id = output.strip()[:12] if output.strip() else None
+    health_url = f"http://{name}:8080/health"
+    if not await _wait_for_health(health_url, attempts=45):
+        await _remove_container(name)
+        return False, f"Container preview failed health check at {health_url}", container_id
+
+    return True, f"Preview container {name} on {settings.preview_docker_network}", container_id
 
 
 async def start_dev_preview(
     project_id: UUID,
     repo_path: Path,
-    port: int,
     log_path: Path,
-) -> tuple[bool, str, str | None]:
-    """Run uvicorn from the project repo on an internal port (no host publish)."""
-    await stop_preview(project_id)
+    *,
+    env_vars: dict[str, str] | None = None,
+) -> tuple[bool, str, str | None, str | None]:
+    """Build a throwaway image from the repo and run it in an isolated container."""
+    if not Path("/var/run/docker.sock").exists():
+        return False, "Docker is not available for preview", None, None
 
     main_module = repo_path / "app" / "main.py"
     if not main_module.exists():
-        return False, f"Dev preview aborted — missing {main_module.relative_to(repo_path)}", None
+        return False, f"Preview aborted — missing {main_module.relative_to(repo_path)}", None, None
 
-    req = repo_path / "requirements.txt"
-    if req.exists():
-        install = await asyncio.create_subprocess_exec(
-            "pip",
-            "install",
-            "-q",
-            "-r",
-            str(req),
-            "uvicorn",
-            cwd=str(repo_path),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        await install.wait()
+    image_tag = dev_preview_image_tag(project_id)
+    await stop_preview(project_id, ephemeral_image=image_tag)
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = open(log_path, "a", encoding="utf-8")
-    proc = await asyncio.create_subprocess_exec(
-        "python3",
-        "-m",
-        "uvicorn",
-        "app.main:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(port),
-        cwd=str(repo_path),
-        env={**os.environ, "PYTHONPATH": str(repo_path)},
-        stdout=log_handle,
-        stderr=asyncio.subprocess.STDOUT,
+    built, build_msg = await _build_ephemeral_image(project_id, repo_path, image_tag, log_path)
+    if not built:
+        return False, build_msg, None, None
+
+    success, output, container_id = await _run_preview_container(
+        project_id,
+        image_tag,
+        env_vars=env_vars,
+        ephemeral=True,
     )
-    _dev_processes[str(project_id)] = proc
+    if not success:
+        await _remove_image(image_tag)
+        return False, output, container_id, None
 
-    health_url = f"http://127.0.0.1:{port}/health"
-    if not await _wait_for_health(health_url, attempts=45):
-        await stop_preview(project_id)
-        log_handle.close()
-        tail = ""
-        if log_path.exists():
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            tail = "\n".join(lines[-20:])
-        detail = tail or "no log output"
-        return False, f"Dev preview failed to become healthy at {health_url}\n{detail}", None
-
-    return True, f"Dev preview on internal port {port}", str(proc.pid)
+    message = f"{build_msg}; {output}"
+    return True, message, container_id, image_tag
 
 
 async def start_docker_preview(
@@ -209,51 +276,16 @@ async def start_docker_preview(
     *,
     env_vars: dict[str, str] | None = None,
 ) -> tuple[bool, str, str | None]:
-    """Run a built image on the preview Docker network (no host port mapping)."""
-    ensure_preview_network()
-    name = preview_container_name(project_id)
-    await stop_preview(project_id, container_name=name)
-
-    cmd = [
-        "docker",
-        "run",
-        "-d",
-        "--name",
-        name,
-        "--network",
-        settings.preview_docker_network,
-        "--label",
-        "factory.preview=1",
-        "--label",
-        f"factory.project={project_id}",
-    ]
-    for key, value in (env_vars or {}).items():
-        cmd.extend(["-e", f"{key}={value}"])
-    cmd.append(image_tag)
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    stdout, _ = await proc.communicate()
-    output = stdout.decode().strip()
-    if proc.returncode != 0:
-        return False, output or "docker run failed", None
-
-    container_id = output[:12] if output else None
-    health_url = f"http://{name}:8080/health"
-    if not await _wait_for_health(health_url, attempts=45):
-        await stop_preview(project_id, container_name=name)
-        return False, f"Container preview failed health check at {health_url}", container_id
-
-    return True, f"Docker preview container {name} on {settings.preview_docker_network}", container_id
+    """Run a built project image on the preview Docker network (container only, keeps image)."""
+    await stop_preview(project_id, container_name=preview_container_name(project_id))
+    return await _run_preview_container(project_id, image_tag, env_vars=env_vars, ephemeral=False)
 
 
-async def cleanup_orphan_preview_containers() -> int:
-    """Remove leftover preview containers from previous runs."""
+async def cleanup_orphan_preview_resources() -> dict[str, int]:
+    """Remove leftover preview containers and ephemeral preview images."""
     if not Path("/var/run/docker.sock").exists():
-        return 0
+        return {"containers": 0, "images": 0}
+
     proc = await asyncio.create_subprocess_exec(
         "docker",
         "ps",
@@ -264,7 +296,28 @@ async def cleanup_orphan_preview_containers() -> int:
         stderr=asyncio.subprocess.DEVNULL,
     )
     stdout, _ = await proc.communicate()
-    ids = [line.strip() for line in stdout.decode().splitlines() if line.strip()]
-    for cid in ids:
+    container_ids = [line.strip() for line in stdout.decode().splitlines() if line.strip()]
+    for cid in container_ids:
         await _remove_container(cid)
-    return len(ids)
+
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "images",
+        "-q",
+        "--filter",
+        "label=factory.preview.ephemeral=1",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    image_ids = [line.strip() for line in stdout.decode().splitlines() if line.strip()]
+    for iid in image_ids:
+        await _run_docker("rmi", "-f", iid)
+
+    return {"containers": len(container_ids), "images": len(image_ids)}
+
+
+# Backwards-compatible alias
+async def cleanup_orphan_preview_containers() -> int:
+    result = await cleanup_orphan_preview_resources()
+    return result["containers"]

@@ -73,16 +73,17 @@ def test_update_preview_metadata_sets_gateway_url():
     update_preview_metadata(
         meta,
         project_id=project_id,
-        port=10012,
+        port=None,
         preview_type="dev",
         status="running",
-        backend="subprocess",
+        backend="docker",
         origin="http://192.168.1.204:8044",
-        process_id="1234",
+        container_name=f"factory-live-{str(project_id)[:8]}",
+        ephemeral_image=f"factory-preview-dev-{str(project_id)[:8]}",
     )
-    assert meta["preview_internal_port"] == 10012
     assert meta["preview_url"] == f"http://192.168.1.204:8044/preview/{str(project_id)[:8]}/"
-    assert meta["preview_backend"] == "subprocess"
+    assert meta["preview_backend"] == "docker"
+    assert "preview_ephemeral_image" in meta
 
 
 def test_update_preview_metadata_clears_runtime_on_failure():
