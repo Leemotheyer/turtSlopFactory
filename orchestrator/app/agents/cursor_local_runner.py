@@ -26,9 +26,12 @@ class CursorLocalRunner:
         task_id: UUID,
         workspace_path: str,
         context: dict,
+        *,
+        model: str | None = None,
     ) -> tuple[bool, str, str]:
         prompt = build_role_prompt(role, context)
         agent_id = f"cursor-local-{role.value}-{str(task_id)[:8]}"
+        selected_model = model or settings.cursor_agent_model
 
         try:
             from cursor_sdk import Agent, LocalAgentOptions
@@ -37,7 +40,7 @@ class CursorLocalRunner:
 
         def _execute() -> str:
             with Agent.create(
-                model=settings.cursor_agent_model,
+                model=selected_model,
                 api_key=api_key,
                 local=LocalAgentOptions(cwd=workspace_path),
             ) as agent:

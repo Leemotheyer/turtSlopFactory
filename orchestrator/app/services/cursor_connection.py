@@ -230,6 +230,77 @@ async def list_github_repositories(session: AsyncSession, *, refresh: bool = Fal
     }
 
 
+def _default_variant_params(model: dict[str, Any]) -> list[dict[str, str]] | None:
+    variants = model.get("variants") or []
+    for variant in variants:
+        if variant.get("isDefault"):
+            params = variant.get("params") or []
+            if params:
+                return [
+                    {"id": p["id"], "value": str(p["value"])}
+                    for p in params
+                    if isinstance(p, dict) and p.get("id") is not None and p.get("value") is not None
+                ]
+            return None
+    if len(variants) == 1:
+        params = variants[0].get("params") or []
+        if params:
+            return [
+                {"id": p["id"], "value": str(p["value"])}
+                for p in params
+                if isinstance(p, dict) and p.get("id") is not None and p.get("value") is not None
+            ]
+    return None
+
+
+async def list_cursor_models(session: AsyncSession) -> dict[str, Any]:
+    row = await get_connection_row(session)
+    if not row:
+        return {
+            "connected": False,
+            "models": [],
+            "note": "Connect your Cursor API key to browse available models.",
+        }
+
+    try:
+        async with CursorClient(await _api_key_from_row(row)) as client:
+            raw_items = await client.list_models()
+    except CursorApiError as exc:
+        if exc.status in (401, 403):
+            return {
+                "connected": False,
+                "models": [],
+                "error": "Cursor API key is invalid or expired. Reconnect from settings.",
+            }
+        raise
+
+    models = []
+    for item in raw_items:
+        model_id = item.get("id")
+        if not model_id:
+            continue
+        models.append(
+            {
+                "id": model_id,
+                "display_name": item.get("displayName") or model_id,
+                "description": item.get("description"),
+                "aliases": item.get("aliases") or [],
+                "default_params": _default_variant_params(item),
+            }
+        )
+
+    models.sort(key=lambda m: m["display_name"].lower())
+
+    row.last_synced_at = datetime.utcnow()
+    await session.commit()
+
+    return {
+        "connected": True,
+        "models": models,
+        "note": "Models available for Cursor Cloud and local agents.",
+    }
+
+
 def _summary_to_dict(summary: CursorUsageSummary) -> dict[str, Any]:
     return {
         "connected": summary.connected,

@@ -34,6 +34,8 @@ import {
   setSecret,
   submitIntake,
   updateAgentBackend,
+  updateAgentModel,
+  fetchCursorModels,
   agentBackendLabel,
   ensurePublicConfig,
   completeSetup,
@@ -41,6 +43,7 @@ import {
   updatePreviewHost,
   updateInstanceApiKey,
   type GithubRepository,
+  type CursorModel,
   type AgentBackend,
   type SetupStatus,
   type CursorConnectionStatus,
@@ -149,6 +152,8 @@ export default function DashboardPage() {
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [repoNote, setRepoNote] = useState<string | null>(null);
+  const [cursorModels, setCursorModels] = useState<CursorModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -269,6 +274,24 @@ export default function DashboardPage() {
   useEffect(() => {
     if (showCursor) loadCursor();
   }, [showCursor, loadCursor]);
+
+  const loadCursorModels = useCallback(async () => {
+    setModelsLoading(true);
+    try {
+      const data = await fetchCursorModels();
+      setCursorModels(data.models ?? []);
+    } catch {
+      setCursorModels([]);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showCursor && cursorStatus?.connected) {
+      loadCursorModels();
+    }
+  }, [showCursor, cursorStatus?.connected, loadCursorModels]);
 
   useEffect(() => {
     if (detail?.state === "INTAKE_PENDING") {
@@ -563,6 +586,26 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleAgentModelChange(modelId: string) {
+    setCursorLoading(true);
+    try {
+      const result = await updateAgentModel(modelId);
+      setCursorStatus((prev) =>
+        prev
+          ? {
+              ...prev,
+              agent_model: result.agent_model,
+              cursor_model: result.agent_model,
+            }
+          : prev
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update agent model");
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
   async function handleAgentBackendChange(backend: AgentBackend) {
     setCursorLoading(true);
     try {
@@ -663,6 +706,25 @@ export default function DashboardPage() {
   const livePreviewUrl = detail?.preview_url ?? detail?.staging_url;
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
 
+  const selectedAgentModel =
+    cursorStatus?.agent_model ?? cursorStatus?.cursor_model ?? "composer-2";
+
+  const modelOptions = (() => {
+    const byId = new Map<string, CursorModel>();
+    for (const model of cursorModels) {
+      byId.set(model.id, model);
+    }
+    if (selectedAgentModel && !byId.has(selectedAgentModel)) {
+      byId.set(selectedAgentModel, {
+        id: selectedAgentModel,
+        display_name: selectedAgentModel,
+      });
+    }
+    return Array.from(byId.values()).sort((a, b) =>
+      a.display_name.localeCompare(b.display_name)
+    );
+  })();
+
   function repoLabel(url: string): string {
     return url.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
   }
@@ -759,6 +821,35 @@ export default function DashboardPage() {
                   </select>
                   <p className={styles.cursorBackendHint}>
                     Default is Cursor Cloud Agents. Local Cursor runs in your workspace; scaffold mode needs no API key.
+                  </p>
+                </div>
+                <div className={styles.cursorBackend}>
+                  <label htmlFor="agent-model">Agent model</label>
+                  <select
+                    id="agent-model"
+                    value={selectedAgentModel}
+                    onChange={(e) => handleAgentModelChange(e.target.value)}
+                    disabled={cursorLoading || modelsLoading || cursorStatus?.agent_backend === "local"}
+                  >
+                    {modelOptions.length === 0 ? (
+                      <option value={selectedAgentModel}>{selectedAgentModel}</option>
+                    ) : (
+                      modelOptions.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.display_name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <p className={styles.cursorBackendHint}>
+                    Used by Cursor Cloud and local agents for architect, developer, and reviewer roles.
+                    {cursorStatus?.agent_backend === "local"
+                      ? " Switch off scaffold mode to use a Cursor model."
+                      : !cursorStatus?.connected
+                        ? " Connect Cursor to load your account's available models."
+                        : modelsLoading
+                          ? " Loading models…"
+                          : ""}
                   </p>
                 </div>
                 <div className={styles.cursorDeploy}>

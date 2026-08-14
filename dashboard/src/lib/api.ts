@@ -627,7 +627,24 @@ export interface CursorConnectionStatus {
   agent_backend?: AgentBackend;
   default_agent_backend?: AgentBackend;
   valid_backends?: AgentBackend[];
+  agent_model?: string;
+  default_agent_model?: string;
   cursor_model?: string;
+}
+
+export interface CursorModel {
+  id: string;
+  display_name: string;
+  description?: string | null;
+  aliases?: string[];
+  default_params?: { id: string; value: string }[] | null;
+}
+
+export interface CursorModelsResponse {
+  connected: boolean;
+  models: CursorModel[];
+  note?: string;
+  error?: string;
 }
 
 export type AgentBackend = "cursor_cloud" | "cursor_local" | "local";
@@ -701,6 +718,7 @@ export async function fetchCursorUsage(): Promise<CursorUsage> {
 export async function updateAgentBackend(agentBackend: AgentBackend): Promise<{
   agent_backend: AgentBackend;
   valid_backends: AgentBackend[];
+  agent_model?: string;
 }> {
   const res = await fetch(`${apiUrl()}/api/settings/factory/agent-backend`, {
     method: "PUT",
@@ -710,6 +728,34 @@ export async function updateAgentBackend(agentBackend: AgentBackend): Promise<{
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Failed to update agent backend");
+  }
+  return res.json();
+}
+
+export async function updateAgentModel(agentModel: string): Promise<{
+  agent_model: string;
+  default_agent_model?: string;
+}> {
+  const res = await fetch(`${apiUrl()}/api/settings/factory/agent-model`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({ agent_model: agentModel }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update agent model");
+  }
+  return res.json();
+}
+
+export async function fetchCursorModels(): Promise<CursorModelsResponse> {
+  const res = await fetch(`${apiUrl()}/api/cursor/models`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to fetch Cursor models");
   }
   return res.json();
 }

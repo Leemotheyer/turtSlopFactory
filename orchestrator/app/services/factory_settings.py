@@ -45,11 +45,26 @@ async def get_agent_backend(session: AsyncSession) -> str:
     return backend
 
 
+async def get_agent_model(session: AsyncSession) -> str:
+    row = await get_or_create_settings_row(session)
+    return row.agent_model or settings.cursor_agent_model
+
+
 async def set_agent_backend(session: AsyncSession, backend: str) -> dict:
     if backend not in VALID_AGENT_BACKENDS:
         raise ValueError(f"agent_backend must be one of: {', '.join(sorted(VALID_AGENT_BACKENDS))}")
     row = await get_or_create_settings_row(session)
     row.agent_backend = backend
+    await session.commit()
+    return await get_factory_settings(session)
+
+
+async def set_agent_model(session: AsyncSession, model: str) -> dict:
+    model_id = model.strip()
+    if not model_id:
+        raise ValueError("agent_model is required")
+    row = await get_or_create_settings_row(session)
+    row.agent_model = model_id
     await session.commit()
     return await get_factory_settings(session)
 
@@ -115,6 +130,7 @@ async def get_setup_status(session: AsyncSession, request: Request | None = None
         "cursor_connected": cursor is not None,
         "agent_backend": await get_agent_backend(session),
         "valid_backends": sorted(VALID_AGENT_BACKENDS),
+        "agent_model": await get_agent_model(session),
         "auto_configured": {
             "encryption_key": not bool(settings.secrets_encryption_key),
             "database": True,
@@ -129,7 +145,9 @@ async def get_factory_settings(session: AsyncSession, request: Request | None = 
         "agent_backend": status["agent_backend"],
         "default_agent_backend": settings.agent_backend,
         "valid_backends": status["valid_backends"],
-        "cursor_model": settings.cursor_agent_model,
+        "agent_model": await get_agent_model(session),
+        "default_agent_model": settings.cursor_agent_model,
+        "cursor_model": await get_agent_model(session),
         "preview_host": status["preview_host"],
         "setup_complete": status["setup_complete"],
     }

@@ -10,6 +10,7 @@ from app.services.factory_settings import (
     get_public_config,
     get_setup_status,
     set_agent_backend,
+    set_agent_model,
     set_instance_api_key,
     set_preview_host,
 )
@@ -20,6 +21,10 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 class AgentBackendRequest(BaseModel):
     agent_backend: str
+
+
+class AgentModelRequest(BaseModel):
+    agent_model: str
 
 
 class PreviewHostRequest(BaseModel):
@@ -68,6 +73,16 @@ async def update_agent_backend(
 ) -> dict:
     try:
         result = await set_agent_backend(db, body.agent_backend)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    pipeline_executor.runner.invalidate_settings_cache()
+    return result
+
+
+@router.put("/factory/agent-model")
+async def update_agent_model(body: AgentModelRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        result = await set_agent_model(db, body.agent_model)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     pipeline_executor.runner.invalidate_settings_cache()
