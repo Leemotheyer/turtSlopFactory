@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db_models import EnvRequirementRow, ProjectSecretRow
 from app.events import event_bus
 from app.models import EventType, FactoryEvent, NotificationType
@@ -65,6 +66,38 @@ async def request_env_var(
         ),
     )
     return row
+
+
+def _is_invalid_work_branch(work_branch: str | None) -> bool:
+    """Detect branches created before the project id was assigned."""
+    return bool(work_branch and work_branch.rsplit("-", 1)[-1].lower() == "none")
+
+
+async def get_github_token(session: AsyncSession, project_id: UUID) -> str | None:
+    """Project secret first, then factory-wide env / local.env."""
+    import os
+
+    secrets = await get_secrets_for_runtime(session, project_id)
+    token = secrets.get("GITHUB_TOKEN")
+    if token:
+        return token
+    return os.environ.get("GITHUB_TOKEN") or settings.github_token
+
+
+async def maybe_request_github_token(session: AsyncSession, project_id: UUID, setup_message: str) -> None:
+    if "GITHUB_TOKEN" not in setup_message:
+        return
+    if await get_github_token(session, project_id):
+        return
+    await request_env_var(
+        session,
+        project_id,
+        "GITHUB_TOKEN",
+        "GitHub personal access token with repo push access. "
+        "Create one at https://github.com/settings/tokens (classic: repo scope). "
+        "Or set GITHUB_TOKEN in your factory local.env for all projects.",
+        requested_by="factory",
+    )
 
 
 async def set_secret(

@@ -8,7 +8,7 @@ from app.database import get_db
 from app.db_models import DeploymentRow, ProjectRow
 from app.models import Deployment, ProjectState
 from app.services.git_branching import merge_work_branch_to_base, resolve_branch_plan
-from app.services.secrets import get_secrets_for_runtime
+from app.services.secrets import get_github_token, maybe_request_github_token
 from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
 from app.services.factory_settings import get_preview_host
@@ -133,14 +133,13 @@ async def merge_to_main(project_id: UUID, db: AsyncSession = Depends(get_db)) ->
     if not plan.work_branch:
         raise HTTPException(status_code=400, detail="No factory work branch configured")
 
-    secrets = await get_secrets_for_runtime(db, project_id)
     success, message = await merge_work_branch_to_base(
         workspace,
         project_id,
         row.repo_url,
         plan.base_branch,
         plan.work_branch,
-        github_token=secrets.get("GITHUB_TOKEN"),
+        github_token=await get_github_token(db, project_id),
     )
     workspace.append_log(project_id, "pipeline.log", f"[merge] {message}")
 

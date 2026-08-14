@@ -22,7 +22,7 @@ from app.models import (
     TaskStatus,
 )
 from app.services.git_branching import apply_isolated_branch_fields, setup_project_branches
-from app.services.secrets import get_secrets_for_runtime
+from app.services.secrets import get_github_token, maybe_request_github_token
 from app.workspace.provisioner import normalize_repo_url
 from app.worker import pipeline_queue
 from app.state_machine import StateMachineError, advance_project, fail_project
@@ -97,21 +97,23 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
         merge_status="pending" if repo_url and body.isolate_branch else None,
         state=ProjectState.REQUESTED.value,
     )
-    if repo_url:
-        apply_isolated_branch_fields(row)
     db.add(row)
     await db.commit()
     await db.refresh(row)
 
     if repo_url:
-        secrets = await get_secrets_for_runtime(db, row.id)
+        apply_isolated_branch_fields(row)
+        await db.commit()
+        await db.refresh(row)
+
         message = await setup_project_branches(
             workspace,
             row,
-            github_token=secrets.get("GITHUB_TOKEN"),
+            github_token=await get_github_token(db, row.id),
         )
         await db.commit()
         workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
+        await maybe_request_github_token(db, row.id, message)
 
     await event_bus.publish(
         db,
@@ -210,15 +212,15 @@ async def update_project(
 
     setup_needed = repo_changed or branch_settings_changed
     if row.repo_url and setup_needed:
-        secrets = await get_secrets_for_runtime(db, row.id)
         message = await setup_project_branches(
             workspace,
             row,
-            github_token=secrets.get("GITHUB_TOKEN"),
+            github_token=await get_github_token(db, row.id),
             force_reclone=repo_changed,
         )
         await db.commit()
         workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
+        await maybe_request_github_token(db, row.id, message)
     elif repo_changed and not row.repo_url:
         workspace.append_log(row.id, "pipeline.log", "[setup] GitHub repository unlinked")
 

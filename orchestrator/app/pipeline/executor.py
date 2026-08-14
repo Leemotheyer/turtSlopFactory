@@ -19,7 +19,7 @@ from app.services.input_requests import create_input_request, get_input_response
 from app.services.notifications import create_notification
 from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
-from app.services.secrets import get_env_status_for_agents, get_secrets_for_runtime, request_env_var
+from app.services.secrets import get_env_status_for_agents, get_github_token, get_secrets_for_runtime, maybe_request_github_token, request_env_var
 from app.services.factory_settings import get_preview_host
 from app.services.agent_concurrency import concurrency_budget_to_dict, resolve_concurrency_budget
 from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
@@ -267,14 +267,14 @@ class PipelineExecutor:
                 await self._refresh_context(session, project, context)
 
                 if project.repo_url:
-                    secrets = await get_secrets_for_runtime(session, project_id)
                     setup_msg = await setup_project_branches(
                         self.workspace,
                         project,
-                        github_token=secrets.get("GITHUB_TOKEN"),
+                        github_token=await get_github_token(session, project_id),
                     )
                     await session.commit()
                     self.workspace.append_log(project_id, "pipeline.log", f"[setup] {setup_msg}")
+                    await maybe_request_github_token(session, project_id, setup_msg)
                     await self._refresh_context(session, project, context)
 
                 discovery = await get_discovery(session, project_id)

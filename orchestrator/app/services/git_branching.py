@@ -17,6 +17,11 @@ _BRANCH_SLUG = re.compile(r"[^a-z0-9]+")
 _UNSET = object()
 
 
+def _is_invalid_work_branch(work_branch: str | None) -> bool:
+    """Detect branches created before the project id was assigned."""
+    return bool(work_branch and work_branch.rsplit("-", 1)[-1].lower() == "none")
+
+
 @dataclass
 class BranchPlan:
     base_branch: str
@@ -193,7 +198,9 @@ def apply_isolated_branch_fields(
     if row.isolate_branch:
         base = (row.base_branch or "main").strip() or "main"
         row.base_branch = base
-        if not row.work_branch:
+        if not row.work_branch or _is_invalid_work_branch(row.work_branch):
+            if row.id is None:
+                raise ValueError("Project id is required before generating a work branch")
             row.work_branch = generate_work_branch(row.name, row.id)
         row.branch = row.work_branch
         if row.merge_status is None:

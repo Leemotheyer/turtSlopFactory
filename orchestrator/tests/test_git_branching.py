@@ -70,6 +70,21 @@ def test_apply_isolated_branch_fields_generates_work_branch():
     assert row.merge_status == "pending"
 
 
+def test_apply_isolated_branch_fields_requires_id_for_work_branch():
+    row = _row(work_branch=None)
+    row.id = None
+    import pytest
+
+    with pytest.raises(ValueError, match="Project id is required"):
+        apply_isolated_branch_fields(row)
+
+
+def test_apply_isolated_branch_fields_repairs_invalid_work_branch():
+    row = _row(work_branch="factory/invoice-app-None")
+    apply_isolated_branch_fields(row)
+    assert row.work_branch == "factory/invoice-app-12345678"
+
+
 def test_apply_isolated_branch_fields_clears_on_unlink():
     row = _row()
     apply_isolated_branch_fields(row, repo_url=None)

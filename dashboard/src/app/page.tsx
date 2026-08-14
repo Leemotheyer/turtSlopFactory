@@ -1844,6 +1844,9 @@ export default function DashboardPage() {
                     <p className={styles.guidanceHint}>
                       Secrets are encrypted at rest. Agents see key names only — never values.
                       Set variables here; they are injected at staging deploy time.
+                      For GitHub push access, add <strong>GITHUB_TOKEN</strong> (classic PAT with{" "}
+                      <code>repo</code> scope) or set it once in your factory{" "}
+                      <code>local.env</code>.
                     </p>
 
                     {(secrets?.pending_requirements.length ?? 0) > 0 && (

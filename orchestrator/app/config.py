@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # Agent backend: cursor_cloud (default), cursor_local, or local (deterministic scaffold)
     agent_backend: str = "cursor_cloud"
     cursor_api_key: str | None = None  # Fallback when no dashboard connection
+    github_token: str | None = None  # Factory-wide GitHub PAT for pushing branches (or use project secret)
     cursor_agent_model: str = "composer-2"
     cursor_cloud_poll_seconds: float = 5.0
     cursor_cloud_timeout_seconds: int = 3600
