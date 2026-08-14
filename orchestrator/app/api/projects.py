@@ -1,12 +1,12 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.db_models import ProjectRow, TaskRow
+from app.db_models import DeploymentRow, ProjectRow, TaskRow
 from app.events import event_bus
 from app.models import (
     AgentRole,
@@ -137,6 +137,28 @@ async def get_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -> P
     meta = workspace.load_metadata(project_id)
     preview_url = meta.get("preview_url") or meta.get("staging_url")
     return _project_from_row(row, preview_url=preview_url)
+
+
+@router.delete("/{project_id}", status_code=204)
+async def delete_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -> Response:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await db.execute(delete(DeploymentRow).where(DeploymentRow.project_id == project_id))
+    await db.delete(row)
+    await db.commit()
+
+    await event_bus.publish(
+        db,
+        FactoryEvent(
+            type=EventType.STATE_TRANSITION,
+            project_id=project_id,
+            payload={"action": "deleted"},
+        ),
+    )
+
+    return Response(status_code=204)
 
 
 @router.patch("/{project_id}", response_model=Project)

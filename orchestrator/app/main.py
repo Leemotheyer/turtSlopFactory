@@ -10,6 +10,7 @@ from app.api import github as github_api
 from app.api import discovery as discovery_api
 from app.api import events as events_api
 from app.api import feedback as feedback_api
+from app.api import items as items_api
 from app.api import notifications as notifications_api
 from app.api import pipeline as pipeline_api
 from app.api import projects as projects_api
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
     app.include_router(projects_api.router, prefix="/api")
+    app.include_router(items_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(events_api.router, prefix="/api")
     app.include_router(pipeline_api.router, prefix="/api")
