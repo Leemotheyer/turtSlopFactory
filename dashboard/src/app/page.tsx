@@ -1082,7 +1082,8 @@ export default function DashboardPage() {
                   <h4>GitHub</h4>
                   <p className={styles.cursorBackendHint}>
                     One token for the whole factory — used to push isolated work branches to GitHub.
-                    Stored encrypted on the server, like your Cursor API key.
+                    Use a <strong>classic PAT</strong> with the <strong>repo</strong> scope, or a
+                    fine-grained PAT with <strong>Contents: Read and write</strong> on your repositories.
                   </p>
                   {setupStatus?.github_token_configured ? (
                     <div className={styles.cursorAccount}>
@@ -1114,7 +1115,7 @@ export default function DashboardPage() {
                         rel="noreferrer"
                         className={styles.cursorDocsLink}
                       >
-                        Create classic PAT with repo scope ↗
+                        Create classic PAT (enable repo scope) ↗
                       </a>
                       <form className={styles.cursorConnect} onSubmit={handleConnectGithub}>
                         <input

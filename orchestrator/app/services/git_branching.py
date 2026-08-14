@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 from app.db_models import ProjectRow
+from app.services.github_connection import _explain_push_denial, verify_repo_push_access
 from app.workspace.manager import WorkspaceManager
 from app.workspace.provisioner import normalize_repo_url, provision_repo
 
@@ -82,6 +83,12 @@ async def ensure_work_branch(
     repo_path = workspace.repo_dir(project_id)
     auth_url = _auth_repo_url(repo_url, github_token)
 
+    push_warning: str | None = None
+    if github_token:
+        push_check = await verify_repo_push_access(github_token, repo_url)
+        if not push_check.get("can_push"):
+            push_warning = str(push_check.get("message"))
+
     def _run() -> str:
         if not (repo_path / ".git").exists():
             return "Repository not initialized in workspace"
@@ -103,11 +110,14 @@ async def ensure_work_branch(
         if checkout.returncode != 0:
             return f"Could not check out work branch {work_branch}: {checkout.stderr[:400]}"
 
+        if push_warning:
+            return f"Checked out {work_branch} locally; {push_warning}"
+
         push = _run_git(repo_path, "push", "-u", "origin", work_branch)
         if push.returncode == 0:
             return f"Working on factory branch {work_branch} (based on {base_branch})"
         if github_token:
-            return f"Checked out {work_branch} locally; push failed: {push.stderr[:200]}"
+            return f"Checked out {work_branch} locally; {_explain_push_denial(push.stderr, repo_url)}"
         return (
             f"Checked out {work_branch} locally. Add GITHUB_TOKEN secret to push the branch to GitHub."
         )
