@@ -165,16 +165,21 @@ async def _build_ephemeral_image(
     image_tag: str,
     log_path: Path,
 ) -> tuple[bool, str]:
+    repo_path = repo_path.resolve()
     dockerfile = repo_path / "Dockerfile"
+    context = str(repo_path)
     label_args = _build_label_args(project_id, ephemeral=True)
 
-    if dockerfile.exists():
+    # Use project Dockerfile only when present and non-empty; always pass absolute context.
+    if dockerfile.is_file() and dockerfile.stat().st_size > 0:
         code, output = await _run_docker(
             "build",
             "-t",
             image_tag,
+            "-f",
+            str(dockerfile),
             *label_args,
-            ".",
+            context,
             log_path=log_path,
         )
     else:
@@ -185,7 +190,7 @@ async def _build_ephemeral_image(
             "-f",
             "-",
             *label_args,
-            str(repo_path),
+            context,
             stdin=_DEFAULT_DOCKERFILE.encode(),
             log_path=log_path,
         )

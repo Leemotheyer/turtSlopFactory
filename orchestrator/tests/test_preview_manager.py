@@ -67,6 +67,30 @@ async def test_start_dev_preview_builds_and_runs_without_mount(tmp_path):
     assert run.await_args.kwargs.get("ephemeral") is True
 
 
+@pytest.mark.asyncio
+async def test_build_ephemeral_image_uses_absolute_dockerfile_path(tmp_path):
+    from app.services.preview_manager import _build_ephemeral_image, dev_preview_image_tag
+
+    project_id = uuid4()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    (repo / "requirements.txt").write_text("fastapi\n")
+
+    with patch("app.services.preview_manager._run_docker", new_callable=AsyncMock) as run:
+        run.return_value = (0, "ok")
+        ok, msg = await _build_ephemeral_image(
+            project_id, repo, dev_preview_image_tag(project_id), tmp_path / "build.log"
+        )
+
+    assert ok is True
+    args = run.await_args.args
+    assert "-f" in args
+    assert str(repo / "Dockerfile") in args
+    assert str(repo.resolve()) in args
+    assert "." not in args
+
+
 def test_update_preview_metadata_stores_ephemeral_image():
     project_id = uuid4()
     meta = {}

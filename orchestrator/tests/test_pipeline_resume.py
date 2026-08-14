@@ -50,5 +50,5 @@ async def test_ensure_runnable_app_repairs_broken_main(workspace):
 
     await executor._ensure_runnable_app(project)
 
-    assert await executor._app_imports_cleanly(repo)
+    assert executor._app_source_valid(repo)
     assert (repo / "tests" / "test_app.py").exists()
