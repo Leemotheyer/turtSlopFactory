@@ -1,7 +1,8 @@
 # turtSlopFactory — all-in-one image (API, worker, dashboard, gateway, postgres, redis)
 # syntax=docker/dockerfile:1
 
-FROM node:22-alpine AS dashboard-build
+# Build dashboard on Debian/glibc — must match the runtime image (not Alpine/musl).
+FROM node:22-bookworm-slim AS dashboard-build
 WORKDIR /app
 COPY dashboard/package.json dashboard/package-lock.json* ./
 RUN npm install
@@ -23,15 +24,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     docker.io \
+    git \
     postgresql \
     postgresql-client \
     redis-server \
+    redis-tools \
     supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 ARG CADDY_VERSION=2.9.1
-RUN curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" \
-    | tar -xz -C /usr/bin caddy
+ARG TARGETARCH
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) CADDY_ARCH=amd64 ;; \
+      arm64) CADDY_ARCH=arm64 ;; \
+      arm) CADDY_ARCH=armv7 ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_${CADDY_ARCH}.tar.gz" \
+      | tar -xz -C /usr/bin caddy; \
+    caddy version
 
 RUN pip install --no-cache-dir hatchling
 
@@ -45,14 +57,19 @@ COPY --from=dashboard-build /app/.next/standalone /dashboard/
 COPY --from=dashboard-build /app/.next/static /dashboard/.next/static
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
-RUN node --version
+RUN node --version \
+    && test -x /usr/bin/git \
+    && test -x /usr/bin/redis-cli \
+    && test -x /usr/bin/pg_isready
 
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 COPY deploy/entrypoint.sh /entrypoint.sh
 COPY deploy/wait-for-services.sh /deploy/wait-for-services.sh
+COPY deploy/start-postgres.sh /deploy/start-postgres.sh
+COPY deploy/healthcheck.sh /deploy/healthcheck.sh
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/factory.conf
 
-RUN chmod +x /entrypoint.sh /deploy/wait-for-services.sh
+RUN chmod +x /entrypoint.sh /deploy/wait-for-services.sh /deploy/start-postgres.sh /deploy/healthcheck.sh
 
 ENV FACTORY_DATA=/data \
     FACTORY_CONFIG_DIR=/data/config \
@@ -66,7 +83,7 @@ ENV FACTORY_DATA=/data \
 EXPOSE 80
 EXPOSE 9010-9039
 
-HEALTHCHECK --interval=10s --timeout=5s --retries=6 --start-period=45s \
-    CMD curl -fsS http://127.0.0.1/health || exit 1
+HEALTHCHECK --interval=15s --timeout=5s --retries=8 --start-period=90s \
+    CMD /deploy/healthcheck.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -3,18 +3,19 @@ set -euo pipefail
 
 DATA_ROOT="${FACTORY_DATA:-/data}"
 export PGDATA="${DATA_ROOT}/postgres"
-PG_BIN="/usr/lib/postgresql/15/bin"
+PG_MAJOR="$(ls /usr/lib/postgresql | sort -V | tail -1)"
+PG_BIN="/usr/lib/postgresql/${PG_MAJOR}/bin"
 
 mkdir -p "${DATA_ROOT}/config" "${DATA_ROOT}/workspaces" "${DATA_ROOT}/postgres" "${DATA_ROOT}/redis"
 
 # Upgrade legacy layout: /data/factory -> /data/config
 if [ -d "${DATA_ROOT}/factory" ] && [ ! -e "${DATA_ROOT}/config/encryption.key" ] && [ ! -e "${DATA_ROOT}/config/local.env" ]; then
   echo "Migrating ${DATA_ROOT}/factory -> ${DATA_ROOT}/config"
-  cp -an "${DATA_ROOT}/factory/." "${DATA_ROOT}/config/" 2>/dev/null || true
+  cp -a "${DATA_ROOT}/factory/." "${DATA_ROOT}/config/" 2>/dev/null || true
 fi
 
 if [ ! -f "${PGDATA}/PG_VERSION" ]; then
-  echo "Initializing PostgreSQL in ${PGDATA}..."
+  echo "Initializing PostgreSQL ${PG_MAJOR} in ${PGDATA}..."
   chown -R postgres:postgres "${PGDATA}"
   su postgres -s /bin/bash -c "${PG_BIN}/initdb -D '${PGDATA}'"
   {

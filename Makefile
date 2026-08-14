@@ -36,3 +36,6 @@ dev-dashboard:
 
 build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+
+verify-deploy:
+	./scripts/verify-deploy.sh

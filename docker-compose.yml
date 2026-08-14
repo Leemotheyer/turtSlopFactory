@@ -29,8 +29,8 @@ services:
       - "${HTTP_PORT:-8044}:80"
       - "9010-9039:9010-9039"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/health"]
-      interval: 10s
+      test: ["CMD", "/deploy/healthcheck.sh"]
+      interval: 15s
       timeout: 5s
-      retries: 6
-      start_period: 45s
+      retries: 8
+      start_period: 90s
