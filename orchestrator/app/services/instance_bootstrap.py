@@ -95,6 +95,8 @@ async def _ensure_factory_settings_columns() -> None:
         ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS agent_models JSONB"),
         ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS max_parallel_agents INTEGER"),
         ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS cursor_concurrent_limit INTEGER"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS encrypted_github_token TEXT"),
+        ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS github_login VARCHAR(255)"),
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS base_branch VARCHAR(64) DEFAULT 'main'"),
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS work_branch VARCHAR(255)"),
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS isolate_branch BOOLEAN DEFAULT TRUE"),

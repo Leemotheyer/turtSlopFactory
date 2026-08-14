@@ -103,6 +103,8 @@ class FactorySettingsRow(Base):
     cursor_concurrent_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preview_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encrypted_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_github_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    github_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
     setup_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

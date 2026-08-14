@@ -213,6 +213,10 @@ export interface SetupStatus extends PublicConfig {
   dashboard_port: number;
   api_key_configured: boolean;
   cursor_connected: boolean;
+  github_token_configured?: boolean;
+  github_login?: string | null;
+  masked_github_token?: string | null;
+  github_token_source?: string | null;
   agent_backend: AgentBackend;
   valid_backends: AgentBackend[];
   auto_configured: {
@@ -401,6 +405,48 @@ export async function verifyFactoryApiKey(apiKey: string): Promise<{ verified: b
     throw new Error(await parseApiError(res, "Factory API key was not accepted"));
   }
   return res.json();
+}
+
+export interface GitHubConnectionStatus {
+  connected: boolean;
+  verified?: boolean;
+  message?: string;
+  github_login?: string | null;
+  masked_github_token?: string | null;
+  source?: string;
+}
+
+export async function fetchGithubStatus(): Promise<GitHubConnectionStatus> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/github/status`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to fetch GitHub status"));
+  }
+  return res.json();
+}
+
+export async function connectGithubToken(token: string): Promise<GitHubConnectionStatus> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/github/connect`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to connect GitHub"));
+  }
+  return res.json();
+}
+
+export async function disconnectGithubToken(): Promise<void> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/github/disconnect`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to disconnect GitHub"));
+  }
 }
 
 function headers(overrideApiKey?: string | null): HeadersInit {

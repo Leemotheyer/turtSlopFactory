@@ -74,14 +74,14 @@ def _is_invalid_work_branch(work_branch: str | None) -> bool:
 
 
 async def get_github_token(session: AsyncSession, project_id: UUID) -> str | None:
-    """Project secret first, then factory-wide env / local.env."""
-    import os
+    """Project secret first, then factory-stored token, then env."""
+    from app.services.github_connection import resolve_github_token
 
     secrets = await get_secrets_for_runtime(session, project_id)
     token = secrets.get("GITHUB_TOKEN")
     if token:
         return token
-    return os.environ.get("GITHUB_TOKEN") or settings.github_token
+    return await resolve_github_token(session)
 
 
 async def maybe_request_github_token(session: AsyncSession, project_id: UUID, setup_message: str) -> None:
@@ -95,7 +95,7 @@ async def maybe_request_github_token(session: AsyncSession, project_id: UUID, se
         "GITHUB_TOKEN",
         "GitHub personal access token with repo push access. "
         "Create one at https://github.com/settings/tokens (classic: repo scope). "
-        "Or set GITHUB_TOKEN in your factory local.env for all projects.",
+        "Or connect GitHub in the Cursor menu (factory-wide).",
         requested_by="factory",
     )
 

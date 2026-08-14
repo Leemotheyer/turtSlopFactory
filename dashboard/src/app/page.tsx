@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   addNote,
   connectCursor,
+  connectGithubToken,
+  disconnectGithubToken,
   createProject,
   updateProjectRepo,
   fetchGithubRepos,
@@ -147,12 +149,17 @@ export default function DashboardPage() {
   const [cursorStatus, setCursorStatus] = useState<CursorConnectionStatus | null>(null);
   const [cursorUsage, setCursorUsage] = useState<CursorUsage | null>(null);
   const [cursorApiKey, setCursorApiKey] = useState("");
+  const [githubApiKey, setGithubApiKey] = useState("");
   const [cursorLoading, setCursorLoading] = useState(false);
   const [cursorFeedback, setCursorFeedback] = useState<{
     type: "success" | "error" | "info";
     message: string;
   } | null>(null);
   const [factoryKeyFeedback, setFactoryKeyFeedback] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+  const [githubFeedback, setGithubFeedback] = useState<{
     type: "success" | "error" | "info";
     message: string;
   } | null>(null);
@@ -570,6 +577,41 @@ export default function DashboardPage() {
     await markAllNotificationsRead();
     setUnreadCount(0);
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  }
+
+  async function handleConnectGithub(e: React.FormEvent) {
+    e.preventDefault();
+    if (!githubApiKey.trim()) return;
+    setCursorLoading(true);
+    setGithubFeedback({ type: "info", message: "Verifying GitHub token…" });
+    try {
+      const status = await connectGithubToken(githubApiKey);
+      setGithubApiKey("");
+      setGithubFeedback({
+        type: "success",
+        message: status.message ?? `GitHub connected as ${status.github_login ?? "user"}.`,
+      });
+      await loadSetup();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to connect GitHub";
+      setGithubFeedback({ type: "error", message });
+      setError(message);
+    } finally {
+      setCursorLoading(false);
+    }
+  }
+
+  async function handleDisconnectGithub() {
+    setCursorLoading(true);
+    try {
+      await disconnectGithubToken();
+      setGithubFeedback({ type: "success", message: "GitHub token removed." });
+      await loadSetup();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect GitHub");
+    } finally {
+      setCursorLoading(false);
+    }
   }
 
   async function handleConnectCursor(e: React.FormEvent) {
@@ -1036,6 +1078,73 @@ export default function DashboardPage() {
                     <p className={styles.cursorBackendHint}>{cursorStatus.concurrency.strategy}</p>
                   </div>
                 )}
+                <div className={styles.cursorDeploy}>
+                  <h4>GitHub</h4>
+                  <p className={styles.cursorBackendHint}>
+                    One token for the whole factory — used to push isolated work branches to GitHub.
+                    Stored encrypted on the server, like your Cursor API key.
+                  </p>
+                  {setupStatus?.github_token_configured ? (
+                    <div className={styles.cursorAccount}>
+                      <strong>{setupStatus.github_login ?? "GitHub connected"}</strong>
+                      {setupStatus.masked_github_token && setupStatus.masked_github_token !== "env" && (
+                        <span className={styles.cursorKeySaved}>
+                          {setupStatus.masked_github_token} · saved
+                        </span>
+                      )}
+                      {setupStatus.github_token_source === "environment" && (
+                        <span className={styles.cursorKeyName}>Configured via environment variable</span>
+                      )}
+                      {!setupStatus.github_token_source && (
+                        <button
+                          type="button"
+                          className={styles.btnDanger}
+                          onClick={handleDisconnectGithub}
+                          disabled={cursorLoading}
+                        >
+                          Disconnect
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <a
+                        href="https://github.com/settings/tokens"
+                        target="_blank"
+                        rel="noreferrer"
+                        className={styles.cursorDocsLink}
+                      >
+                        Create classic PAT with repo scope ↗
+                      </a>
+                      <form className={styles.cursorConnect} onSubmit={handleConnectGithub}>
+                        <input
+                          type="password"
+                          placeholder="ghp_…"
+                          value={githubApiKey}
+                          onChange={(e) => setGithubApiKey(e.target.value)}
+                          autoComplete="off"
+                          required
+                        />
+                        <button type="submit" className={styles.btnPrimary} disabled={cursorLoading}>
+                          {cursorLoading ? "Verifying…" : "Connect GitHub"}
+                        </button>
+                      </form>
+                    </>
+                  )}
+                  {githubFeedback && (
+                    <div
+                      className={`${styles.feedbackBanner} ${
+                        githubFeedback.type === "success"
+                          ? styles.feedbackSuccess
+                          : githubFeedback.type === "error"
+                            ? styles.feedbackError
+                            : styles.feedbackInfo
+                      }`}
+                    >
+                      {githubFeedback.message}
+                    </div>
+                  )}
+                </div>
                 <div className={styles.cursorDeploy}>
                   <h4>Deployment</h4>
                   <label>
@@ -1843,10 +1952,8 @@ export default function DashboardPage() {
                     <h3>Environment variables</h3>
                     <p className={styles.guidanceHint}>
                       Secrets are encrypted at rest. Agents see key names only — never values.
-                      Set variables here; they are injected at staging deploy time.
-                      For GitHub push access, add <strong>GITHUB_TOKEN</strong> (classic PAT with{" "}
-                      <code>repo</code> scope) or set it once in your factory{" "}
-                      <code>local.env</code>.
+                      For GitHub push access, connect GitHub once in the Cursor menu (factory-wide).
+                      Per-project overrides are still supported here if needed.
                     </p>
 
                     {(secrets?.pending_requirements.length ?? 0) > 0 && (

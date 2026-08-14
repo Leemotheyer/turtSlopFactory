@@ -165,6 +165,9 @@ async def get_setup_status(session: AsyncSession, request: Request | None = None
         ws_url = f"ws://{host}:{settings.api_port}"
 
     from app.services.instance_auth import api_key_required
+    from app.services.github_connection import get_github_connection_status
+
+    github = await get_github_connection_status(session)
 
     return {
         "setup_complete": row.setup_complete,
@@ -177,6 +180,10 @@ async def get_setup_status(session: AsyncSession, request: Request | None = None
         "api_key_required": api_key_required(),
         "api_key_configured": bool(settings.api_key or row.encrypted_api_key),
         "cursor_connected": cursor is not None,
+        "github_token_configured": github.get("connected", False),
+        "github_login": github.get("github_login"),
+        "masked_github_token": github.get("masked_github_token"),
+        "github_token_source": github.get("source"),
         "agent_backend": await get_agent_backend(session),
         "valid_backends": sorted(VALID_AGENT_BACKENDS),
         "agent_model": (await get_agent_models(session))["developer"],
