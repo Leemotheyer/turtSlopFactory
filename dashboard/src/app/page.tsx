@@ -1003,7 +1003,7 @@ export default function DashboardPage() {
 
   function previewTypeLabel(type: string | null | undefined): string {
     switch (type) {
-      case "dev": return "Development build";
+      case "dev": return "Live source preview";
       case "docker": return "Docker image";
       case "production": return "Production";
       case "simulated": return "Simulated";

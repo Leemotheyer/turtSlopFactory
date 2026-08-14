@@ -63,3 +63,33 @@ async def test_unit_tests_pass(runner, workspace):
     )
     success, output = await runner._tester(project_id, {"test_stage": "unit"})
     assert success, output
+
+
+@pytest.mark.asyncio
+async def test_smoke_uses_factory_preview_upstream(runner, workspace):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    project_id = uuid4()
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"status": "ok"}
+    response.text = '{"status":"ok"}'
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=response)
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = False
+
+    with patch("app.agents.local_runner.httpx.AsyncClient", return_value=mock_client):
+        success, output = await runner._tester(
+            project_id,
+            {
+                "test_stage": "smoke",
+                "preview_upstream": "http://factory-live-abcd1234:8080",
+                "preview_health_path": "/health",
+            },
+        )
+
+    assert success, output
+    mock_client.get.assert_awaited()
+    assert mock_client.get.await_args.args[0] == "http://factory-live-abcd1234:8080/health"

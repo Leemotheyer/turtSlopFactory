@@ -43,8 +43,9 @@ def preview_upstream(project_id: UUID, meta: dict[str, Any]) -> str | None:
         from app.services.preview_manager import preview_container_name
 
         container = preview_container_name(project_id)
+    port = int(meta.get("preview_app_port") or 8080)
     if container:
-        return f"http://{container}:8080"
+        return f"http://{container}:{port}"
     return None
 
 
@@ -81,6 +82,9 @@ def update_preview_metadata(
     container_name: str | None = None,
     process_id: str | None = None,
     ephemeral_image: str | None = None,
+    health_path: str | None = None,
+    app_port: int | None = None,
+    failure_kind: str | None = None,
 ) -> dict[str, Any]:
     url = build_preview_url(project_id, origin=origin, host=host)
     meta["preview_url"] = url
@@ -92,7 +96,12 @@ def update_preview_metadata(
         meta["preview_internal_port"] = port
         meta["preview_port"] = port
         meta["staging_port"] = port
+    if health_path:
+        meta["preview_health_path"] = health_path
+    if app_port:
+        meta["preview_app_port"] = app_port
     if status == "running":
+        meta.pop("preview_failure_kind", None)
         if container_id:
             meta["preview_container_id"] = container_id
         if container_name:
@@ -102,6 +111,8 @@ def update_preview_metadata(
         if process_id:
             meta["preview_process_id"] = process_id
     else:
+        if failure_kind:
+            meta["preview_failure_kind"] = failure_kind
         meta.pop("preview_container_id", None)
         meta.pop("preview_container", None)
         meta.pop("preview_ephemeral_image", None)
@@ -129,5 +140,6 @@ def preview_from_metadata(
         "preview_port": port,
         "preview_type": meta.get("preview_type"),
         "preview_status": meta.get("preview_status"),
+        "preview_health_path": meta.get("preview_health_path"),
         "staging_url": url,
     }
