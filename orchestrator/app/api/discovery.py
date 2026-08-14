@@ -10,9 +10,6 @@ from app.services.discovery import get_discovery, run_discovery, submit_intake
 from app.worker import pipeline_queue
 
 router = APIRouter(prefix="/projects", tags=["discovery"])
-
-
-@router.get("/{project_id}/discovery", response_model=DiscoverySession | None)
 async def fetch_discovery(project_id: UUID, db: AsyncSession = Depends(get_db)):
     row = await db.get(ProjectRow, project_id)
     if not row:
@@ -52,6 +49,9 @@ async def submit_discovery_intake(
             detail=f"Project must be awaiting intake, current state: {row.state}",
         )
     try:
-        return await submit_intake(db, project_id, body)
+        session = await submit_intake(db, project_id, body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await pipeline_queue.enqueue_pipeline(project_id)
+    return session

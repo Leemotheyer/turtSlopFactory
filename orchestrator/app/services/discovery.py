@@ -278,4 +278,8 @@ async def auto_submit_expired_intake(session: AsyncSession) -> int:
         count += 1
         logger.info("Auto-submitted intake for project %s", row.project_id)
 
+        from app.worker import pipeline_queue
+
+        await pipeline_queue.enqueue_pipeline(row.project_id)
+
     return count

@@ -34,6 +34,8 @@ import {
   mergeToMain,
   respondToInput,
   runPipeline,
+  resumeSelfPropelled,
+  updateSelfPropelled,
   setSecret,
   submitIntake,
   updateAgentBackend,
@@ -454,6 +456,32 @@ export default function DashboardPage() {
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Merge failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleToggleSelfPropelled(enabled: boolean) {
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await updateSelfPropelled(selectedId, enabled);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update autonomous mode");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResumeSelfPropelled() {
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await resumeSelfPropelled(selectedId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resume iterations");
     } finally {
       setLoading(false);
     }
@@ -1603,6 +1631,16 @@ export default function DashboardPage() {
                       )}
                       {detail.state === "REVIEW" && (
                         <>
+                          {detail.self_propelled_paused_reason && detail.self_propelled_enabled !== false && (
+                            <button
+                              className={styles.btnSecondary}
+                              onClick={handleResumeSelfPropelled}
+                              disabled={loading}
+                              title="Resume autonomous improvement cycles"
+                            >
+                              Resume iterations
+                            </button>
+                          )}
                           {detail.isolate_branch && detail.merge_status !== "merged" && (
                             <button
                               className={styles.btnSecondary}
@@ -1625,12 +1663,55 @@ export default function DashboardPage() {
 
               <div className={styles.meta}>
                 {detail.image_tag && <span>Image: <code>{detail.image_tag}</code></span>}
+                {(detail.self_propelled_iteration ?? 0) > 0 && (
+                  <span className={styles.mergeBadge}>
+                    Iteration {detail.self_propelled_iteration}
+                    {detail.self_propelled_max_iterations
+                      ? ` / ${detail.self_propelled_max_iterations}`
+                      : ""}
+                  </span>
+                )}
+                {detail.self_propelled_enabled === false && (
+                  <span className={styles.stagingBadge}>Autonomous mode off</span>
+                )}
                 {detail.production_url && (
                   <a href={detail.production_url} target="_blank" rel="noreferrer" className={styles.prodLink}>
                     Production ↗
                   </a>
                 )}
               </div>
+
+              <section className={styles.repoPanel}>
+                <div className={styles.repoPanelHeader}>
+                  <div>
+                    <h3>Self-propelled development</h3>
+                    <p className={styles.repoHint}>
+                      When enabled, agents propose improvements after each review cycle and keep
+                      building without you in the loop. Check back anytime — the live preview
+                      updates as they work.
+                    </p>
+                  </div>
+                </div>
+                <label className={styles.repoCheckbox}>
+                  <input
+                    type="checkbox"
+                    checked={detail.self_propelled_enabled !== false}
+                    onChange={(e) => handleToggleSelfPropelled(e.target.checked)}
+                    disabled={loading || detail.pipeline_running}
+                  />
+                  Autonomous improvement iterations
+                </label>
+                {detail.self_propelled_last_improvements &&
+                  detail.self_propelled_last_improvements.length > 0 && (
+                    <ul className={styles.progressList}>
+                      {detail.self_propelled_last_improvements.map((item, i) => (
+                        <li key={i}>
+                          <strong>{item.title}</strong> — {item.description}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </section>
 
               <section className={styles.repoPanel}>
                 <div className={styles.repoPanelHeader}>
@@ -2141,14 +2222,14 @@ export default function DashboardPage() {
               <h2>Welcome to turtSlopFactory</h2>
               <p>
                 Create a project with a natural-language spec. The factory will plan, implement,
-                test, build a Docker image, deploy to staging, and promote to production —
-                autonomously.
+                test, build a Docker image, and keep iterating with self-propelled agents —
+                propose improvements and implement them while you check back on your schedule.
               </p>
               <ol>
                 <li>Describe your app in the sidebar</li>
-                <li>Click <strong>Start pipeline</strong></li>
-                <li>Watch agents work in real time</li>
-                <li>Approve promotion when review passes</li>
+                <li>Complete the quick intake form (or let it auto-submit)</li>
+                <li>Agents build and iterate autonomously — open the live preview anytime</li>
+                <li>Promote to production when you&apos;re happy with the result</li>
               </ol>
             </div>
           )}

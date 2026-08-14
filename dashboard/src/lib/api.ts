@@ -47,6 +47,11 @@ export interface ProjectDetail extends Project {
   pipeline_running: boolean;
   discovery_status: string | null;
   intake_ready: boolean;
+  self_propelled_enabled?: boolean;
+  self_propelled_iteration?: number;
+  self_propelled_max_iterations?: number;
+  self_propelled_paused_reason?: string | null;
+  self_propelled_last_improvements?: { title: string; description: string; category: string }[];
 }
 
 export type IntakeFieldType = "text" | "textarea" | "select" | "multiselect";
@@ -146,7 +151,9 @@ export type NotificationType =
   | "review_ready"
   | "merge_ready"
   | "pipeline_blocked"
-  | "preview_ready";
+  | "preview_ready"
+  | "iteration_update"
+  | "iteration_paused";
 
 export interface Notification {
   id: string;
@@ -599,6 +606,35 @@ export async function runPipeline(projectId: string): Promise<{ status: string }
     headers: headers(),
   });
   if (!res.ok) throw new Error("Failed to start pipeline");
+  return res.json();
+}
+
+export async function updateSelfPropelled(
+  projectId: string,
+  enabled: boolean
+): Promise<{
+  self_propelled_enabled: boolean;
+  self_propelled_iteration: number;
+  self_propelled_max_iterations: number;
+}> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/self-propelled`, {
+    method: "PATCH",
+    headers: headers(),
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error("Failed to update self-propelled setting");
+  return res.json();
+}
+
+export async function resumeSelfPropelled(projectId: string): Promise<{ status: string }> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/self-propelled/resume`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to resume iterations");
+  }
   return res.json();
 }
 

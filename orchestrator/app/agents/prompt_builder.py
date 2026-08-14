@@ -104,6 +104,13 @@ requirements.txt, and pytest tests. Match requirements.md and architecture.md if
             )
         if context.get("incremental") and context.get("last_failure"):
             sections.append(f"\n## Fix previous failure\n{context['last_failure'][:4000]}")
+        iteration_notes = [
+            n for n in notes if n.get("type") == "feature" and "[Iteration" in (n.get("content") or "")
+        ]
+        if iteration_notes:
+            sections.append("\n## Self-propelled improvements (implement these now)")
+            for note in iteration_notes[:6]:
+                sections.append(f"- {note.get('content', '')}")
     elif role == AgentRole.REVIEWER:
         tests_passed = context.get("tests_passed", False)
         sections.append(
