@@ -22,6 +22,7 @@ class ProjectRow(Base):
     isolate_branch: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     merge_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     image_tag: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    max_enrichment_passes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

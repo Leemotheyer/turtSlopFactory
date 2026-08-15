@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.db_models import DeploymentRow, ProjectRow
 from app.models import Deployment, ProjectState
@@ -53,6 +54,15 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         "pipeline_running": pipeline_executor.is_running(project_id),
         "failed_gate": meta.get("failed_gate"),
         "failed_substage": meta.get("failed_substage"),
+        "max_enrichment_passes": row.max_enrichment_passes,
+        "factory_default_enrichment_passes": settings.max_enrichment_passes,
+        "effective_enrichment_passes": (
+            row.max_enrichment_passes
+            if row.max_enrichment_passes is not None
+            else settings.max_enrichment_passes
+        ),
+        "pipeline_substage": meta.get("pipeline_substage"),
+        "enrichment_progress": meta.get("enrichment"),
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "created_at": row.created_at.isoformat(),
