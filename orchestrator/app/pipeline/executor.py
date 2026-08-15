@@ -19,7 +19,20 @@ from app.services.input_requests import create_input_request, get_input_response
 from app.services.notifications import create_notification
 from app.services.notes import get_notes_for_agents
 from app.services.progress import record_progress
-from app.services.secrets import get_env_status_for_agents, get_github_token, get_secrets_for_runtime, maybe_request_github_token, request_env_var
+from app.services.secrets import (
+    get_env_status_for_agents,
+    get_github_token,
+    get_secrets_for_runtime,
+    maybe_request_github_token,
+    request_env_var,
+    scan_and_ensure_env_placeholders,
+    ensure_env_placeholder,
+)
+from app.services.completed_work import (
+    filter_units_for_feedback,
+    load_completed_work,
+    mark_work_unit_complete,
+)
 from app.services.agent_concurrency import (
     concurrency_budget_to_dict,
     resolve_concurrency_budget,
@@ -482,6 +495,53 @@ class PipelineExecutor:
         context["preview_health_path"] = meta.get("preview_health_path") or spec.path
         context["preview_app_port"] = meta.get("preview_app_port") or spec.port
         context["should_stop"] = lambda: self.is_stop_requested(project.id)
+        context["max_enrichment_passes"] = self._resolve_max_enrichment_passes(project)
+        await self._scan_env_placeholders(session, project, context)
+
+    def _resolve_max_enrichment_passes(self, project: ProjectRow) -> int:
+        if project.max_enrichment_passes is not None:
+            return max(0, project.max_enrichment_passes)
+        return settings.max_enrichment_passes
+
+    async def _scan_env_placeholders(
+        self, session: AsyncSession, project: ProjectRow, context: dict
+    ) -> None:
+        texts = [project.description or ""]
+        for note in context.get("notes") or []:
+            texts.append(str(note.get("content") or ""))
+        for artifact in ("requirements.md", "architecture.md"):
+            if artifact in self.workspace.list_artifacts(project.id):
+                texts.append(self.workspace.read_artifact(project.id, artifact) or "")
+        audit = context.get("preview_audit") or {}
+        for issue in audit.get("issues") or []:
+            texts.append(str(issue))
+        configured = set(context.get("env_status", {}).get("configured_keys") or [])
+        created = await scan_and_ensure_env_placeholders(
+            session, project.id, texts, configured_keys=configured
+        )
+        if created:
+            context["env_status"] = await get_env_status_for_agents(session, project.id)
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[secrets] Created placeholder env slot(s): {', '.join(created)}",
+            )
+
+    def _save_pipeline_substage(self, project_id: UUID, payload: dict | None) -> None:
+        meta = self.workspace.load_metadata(project_id)
+        if payload is None:
+            meta.pop("pipeline_substage", None)
+        else:
+            meta["pipeline_substage"] = payload
+        self.workspace.save_metadata(project_id, meta)
+
+    def _save_enrichment_progress(self, project_id: UUID, payload: dict | None) -> None:
+        meta = self.workspace.load_metadata(project_id)
+        if payload is None:
+            meta.pop("enrichment", None)
+        else:
+            meta["enrichment"] = payload
+        self.workspace.save_metadata(project_id, meta)
 
     def _bind_agent_progress(self, project_id: UUID) -> object:
         async def on_agent_progress(
@@ -830,7 +890,9 @@ class PipelineExecutor:
                     return await create_input_request(session, project_id, **kwargs)
 
                 async def request_env(key_name: str, description: str = "", requested_by: str = "agent"):
-                    return await request_env_var(session, project_id, key_name, description, requested_by)
+                    await ensure_env_placeholder(
+                        session, project_id, key_name, description, requested_by=requested_by
+                    )
 
                 context["request_input"] = request_input
                 context["request_env_var"] = request_env
@@ -1103,8 +1165,24 @@ class PipelineExecutor:
     async def _build_work_plan(self, session, project, context: dict) -> tuple[list, dict]:
         budget = await resolve_concurrency_budget(session)
         raw_units = plan_parallel_work(context.get("notes", []), project.description)
+        if context.get("feedback_iteration"):
+            completed = load_completed_work(self.workspace, project.id)
+            repo = self.workspace.repo_dir(project.id)
+            before = len(raw_units)
+            raw_units = filter_units_for_feedback(
+                raw_units, completed=completed, repo=repo
+            )
+            skipped = before - len(raw_units)
+            if skipped:
+                self.workspace.append_log(
+                    project.id,
+                    "pipeline.log",
+                    f"[feedback] Skipping {skipped} already-completed work stream(s)",
+                )
         units = optimize_work_units(raw_units, budget.max_parallel)
         plan = work_plan_to_dict(units, concurrency_budget_to_dict(budget))
+        if not units and context.get("feedback_iteration"):
+            plan["feedback_skip_implementation"] = True
         self.workspace.append_log(
             project.id,
             "pipeline.log",
@@ -1219,7 +1297,7 @@ class PipelineExecutor:
 
         outputs: list[str] = []
         all_ok = True
-        for task_row, success, output, agent_id, cursor_url in results:
+        for (unit, _), (task_row, success, output, agent_id, cursor_url) in zip(task_rows, results):
             await self.complete_task(
                 session,
                 task_row,
@@ -1229,7 +1307,9 @@ class PipelineExecutor:
                 cursor_url=cursor_url,
             )
             outputs.append(output)
-            if not success:
+            if success:
+                mark_work_unit_complete(self.workspace, project.id, unit)
+            else:
                 all_ok = False
 
         combined = "; ".join(outputs)
@@ -1307,7 +1387,7 @@ class PipelineExecutor:
         results = await asyncio.gather(*[run_unit(u, t) for u, t in task_rows])
         outputs: list[str] = []
         all_ok = True
-        for task_row, success, output, agent_id, cursor_url in results:
+        for (unit, _), (task_row, success, output, agent_id, cursor_url) in zip(task_rows, results):
             await self.complete_task(
                 session,
                 task_row,
@@ -1317,7 +1397,9 @@ class PipelineExecutor:
                 cursor_url=cursor_url,
             )
             outputs.append(output)
-            if not success:
+            if success:
+                mark_work_unit_complete(self.workspace, project.id, unit)
+            else:
                 all_ok = False
         return all_ok, "; ".join(outputs)
 
@@ -1341,9 +1423,35 @@ class PipelineExecutor:
         context["max_enrichment_passes"] = max_passes
         context["max_features_per_pass"] = settings.max_features_per_enrichment_pass
 
+        if max_passes <= 0:
+            context[completion_key] = True
+            self._save_enrichment_progress(project.id, None)
+            return True
+
         while passes_done < max_passes:
             pass_number = passes_done + 1
             context["enrichment_pass"] = pass_number
+            self._save_pipeline_substage(
+                project.id,
+                {
+                    "gate": project.state,
+                    "step": "enrichment",
+                    "phase": log_prefix,
+                    "current_pass": pass_number,
+                    "max_passes": max_passes,
+                    "passes_completed": passes_done,
+                },
+            )
+            self._save_enrichment_progress(
+                project.id,
+                {
+                    "phase": log_prefix,
+                    "current_pass": pass_number,
+                    "max_passes": max_passes,
+                    "passes_completed": passes_done,
+                    "status": "auditing",
+                },
+            )
             self.workspace.append_log(
                 project.id,
                 "pipeline.log",
@@ -1352,6 +1460,7 @@ class PipelineExecutor:
 
             audit = await audit_live_preview(context)
             context["preview_audit"] = audit
+            await self._scan_env_placeholders(session, project, context)
             self.workspace.write_artifact(
                 project.id,
                 f"preview-audit-{log_prefix}-pass-{pass_number}.json",
@@ -1386,7 +1495,12 @@ class PipelineExecutor:
             plan = parse_enrichment_plan(plan_raw or run.output)
             used_fallback = False
             if not plan.get("features"):
-                plan = local_enrichment_plan(audit, pass_number, context.get("notes", []))
+                plan = local_enrichment_plan(
+                    audit,
+                    pass_number,
+                    context.get("notes", []),
+                    max_passes=max_passes,
+                )
                 self.workspace.write_artifact(
                     project.id,
                     "enrichment-plan.json",
@@ -1506,6 +1620,16 @@ class PipelineExecutor:
 
             passes_done += 1
             context["enrichment_passes_completed"] = passes_done
+            self._save_enrichment_progress(
+                project.id,
+                {
+                    "phase": log_prefix,
+                    "current_pass": pass_number,
+                    "max_passes": max_passes,
+                    "passes_completed": passes_done,
+                    "status": "complete",
+                },
+            )
             await self._log_progress(
                 session,
                 project.id,
@@ -1515,14 +1639,26 @@ class PipelineExecutor:
             )
 
         context[completion_key] = True
+        self._save_enrichment_progress(project.id, None)
+        self._save_pipeline_substage(project.id, None)
         return True
 
     async def _stage_autonomous_enrichment(self, session, project, context) -> bool:
+        max_passes = self._resolve_max_enrichment_passes(project)
+        if max_passes <= 0:
+            context["enrichment_complete"] = True
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[enrichment] Skipped — project enrichment iterations set to 0",
+            )
+            await self.transition(session, project, advance_project(ProjectState.IMPLEMENTING))
+            return True
         ok = await self._run_enrichment_passes(
             session,
             project,
             context,
-            max_passes=settings.max_enrichment_passes,
+            max_passes=max_passes,
             completion_key="enrichment_complete",
             log_prefix="enrichment",
         )
@@ -1546,6 +1682,24 @@ class PipelineExecutor:
 
     async def _stage_implementing(self, session, project, context) -> bool:
         await self._refresh_context(session, project, context)
+        units, plan, _budget = await self._build_work_plan(session, project, context)
+        context["work_plan"] = plan
+        if not units:
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[feedback] No new implementation work — skipping developer agents",
+            )
+            context["implementation_complete"] = True
+            await self._log_progress(
+                session,
+                project.id,
+                "implementation",
+                "Feedback applied (no new code changes needed)",
+                "All note features were already implemented",
+            )
+            return True
+
         success, output = await self._run_parallel_developers(session, project, context)
         if not success:
             context["last_failure"] = output

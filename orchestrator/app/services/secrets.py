@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import Iterable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from app.db_models import EnvRequirementRow, ProjectSecretRow
 from app.events import event_bus
 from app.models import EventType, FactoryEvent, NotificationType
 from app.services.crypto import decrypt_value, encrypt_value, mask_value
+from app.services.env_detection import detect_env_keys_from_texts
 from app.services.notifications import create_notification
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,74 @@ async def request_env_var(
         ),
     )
     return row
+
+
+def _secret_has_value(encrypted: str) -> bool:
+    try:
+        return bool(decrypt_value(encrypted).strip())
+    except Exception:
+        return False
+
+
+async def ensure_env_placeholder(
+    session: AsyncSession,
+    project_id: UUID,
+    key_name: str,
+    description: str,
+    requested_by: str = "factory",
+) -> None:
+    """Create an empty secret slot + pending requirement so the user can fill the value."""
+    key_name = key_name.upper().strip()
+
+    secret_result = await session.execute(
+        select(ProjectSecretRow).where(
+            ProjectSecretRow.project_id == project_id,
+            ProjectSecretRow.key_name == key_name,
+        )
+    )
+    secret_row = secret_result.scalar_one_or_none()
+    if secret_row and _secret_has_value(secret_row.encrypted_value):
+        return
+
+    if not secret_row:
+        secret_row = ProjectSecretRow(
+            project_id=project_id,
+            key_name=key_name,
+            encrypted_value=encrypt_value(""),
+            description=description,
+        )
+        session.add(secret_row)
+        await session.commit()
+        await session.refresh(secret_row)
+
+    await request_env_var(session, project_id, key_name, description, requested_by=requested_by)
+
+
+async def scan_and_ensure_env_placeholders(
+    session: AsyncSession,
+    project_id: UUID,
+    texts: Iterable[str],
+    *,
+    configured_keys: set[str] | None = None,
+) -> list[str]:
+    """Detect env keys from project text and ensure empty placeholders exist."""
+    configured_keys = configured_keys or set()
+    created: list[str] = []
+    for key_name, description in detect_env_keys_from_texts(texts):
+        if key_name in configured_keys:
+            continue
+        secret_result = await session.execute(
+            select(ProjectSecretRow).where(
+                ProjectSecretRow.project_id == project_id,
+                ProjectSecretRow.key_name == key_name,
+            )
+        )
+        row = secret_result.scalar_one_or_none()
+        if row and _secret_has_value(row.encrypted_value):
+            continue
+        await ensure_env_placeholder(session, project_id, key_name, description)
+        created.append(key_name)
+    return created
 
 
 def _is_invalid_work_branch(work_branch: str | None) -> bool:
@@ -176,14 +246,17 @@ async def list_secrets_public(session: AsyncSession, project_id: UUID) -> dict:
     for row in secrets_result.scalars():
         try:
             plain = decrypt_value(row.encrypted_value)
-            masked = mask_value(plain)
+            needs_value = not plain.strip()
+            masked = "(not set — fill in on Secrets tab)" if needs_value else mask_value(plain)
         except Exception:
+            needs_value = True
             masked = "****"
         secrets.append({
             "key_name": row.key_name,
             "masked_value": masked,
             "description": row.description,
-            "configured": True,
+            "configured": not needs_value,
+            "needs_value": needs_value,
         })
 
     reqs_result = await session.execute(
@@ -205,7 +278,7 @@ async def list_secrets_public(session: AsyncSession, project_id: UUID) -> dict:
     return {
         "secrets": secrets,
         "pending_requirements": pending,
-        "configured_keys": [s["key_name"] for s in secrets],
+        "configured_keys": [s["key_name"] for s in secrets if s.get("configured")],
     }
 
 
@@ -216,7 +289,9 @@ async def get_secrets_for_runtime(session: AsyncSession, project_id: UUID) -> di
     env = {}
     for row in result.scalars():
         try:
-            env[row.key_name] = decrypt_value(row.encrypted_value)
+            value = decrypt_value(row.encrypted_value)
+            if value.strip():
+                env[row.key_name] = value
         except Exception:
             logger.exception("Failed to decrypt %s for project %s", row.key_name, project_id)
     return env

@@ -49,6 +49,7 @@ def _project_from_row(row: ProjectRow, preview_url: str | None = None) -> Projec
         isolate_branch=bool(row.isolate_branch),
         merge_status=row.merge_status,
         image_tag=row.image_tag,
+        max_enrichment_passes=row.max_enrichment_passes,
         preview_url=preview_url,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -100,6 +101,7 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
         base_branch=base,
         isolate_branch=body.isolate_branch if repo_url else False,
         merge_status="pending" if repo_url and body.isolate_branch else None,
+        max_enrichment_passes=body.max_enrichment_passes,
         state=ProjectState.REQUESTED.value,
     )
     db.add(row)
@@ -205,6 +207,12 @@ async def update_project(
     if body.isolate_branch is not None and body.isolate_branch != row.isolate_branch:
         row.isolate_branch = body.isolate_branch
         branch_settings_changed = True
+
+    if body.max_enrichment_passes is not None:
+        passes = body.max_enrichment_passes
+        if passes < 0 or passes > 20:
+            raise HTTPException(status_code=400, detail="max_enrichment_passes must be between 0 and 20")
+        row.max_enrichment_passes = passes
 
     if (
         repo_changed

@@ -146,7 +146,9 @@ def features_to_work_units(
     return units
 
 
-def local_enrichment_plan(audit: dict, pass_number: int, notes: list[dict] | None = None) -> dict:
+def local_enrichment_plan(
+    audit: dict, pass_number: int, notes: list[dict] | None = None, max_passes: int | None = None
+) -> dict:
     """Deterministic fallback when Cursor architect is unavailable."""
     notes = notes or []
     features: list[dict] = []
@@ -180,7 +182,7 @@ def local_enrichment_plan(audit: dict, pass_number: int, notes: list[dict] | Non
             }
         )
 
-    if pass_number >= settings.max_enrichment_passes:
+    if pass_number >= (max_passes if max_passes is not None else settings.max_enrichment_passes):
         return {"features": [], "quality_issues": [], "stop_reason": "max passes"}
 
     # Drop features that duplicate scope_out notes

@@ -412,6 +412,78 @@
   z-index: 1;
 }
 
+.substageTrack,
+.enrichmentPanel,
+.pipelineSettings {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.substageTrack h4,
+.enrichmentPanel h4,
+.pipelineSettings h4 {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+
+.substageSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.substageStep {
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.substageStepActive {
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.substageMeta {
+  margin-left: 0.35rem;
+  opacity: 0.85;
+}
+
+.enrichmentStatus {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.enrichmentHistory {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.pipelineSettingsForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.secretNeedsValue {
+  border-color: #d4a017;
+  background: rgba(212, 160, 23, 0.08);
+}
+
+.secretNeedsHint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: #d4a017;
+}
+
 /* Tables */
 .table { overflow-x: auto; }
 

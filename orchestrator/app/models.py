@@ -47,6 +47,7 @@ class ProjectCreate(BaseModel):
     branch: str = "main"
     base_branch: str | None = None
     isolate_branch: bool = True
+    max_enrichment_passes: int | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -56,6 +57,7 @@ class ProjectUpdate(BaseModel):
     work_branch: str | None = None
     isolate_branch: bool | None = None
     clear_repo: bool = False
+    max_enrichment_passes: int | None = None
 
 
 class Project(BaseModel):
@@ -70,6 +72,7 @@ class Project(BaseModel):
     isolate_branch: bool = True
     merge_status: str | None = None
     image_tag: str | None = None
+    max_enrichment_passes: int | None = None
     preview_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -299,6 +302,9 @@ class ProjectDetail(Project):
     pipeline_running: bool = False
     discovery_status: str | None = None
     intake_ready: bool = False
+    factory_default_enrichment_passes: int = 3
+    pipeline_substage: dict | None = None
+    enrichment_progress: dict | None = None
 
 
 # Valid forward transitions for the happy path
