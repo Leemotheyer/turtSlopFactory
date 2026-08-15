@@ -825,24 +825,27 @@ class PipelineExecutor:
             AgentRole.ARCHITECT, project.id, task.id, str(self.workspace.repo_dir(project.id)), context
         )
         await self.complete_task(session, task, run.success, run.output)
-        if run.success:
-            units, plan, budget = await self._build_work_plan(session, project, context)
-            self.workspace.write_artifact(
-                project.id, "work-plan.json", json.dumps(plan, indent=2)
-            )
-            context["work_plan"] = plan
-            await self._log_progress(
-                session,
-                project.id,
-                "planning",
-                "Architecture planned",
-                (
-                    f"Requirements ready — {len(units)} work stream(s), "
-                    f"up to {budget.max_parallel} parallel agent(s)"
-                ),
-            )
-            await self.transition(session, project, advance_project(ProjectState.PLANNING))
-        return run.success
+        if not run.success:
+            context["last_failure"] = run.output
+            self._persist_last_failure(project.id, context)
+            return False
+        units, plan, budget = await self._build_work_plan(session, project, context)
+        self.workspace.write_artifact(
+            project.id, "work-plan.json", json.dumps(plan, indent=2)
+        )
+        context["work_plan"] = plan
+        await self._log_progress(
+            session,
+            project.id,
+            "planning",
+            "Architecture planned",
+            (
+                f"Requirements ready — {len(units)} work stream(s), "
+                f"up to {budget.max_parallel} parallel agent(s)"
+            ),
+        )
+        await self.transition(session, project, advance_project(ProjectState.PLANNING))
+        return True
 
     async def _run_parallel_developers(
         self, session, project, context: dict

@@ -26,6 +26,33 @@ def test_build_architect_prompt_includes_description():
     assert "MyApp" in prompt
     assert "todo app" in prompt
     assert "requirements.md" in prompt
+    assert "no-repo" in prompt.lower() or "no GitHub repository" in prompt
+    assert "# Requirements" in prompt
+
+
+def test_build_architect_prompt_with_repo_still_asks_for_files():
+    prompt = build_role_prompt(
+        AgentRole.ARCHITECT,
+        {
+            "name": "MyApp",
+            "description": "Build a todo app",
+            "repo_url": "https://github.com/acme/todo",
+        },
+    )
+    assert "Write two markdown files" in prompt
+    assert "requirements.md" in prompt
+
+
+def test_build_architect_prompt_includes_last_failure():
+    prompt = build_role_prompt(
+        AgentRole.ARCHITECT,
+        {
+            "name": "MyApp",
+            "description": "Build a todo app",
+            "last_failure": "Cursor cloud create failed: too many agents",
+        },
+    )
+    assert "too many agents" in prompt
 
 
 def test_build_developer_prompt_forbids_manual_docker():

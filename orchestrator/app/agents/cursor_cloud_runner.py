@@ -13,12 +13,18 @@ from uuid import UUID
 from app.agents.prompt_builder import build_role_prompt
 from app.config import settings
 from app.models import AgentRole
-from app.services.cursor_client import CursorApiError, CursorClient
+from app.services.cursor_client import (
+    CursorApiError,
+    CursorClient,
+    is_cursor_capacity_error,
+    is_cursor_model_error,
+)
 from app.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL_OK = {"FINISHED"}
+_TERMINAL_OK = {"FINISHED", "COMPLETED"}
+_TEXT_ROLES = {AgentRole.ARCHITECT, AgentRole.REVIEWER}
 
 
 def _as_dict(value: object) -> dict:
@@ -46,42 +52,61 @@ class CursorCloudRunner:
         branch = context.get("branch", "main")
         agent_name = f"factory-{role.value}-{str(task_id)[:8]}"
         selected_model = model_id or settings.cursor_agent_model
+        mode = "plan" if role == AgentRole.ARCHITECT else "agent"
 
         repos: list[dict[str, str]] | None = None
         if repo_url:
             repos = [{"url": repo_url, "startingRef": branch}]
 
+        from app.services.agent_concurrency import (
+            invalidate_active_agent_cache,
+            reclaim_idle_factory_agents,
+        )
+
+        try:
+            archived = await reclaim_idle_factory_agents(api_key)
+        except Exception as exc:
+            logger.warning("Could not reclaim idle factory agents: %s", exc)
+            archived = 0
+        if archived:
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[concurrency] Archived {archived} idle factory cloud agent(s) to free account slots",
+            )
+
         async with CursorClient(api_key) as client:
-            try:
-                created = await client.create_agent(
-                    prompt,
-                    name=agent_name,
-                    repos=repos,
-                    model_id=selected_model,
-                )
-            except CursorApiError as exc:
-                if exc.status in (429, 403) or "limit" in exc.message.lower() or "concurrent" in exc.message.lower():
-                    from app.services.agent_concurrency import invalidate_active_agent_cache
+            created, create_error = await _create_agent_with_retries(
+                client,
+                api_key,
+                prompt,
+                name=agent_name,
+                repos=repos,
+                model_id=selected_model,
+                mode=mode,
+            )
+            if created is None:
+                return False, create_error, ""
 
-                    invalidate_active_agent_cache()
-                    return False, f"Cursor cloud capacity unavailable: {exc.message}", ""
-                return False, f"Cursor cloud create failed: {exc.message}", ""
-
-            agent = _as_dict(created.get("agent"))
-            run = _as_dict(created.get("run"))
-            agent_id = agent.get("id") or ""
-            run_id = run.get("id") or agent.get("latestRunId") or ""
+            agent_id, run_id, agent = _parse_created_agent(created)
+            if agent_id and not run_id:
+                try:
+                    detail = await client.get_agent(agent_id)
+                    _, run_id, extra = _parse_created_agent(detail)
+                    if extra.get("url"):
+                        agent["url"] = extra["url"]
+                    if not run_id:
+                        run_id = str(detail.get("latestRunId") or "")
+                except CursorApiError as exc:
+                    return False, f"Cursor cloud create failed: {exc.message}", agent_id
             if not agent_id or not run_id:
-                return False, "Cursor cloud response missing agent/run id", ""
+                return False, "Cursor cloud response missing agent/run id", agent_id
 
             self.workspace.append_log(
                 project_id,
                 "pipeline.log",
                 f"[{role.value}] Cursor cloud agent {agent_id} run {run_id}",
             )
-
-            from app.services.agent_concurrency import invalidate_active_agent_cache
-
             invalidate_active_agent_cache()
 
             try:
@@ -95,14 +120,7 @@ class CursorCloudRunner:
                 return False, str(exc), agent_id
 
             status = (final_run.get("status") or "").upper()
-            result = _as_dict(final_run.get("result"))
-            text = result.get("text") or final_run.get("text") or ""
-            if isinstance(final_run.get("result"), str) and not text:
-                text = str(final_run.get("result"))
-
-            if status not in _TERMINAL_OK:
-                err = result.get("error") or final_run.get("error") or status
-                return False, f"Cursor cloud run {status}: {err}", agent_id
+            text = _run_result_text(final_run)
 
             if repos and repo_url:
                 synced = await self._sync_repo_from_cloud(
@@ -113,6 +131,29 @@ class CursorCloudRunner:
 
             if not repos:
                 self._write_artifacts_from_response(project_id, role, text)
+
+            has_docs = _architect_docs_ready(self.workspace, project_id, role)
+            if status not in _TERMINAL_OK:
+                err = _as_dict(final_run.get("result")).get("error") or final_run.get("error") or status
+                if role in _TEXT_ROLES and (text.strip() or has_docs):
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        f"[{role.value}] Cloud run ended {status}; using reply text anyway",
+                    )
+                else:
+                    return False, f"Cursor cloud run {status}: {err}", agent_id
+
+            if role == AgentRole.ARCHITECT and not repos and not has_docs:
+                if text.strip():
+                    self.workspace.write_artifact(project_id, "requirements.md", text)
+                    has_docs = True
+                else:
+                    return (
+                        False,
+                        "Cursor cloud architect finished without requirements.md / architecture.md in the reply.",
+                        agent_id,
+                    )
 
             agent_url = agent.get("url") or f"https://cursor.com/agents/{agent_id}"
             output = text or f"Cursor cloud agent completed ({agent_url})"
@@ -188,6 +229,79 @@ class CursorCloudRunner:
             return f"Cloned {repo_url} @ {branch} into workspace"
 
         return await asyncio.to_thread(_clone_or_pull)
+
+
+def _parse_created_agent(created: dict) -> tuple[str, str, dict]:
+    agent = _as_dict(created.get("agent"))
+    if not agent and created.get("id"):
+        agent = created
+    run = _as_dict(created.get("run"))
+    agent_id = str(agent.get("id") or created.get("id") or "")
+    run_id = str(run.get("id") or agent.get("latestRunId") or created.get("latestRunId") or "")
+    return agent_id, run_id, agent
+
+
+def _run_result_text(final_run: dict) -> str:
+    result = final_run.get("result")
+    if isinstance(result, str) and result.strip():
+        return result.strip()
+    if isinstance(result, dict):
+        nested = result.get("text") or result.get("result") or result.get("message") or ""
+        if nested:
+            return str(nested).strip()
+    text = final_run.get("text")
+    if text:
+        return str(text).strip()
+    return ""
+
+
+def _architect_docs_ready(workspace: WorkspaceManager, project_id: UUID, role: AgentRole) -> bool:
+    if role != AgentRole.ARCHITECT:
+        return True
+    artifacts = workspace.list_artifacts(project_id)
+    return "requirements.md" in artifacts
+
+
+async def _create_agent_with_retries(
+    client: CursorClient,
+    api_key: str,
+    prompt: str,
+    *,
+    name: str,
+    repos: list[dict[str, str]] | None,
+    model_id: str | None,
+    mode: str,
+) -> tuple[dict | None, str]:
+    from app.services.agent_concurrency import invalidate_active_agent_cache, reclaim_idle_factory_agents
+
+    current_model = model_id
+    for attempt in range(3):
+        try:
+            created = await client.create_agent(
+                prompt,
+                name=name,
+                repos=repos,
+                model_id=current_model,
+                mode=mode,
+            )
+            return created, ""
+        except CursorApiError as exc:
+            if is_cursor_capacity_error(exc) and attempt == 0:
+                invalidate_active_agent_cache()
+                try:
+                    await reclaim_idle_factory_agents(api_key, keep_recent=0)
+                except Exception:
+                    logger.warning("Retry reclaim after capacity error failed", exc_info=True)
+                continue
+            if is_cursor_model_error(exc) and current_model and attempt < 2:
+                logger.warning("Cursor rejected model %s (%s); retrying with account default", current_model, exc.message)
+                current_model = None
+                continue
+            if is_cursor_capacity_error(exc):
+                invalidate_active_agent_cache()
+                return None, f"Cursor cloud capacity unavailable: {exc.message}"
+            return None, f"Cursor cloud create failed: {exc.message}"
+    return None, "Cursor cloud create failed after retries"
 
 
 def _split_requirements_architecture(text: str) -> tuple[str, str]:

@@ -72,20 +72,45 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
 """
     )
 
+    if role == AgentRole.ARCHITECT and context.get("last_failure"):
+        sections.append(f"\n## Previous attempt failed\n{str(context['last_failure'])[:4000]}")
+
     if role == AgentRole.ARCHITECT:
-        sections.append(
-            """
+        if context.get("repo_url"):
+            sections.append(
+                """
 ## Your task
 Create project requirements and architecture documentation.
 
-Write two markdown files in the workspace:
+Write two markdown files in the workspace AND repeat both documents in your final reply:
 1. `requirements.md` — functional/non-functional requirements, exclusions, overview
 2. `architecture.md` — stack, API design, testing strategy
+
+Start the reply with `# Requirements` then `# Architecture` so the factory can copy them.
 
 Use Python 3.12 + FastAPI, Docker on port 8080, pytest coverage, and a `/health` endpoint.
 Do not document a manual docker-compose demo workflow — the factory live preview is how the app is run during development.
 """
-        )
+            )
+        else:
+            sections.append(
+                """
+## Your task
+You are a no-repo Cloud Agent. There is no GitHub repository and nothing you write to disk will be synced.
+Do not try to commit, push, clone, or create a repo.
+
+Put BOTH documents in your final reply as markdown headings the factory will copy into `requirements.md` and `architecture.md`:
+
+# Requirements
+functional/non-functional requirements, exclusions, overview
+
+# Architecture
+stack, API design, testing strategy
+
+Use Python 3.12 + FastAPI, Docker on port 8080, pytest coverage, and a `/health` endpoint.
+Do not document a manual docker-compose demo workflow — the factory live preview is how the app is run during development.
+"""
+            )
     elif role == AgentRole.DEVELOPER:
         stream = context.get("work_stream")
         if stream == "backend":
