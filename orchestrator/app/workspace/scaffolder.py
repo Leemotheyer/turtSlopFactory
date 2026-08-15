@@ -5,6 +5,25 @@ import re
 from pathlib import Path
 
 
+_FACTORY_DOCKERFILE = """FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+"""
+
+
+def ensure_dockerfile(repo: Path) -> bool:
+    """Write a working Dockerfile only when missing or empty. Never overwrites a real one."""
+    path = repo / "Dockerfile"
+    if path.is_file() and path.stat().st_size > 0:
+        return False
+    path.write_text(_FACTORY_DOCKERFILE)
+    return True
+
+
 def _slug(name: str) -> str:
     return name.lower().replace(" ", "-").replace("_", "-")
 
@@ -163,14 +182,7 @@ def test_full_crud_flow():
 
     write(
         "Dockerfile",
-        """FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-EXPOSE 8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
-""",
+        _FACTORY_DOCKERFILE,
     )
 
     write(
@@ -327,7 +339,7 @@ def scaffold_frontend(repo: Path, name: str, description: str) -> list[str]:
   <ul id="items"></ul>
   <script>
     async function load() {{
-      const res = await fetch('/api/items');
+      const res = await fetch('api/items');
       const items = await res.json();
       document.getElementById('items').innerHTML = items.map(i =>
         `<li><strong>${{i.title}}</strong>${{i.body ? ' — ' + i.body : ''}}</li>`
@@ -336,7 +348,7 @@ def scaffold_frontend(repo: Path, name: str, description: str) -> list[str]:
     document.getElementById('form').onsubmit = async (e) => {{
       e.preventDefault();
       const title = document.getElementById('title').value;
-      await fetch('/api/items', {{
+      await fetch('api/items', {{
         method: 'POST',
         headers: {{ 'Content-Type': 'application/json' }},
         body: JSON.stringify({{ title }})

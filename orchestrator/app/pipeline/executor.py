@@ -36,8 +36,8 @@ from app.state_machine import (
 )
 from app.services.preview import (
     build_preview_url,
-    get_preview_port,
     preview_from_metadata,
+    preview_path,
     preview_upstream,
     update_preview_metadata,
 )
@@ -47,8 +47,9 @@ from app.services.preview_manager import (
     start_docker_preview,
     stop_preview,
 )
+from app.services.preview_spec import PreviewLaunch, load_preview_spec
 from app.workspace.manager import WorkspaceManager
-from app.workspace.scaffolder import scaffold_base
+from app.workspace.scaffolder import ensure_dockerfile, scaffold_base
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,14 @@ class PipelineExecutor:
                 "[scaffold] Added missing tests/test_app.py",
             )
 
+        if ensure_dockerfile(repo):
+            repaired = True
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[scaffold] Added missing Dockerfile so later image builds are automatic",
+            )
+
         if repaired and not self._app_source_valid(repo):
             self.workspace.append_log(
                 project.id,
@@ -230,12 +239,13 @@ class PipelineExecutor:
 
         substage = context.get("failed_substage")
         if substage in (_STAGE_UNIT_TESTING, _STAGE_IMPLEMENTING, None):
-            await self._deploy_live_preview(
+            preview_ok = await self._deploy_live_preview(
                 session,
                 project,
                 context,
                 preview_type="dev",
             )
+            return preview_ok or not context.get("last_failure")
         return True
 
     async def emit(
@@ -325,9 +335,19 @@ class PipelineExecutor:
         context["base_branch"] = plan.base_branch
         context["work_branch"] = plan.work_branch
         context["isolate_branch"] = plan.isolated
-        context["preview_origin"] = await get_preview_origin(session)
+        origin = await get_preview_origin(session)
+        context["preview_origin"] = origin
         repo = self.workspace.repo_dir(project.id)
         context["incremental"] = context.get("fix_attempt", 0) > 0 or (repo / "app" / "main.py").exists()
+        meta = self.workspace.load_metadata(project.id)
+        preview_url = build_preview_url(project.id, origin=origin)
+        context["preview_url"] = meta.get("preview_url") or preview_url
+        context["preview_path"] = preview_path(project.id)
+        context["preview_status"] = meta.get("preview_status")
+        context["preview_upstream"] = preview_upstream(project.id, meta)
+        spec = load_preview_spec(repo)
+        context["preview_health_path"] = meta.get("preview_health_path") or spec.path
+        context["preview_app_port"] = meta.get("preview_app_port") or spec.port
 
     async def _log_progress(
         self,
@@ -350,7 +370,7 @@ class PipelineExecutor:
         image_tag: str | None = None,
         notify: bool = False,
     ) -> bool:
-        """Start or replace a project preview (internal port or isolated Docker network)."""
+        """Start or replace the factory-owned preview container. Agents never launch this."""
         meta = self.workspace.load_metadata(project.id)
         if preview_type == "dev":
             await self._ensure_runnable_app(project)
@@ -358,6 +378,8 @@ class PipelineExecutor:
         origin = context.get("preview_origin") or await get_preview_origin(session)
         preview_url = build_preview_url(project.id, origin=origin)
         runtime_env = await get_secrets_for_runtime(session, project.id)
+        repo = self.workspace.repo_dir(project.id)
+        spec = load_preview_spec(repo)
 
         await stop_preview(
             project.id,
@@ -365,57 +387,82 @@ class PipelineExecutor:
             ephemeral_image=meta.get("preview_ephemeral_image"),
         )
 
-        port: int | None = None
-        container_id: str | None = None
-        container_name: str | None = None
-        ephemeral_image: str | None = None
-        backend = "simulated"
-        success = False
-        output = ""
+        launch = PreviewLaunch(
+            success=False,
+            message="Preview was not attempted",
+            backend="simulated",
+            failure_kind="infra",
+        )
 
         if preview_type == "dev":
             if self.runner.docker_available():
-                repo = self.workspace.repo_dir(project.id)
                 log_path = self.workspace.logs_dir(project.id) / "preview-dev.log"
-                container_name = preview_container_name(project.id)
-                success, output, container_id, ephemeral_image = await start_dev_preview(
+                launch = await start_dev_preview(
                     project.id,
                     repo,
                     log_path,
                     env_vars=runtime_env,
                 )
-                backend = "docker"
-                context["preview_backend"] = backend
-                context["preview_container"] = container_name
             else:
-                success = False
-                output = "Docker is required for live preview"
-                backend = "simulated"
+                launch = PreviewLaunch(
+                    success=False,
+                    message="Docker is required for live preview",
+                    backend="simulated",
+                    failure_kind="infra",
+                )
         elif self.runner.docker_available():
             tag = image_tag or project.image_tag or context.get("image_tag", "none")
             if tag == "none":
-                success, output, container_id = False, "No image tag", None
-            else:
-                container_name = preview_container_name(project.id)
-                success, output, container_id = await start_docker_preview(
-                    project.id, tag, env_vars=runtime_env
+                launch = PreviewLaunch(
+                    success=False,
+                    message="No image tag",
+                    failure_kind="infra",
                 )
-                backend = "docker"
-                context["preview_backend"] = backend
-                context["preview_container"] = container_name
+            else:
+                log_path = self.workspace.logs_dir(project.id) / "preview-staging.log"
+                launch = await start_docker_preview(
+                    project.id,
+                    tag,
+                    env_vars=runtime_env,
+                    repo_path=repo,
+                    log_path=log_path,
+                )
         else:
-            success = True
-            output = f"No Docker — simulated preview at {preview_url}"
-            backend = "simulated"
+            launch = PreviewLaunch(
+                success=True,
+                message=f"No Docker — simulated preview at {preview_url}",
+                backend="simulated",
+            )
+
+        success = launch.success
+        output = launch.message
+        container_id = launch.container_id
+        container_name = launch.container_name or (
+            preview_container_name(project.id) if launch.backend == "docker" and success else None
+        )
+        backend = launch.backend
+        context["preview_backend"] = backend if success else None
+        context["preview_container"] = container_name
+        context["preview_url"] = preview_url
+        context["preview_path"] = preview_path(project.id)
+        context["preview_health_path"] = spec.path
+        context["preview_app_port"] = spec.port
 
         status = "running" if success else "failed"
         if not success:
-            self.workspace.append_log(project.id, "pipeline.log", f"[preview] failed: {output[:500]}")
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[preview] failed ({launch.failure_kind or 'unknown'}): {output[:1500]}",
+            )
+            self.workspace.write_log(project.id, "preview-failure.log", output)
+        else:
+            self.workspace.append_log(project.id, "pipeline.log", f"[preview] {output}")
 
         update_preview_metadata(
             meta,
             project_id=project.id,
-            port=port,
+            port=None,
             preview_type=preview_type,
             status=status,
             backend=backend,
@@ -423,9 +470,13 @@ class PipelineExecutor:
             host=None,
             container_id=container_id,
             container_name=container_name,
-            ephemeral_image=ephemeral_image,
+            ephemeral_image=launch.ephemeral_image,
+            health_path=spec.path,
+            app_port=spec.port,
+            failure_kind=launch.failure_kind,
         )
         self.workspace.save_metadata(project.id, meta)
+        context["preview_status"] = status
         context["preview_upstream"] = preview_upstream(project.id, meta)
 
         dep = DeploymentRow(
@@ -433,7 +484,7 @@ class PipelineExecutor:
             environment="preview" if preview_type == "dev" else "staging",
             image_tag=image_tag or project.image_tag or "dev",
             url=preview_url,
-            port=port,
+            port=None,
             container_id=container_id,
             status=status,
         )
@@ -449,6 +500,7 @@ class PipelineExecutor:
                 "url": preview_url,
                 "success": success,
                 "preview_type": preview_type,
+                "failure_kind": launch.failure_kind,
             },
         )
 
@@ -461,6 +513,14 @@ class PipelineExecutor:
                 f"Open {preview_url} ({preview_type})",
                 output[:200] if output else None,
             )
+        elif launch.failure_kind == "app":
+            context["last_failure"] = (
+                "Factory live preview failed to start the app. "
+                "Do NOT run docker, docker compose, or uvicorn — the factory owns the preview container. "
+                "Fix the application so it listens on 0.0.0.0:8080 and GET /health returns HTTP 200.\n\n"
+                f"{output[:3500]}"
+            )
+            self._persist_last_failure(project.id, context)
 
         if notify and success:
             await create_notification(
@@ -887,15 +947,15 @@ class PipelineExecutor:
             parallel_label,
             output[:300],
         )
-        first_preview = get_preview_port(self.workspace.load_metadata(project.id)) is None
-        await self._deploy_live_preview(
+        first_preview = self.workspace.load_metadata(project.id).get("preview_status") != "running"
+        preview_ok = await self._deploy_live_preview(
             session,
             project,
             context,
             preview_type="dev",
             notify=first_preview,
         )
-        return True
+        return preview_ok or not context.get("last_failure")
 
     async def _stage_unit_testing(self, session, project, context) -> bool:
         await self._ensure_runnable_app(project)
@@ -1006,7 +1066,8 @@ class PipelineExecutor:
         if success:
             await self.transition(session, project, advance_project(ProjectState.DOCKER_BUILD))
         else:
-            context["last_failure"] = "Staging deploy failed"
+            if not context.get("last_failure"):
+                context["last_failure"] = "Staging deploy failed"
         return success
 
     async def _stage_smoke_testing(self, session, project, context) -> bool:
@@ -1014,10 +1075,13 @@ class PipelineExecutor:
             session, project.id, "Smoke tests", "Health check on staging", AgentRole.TESTER
         )
 
-        if self.runner.docker_available() and context.get("staging_port"):
+        if self.runner.docker_available() and context.get("preview_upstream"):
             success, output = await self.runner._tester(
                 project.id, {**context, "test_stage": "smoke"}
             )
+        elif self.runner.docker_available():
+            success = False
+            output = "Smoke test skipped — live preview is not running"
         else:
             success = True
             output = "Simulated smoke test pass"

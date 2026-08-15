@@ -19,6 +19,21 @@ def test_build_architect_prompt_includes_description():
     assert "requirements.md" in prompt
 
 
+def test_build_developer_prompt_forbids_manual_docker():
+    prompt = build_role_prompt(
+        AgentRole.DEVELOPER,
+        {
+            "name": "App",
+            "description": "x",
+            "preview_url": "http://localhost:8044/preview/abcd1234/",
+            "preview_status": "running",
+        },
+    )
+    assert "must NOT run" in prompt
+    assert "http://localhost:8044/preview/abcd1234/" in prompt
+    assert "docker compose" in prompt.lower() or "docker run" in prompt
+
+
 def test_build_developer_stream_prompt():
     prompt = build_role_prompt(
         AgentRole.DEVELOPER,

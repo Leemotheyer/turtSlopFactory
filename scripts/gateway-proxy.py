@@ -59,7 +59,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self._route()
 
     def _route(self) -> None:
-        if self.path.startswith(("/api/", "/health", "/docs", "/openapi.json", "/redoc", "/ws/")):
+        if self.path.startswith(
+            ("/api/", "/health", "/docs", "/openapi.json", "/redoc", "/ws/", "/preview/")
+        ):
             self._proxy(API_HOST, API_PORT)
         else:
             self._proxy(DASH_HOST, DASH_PORT)
