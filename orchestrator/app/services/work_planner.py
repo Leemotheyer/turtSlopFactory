@@ -24,14 +24,49 @@ def plan_parallel_work(notes: list[dict], description: str = "") -> list[WorkUni
         WorkUnit(
             stream="backend",
             title="Backend API",
-            description="Implement FastAPI routes, models, and server logic",
+            description=(
+                "Implement FastAPI routes, models, validation, and server logic. "
+                "Build a complete API — not a stub — with proper error handling."
+            ),
         ),
         WorkUnit(
             stream="frontend",
             title="Frontend UI",
-            description="Implement static web UI and client-side interactions",
+            description=(
+                "Implement a polished static web UI: forms, lists, loading/empty states, "
+                "and mobile-friendly layout using relative fetch URLs."
+            ),
         ),
     ]
+
+    desc_lower = description.lower()
+    api_only = any(kw in desc_lower for kw in ("api only", "api-only", "no ui", "no frontend", "headless"))
+
+    if not api_only:
+        units.extend(
+            [
+                WorkUnit(
+                    stream="feature",
+                    title="UX polish",
+                    description=(
+                        "Add loading indicators, empty states, inline validation errors, "
+                        "and responsive spacing so the app feels finished."
+                    ),
+                    feature_id="ux-polish",
+                    feature_content="UX polish: loading, empty states, validation feedback, responsive layout",
+                ),
+                WorkUnit(
+                    stream="feature",
+                    title="Core completeness",
+                    description=(
+                        "Ensure full CRUD flows, edge cases, and sensible defaults so the app "
+                        "is usable without follow-up notes."
+                    ),
+                    feature_id="core-completeness",
+                    feature_content="Complete CRUD flows, edge cases, delete confirmations, input validation",
+                ),
+            ]
+        )
 
     seen_slugs: set[str] = set()
     for i, note in enumerate(notes):
@@ -55,11 +90,20 @@ def plan_parallel_work(notes: list[dict], description: str = "") -> list[WorkUni
         )
 
     # Heuristic: API-only specs skip dedicated frontend agent
-    desc_lower = description.lower()
-    if any(kw in desc_lower for kw in ("api only", "api-only", "no ui", "no frontend", "headless")):
+    if api_only:
         units = [u for u in units if u.stream != "frontend"]
 
     return units
+
+
+def plan_from_enrichment_features(
+    features: list[dict],
+    notes: list[dict] | None = None,
+    input_responses: list[dict] | None = None,
+) -> list[WorkUnit]:
+    from app.services.product_enrichment import features_to_work_units
+
+    return features_to_work_units(features, notes, input_responses)
 
 
 def work_plan_to_dict(units: list[WorkUnit], concurrency: dict | None = None) -> dict:

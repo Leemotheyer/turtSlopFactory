@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -72,7 +73,10 @@ class LocalAgentRunner(AgentRunner):
         description = context.get("description", "")
 
         if role == AgentRole.ARCHITECT:
-            run.output = await self._architect(project_id, name, description, context)
+            if context.get("enrichment_pass"):
+                run.output = await self._architect_enrichment(project_id, context)
+            else:
+                run.output = await self._architect(project_id, name, description, context)
             run.success = True
         elif role == AgentRole.DEVELOPER:
             stream = context.get("work_stream")
@@ -170,6 +174,21 @@ class LocalAgentRunner(AgentRunner):
         self.workspace.write_artifact(project_id, "architecture.md", architecture)
         self.workspace.append_log(project_id, "pipeline.log", f"[architect] Planned {name}")
         return f"Created requirements.md and architecture.md for {name}"
+
+    async def _architect_enrichment(self, project_id: UUID, context: dict) -> str:
+        from app.services.product_enrichment import local_enrichment_plan
+
+        audit = context.get("preview_audit") or {}
+        pass_number = int(context.get("enrichment_pass") or 1)
+        plan = local_enrichment_plan(audit, pass_number, context.get("notes", []))
+        payload = json.dumps(plan, indent=2)
+        self.workspace.write_artifact(project_id, "enrichment-plan.json", payload)
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[architect] Enrichment pass {pass_number}: {len(plan.get('features') or [])} feature(s)",
+        )
+        return payload
 
     def _format_input_section(self, responses: list[dict]) -> str:
         if not responses:
@@ -308,6 +327,8 @@ class LocalAgentRunner(AgentRunner):
             return await self._run_pytest(repo, project_id, "tests/")
         if stage == "smoke":
             return await self._run_smoke(project_id, context)
+        if stage == "product_qa":
+            return await self._run_product_qa(project_id, context)
         return False, f"Unknown test stage: {stage}"
 
     async def _run_pytest(self, repo, project_id: UUID, target: str) -> tuple[bool, str]:
@@ -386,6 +407,41 @@ class LocalAgentRunner(AgentRunner):
                 return False, f"Health check failed at {url}"
         except Exception as exc:
             return False, str(exc)
+
+    async def _run_product_qa(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        from app.services.product_enrichment import audit_live_preview
+
+        audit = context.get("preview_audit") or await audit_live_preview(context)
+        issues = list(audit.get("issues") or [])
+        suggested: list[str] = []
+
+        if not audit.get("health_ok"):
+            issues.append("Health endpoint is not healthy")
+        if not audit.get("has_html_ui"):
+            suggested.append("Add or fix the HTML UI served at /")
+
+        for endpoint in audit.get("endpoints") or []:
+            if endpoint.get("path") == "/api/items" and endpoint.get("ok"):
+                suggested.append("Verify create/update/delete flows in the UI")
+                break
+        else:
+            suggested.append("Implement working /api/items endpoints")
+
+        passed = audit.get("health_ok") and (audit.get("has_html_ui") or context.get("repo_url"))
+        report = {
+            "passed": passed,
+            "issues": issues,
+            "suggested_features": suggested,
+        }
+        payload = json.dumps(report, indent=2)
+        self.workspace.write_artifact(project_id, "product-qa.json", payload)
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[tester] Product QA {'passed' if passed else 'found issues'} ({len(issues)} issue(s))",
+        )
+        summary = f"Product QA: {'PASS' if passed else 'ISSUES'} — {', '.join(issues[:3]) or 'ok'}"
+        return passed, summary
 
     async def _reviewer(
         self, project_id: UUID, context: dict, task_id: UUID, agent_id: str
