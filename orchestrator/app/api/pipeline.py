@@ -106,7 +106,8 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
     started = schedule_pipeline(project_id)
     if not started:
         return {"status": "already_running", "project_id": str(project_id)}
-    return {"status": "started", "project_id": str(project_id)}
+    mode = "feedback" if row.state == ProjectState.REVIEW.value else "pipeline"
+    return {"status": "started", "project_id": str(project_id), "mode": mode}
 
 
 @router.post("/{project_id}/stop")

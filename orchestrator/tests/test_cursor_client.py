@@ -1,5 +1,8 @@
+import pytest
+
 from app.services.cursor_client import (
     CursorApiError,
+    CursorClient,
     TokenTotals,
     _match_member_spend,
     is_cursor_capacity_error,

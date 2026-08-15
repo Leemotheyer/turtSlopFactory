@@ -496,7 +496,12 @@ export default function DashboardPage() {
     if (!selectedId) return;
     setLoading(true);
     try {
-      await runPipeline(selectedId);
+      const result = await runPipeline(selectedId);
+      if (result.status === "already_running") {
+        setError("Pipeline is already running for this project.");
+      } else if (result.mode === "feedback") {
+        setError(null);
+      }
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Pipeline start failed");
@@ -1705,8 +1710,8 @@ export default function DashboardPage() {
                         </button>
                       )}
                       {detail.state !== "PRODUCTION" && detail.state !== "AUTONOMOUSLY_BLOCKED" && (
-                        <button className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
-                          Re-run pipeline
+                        <button className={styles.btnPrimary} onClick={handleRun} disabled={loading || detail.pipeline_running}>
+                          {detail.state === "REVIEW" ? "Apply feedback & rebuild" : "Re-run pipeline"}
                         </button>
                       )}
                       {detail.state === "REVIEW" && (
@@ -1749,6 +1754,14 @@ export default function DashboardPage() {
                   The build stopped after repeated failures
                   {detail.failed_gate ? ` at ${detail.failed_gate.replace(/_/g, " ").toLowerCase()}` : ""}.
                   Review the pipeline log, then click Resume pipeline to try again with a fresh fix budget.
+                </p>
+              )}
+
+              {detail.state === "REVIEW" && !detail.pipeline_running && (
+                <p className={styles.repoHint}>
+                  Build passed review. Add notes or answer agent questions to request changes — the factory will
+                  automatically rebuild from implementation. When you are happy with the preview, promote to production
+                  or merge to main.
                 </p>
               )}
 

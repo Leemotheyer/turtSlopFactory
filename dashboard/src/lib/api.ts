@@ -633,7 +633,7 @@ export async function submitIntake(
   return res.json();
 }
 
-export async function runPipeline(projectId: string): Promise<{ status: string }> {
+export async function runPipeline(projectId: string): Promise<{ status: string; mode?: string }> {
   const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/run`, {
     method: "POST",
     headers: headers(),

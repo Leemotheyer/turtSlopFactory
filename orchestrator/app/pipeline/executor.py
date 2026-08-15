@@ -763,6 +763,32 @@ class PipelineExecutor:
                         f"[resume] Unblocked — restarting from {resume_gate.value}",
                     )
 
+                if ProjectState(project.state) == ProjectState.REVIEW:
+                    context["feedback_iteration"] = True
+                    context.pop("implementation_complete", None)
+                    context.pop("fix_attempt", None)
+                    context.pop("failed_gate", None)
+                    context.pop("failed_substage", None)
+                    self._save_failed_gate(project_id, None)
+                    await self.transition(
+                        session,
+                        project,
+                        ProjectState.IMPLEMENTING,
+                        reason="feedback",
+                    )
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        "[feedback] Applying notes and guidance — rebuilding from implementation",
+                    )
+                    await self._log_progress(
+                        session,
+                        project_id,
+                        "feedback",
+                        "Applying feedback",
+                        "Re-running implementation with your latest notes and answers",
+                    )
+
                 async def request_input(**kwargs):
                     return await create_input_request(session, project_id, **kwargs)
 
