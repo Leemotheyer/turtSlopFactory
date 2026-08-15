@@ -200,14 +200,14 @@ async def resolve_concurrency_budget(session: AsyncSession) -> ConcurrencyBudget
     if max_parallel == 0:
         strategy = (
             f"Cursor Cloud: {active} agent run(s) in progress"
-            f"{f' ({idle_active} idle ACTIVE agent(s) not counted)' if idle_active else ''}. "
+            f"{f' ({idle_active} idle Cursor agent(s) parked, not using slots)' if idle_active else ''}. "
             f"No factory slots free (limit {cursor_limit}, {headroom} reserved for manual use). "
             "The factory will wait before starting new cloud agents."
         )
     else:
         strategy = (
             f"Cursor Cloud: {active} running agent run(s)"
-            f"{f' · {idle_active} idle ACTIVE agent(s) ignored' if idle_active else ''}; "
+            f"{f' · {idle_active} idle Cursor agent(s) parked (not using slots)' if idle_active else ''}; "
             f"up to {max_parallel} parallel factory agent(s) "
             f"(limit {cursor_limit}, {headroom} slot(s) reserved for manual use)."
         )

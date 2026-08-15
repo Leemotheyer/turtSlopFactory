@@ -14,7 +14,7 @@ COPY pyproject.toml .
 COPY app ./app
 COPY worker_main.py .
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[cursor]"
 
 EXPOSE 8000
 

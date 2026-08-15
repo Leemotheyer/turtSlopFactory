@@ -25,7 +25,7 @@ from app.services.agent_concurrency import (
     resolve_concurrency_budget,
     wait_for_cursor_capacity,
 )
-from app.services.factory_settings import get_preview_origin
+from app.services.factory_settings import get_agent_backend, get_preview_origin
 from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
 from app.state_machine import (
     advance_project,
