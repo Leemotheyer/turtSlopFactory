@@ -52,7 +52,6 @@ export interface ProjectDetail extends Project {
   failed_substage: string | null;
   discovery_status: string | null;
   intake_ready: boolean;
-  max_enrichment_passes?: number | null;
   factory_default_enrichment_passes?: number;
   effective_enrichment_passes?: number;
   pipeline_substage?: {
