@@ -20,6 +20,8 @@ from app.workspace.manager import WorkspaceManager
 logger = logging.getLogger(__name__)
 
 _CURSOR_ROLES = {AgentRole.ARCHITECT, AgentRole.DEVELOPER, AgentRole.REVIEWER}
+# These roles only need text artifacts; Cursor Cloud can run them without a GitHub repo.
+_CLOUD_TEXT_ROLES = {AgentRole.ARCHITECT, AgentRole.REVIEWER}
 
 
 class FactoryAgentRunner(LocalAgentRunner):
@@ -80,12 +82,22 @@ class FactoryAgentRunner(LocalAgentRunner):
 
         effective_backend = backend
         if backend == "cursor_cloud" and not context.get("repo_url"):
-            effective_backend = "cursor_local"
-            self.workspace.append_log(
-                project_id,
-                "pipeline.log",
-                f"[{role.value}] No repo_url — using Cursor local agent on workspace",
-            )
+            if role in _CLOUD_TEXT_ROLES:
+                self.workspace.append_log(
+                    project_id,
+                    "pipeline.log",
+                    f"[{role.value}] No repo_url — using Cursor Cloud without a GitHub repo",
+                )
+            else:
+                effective_backend = "cursor_local"
+                self.workspace.append_log(
+                    project_id,
+                    "pipeline.log",
+                    (
+                        f"[{role.value}] No repo_url — running Cursor local agent on the workspace. "
+                        "Link a GitHub repo to use Cursor Cloud for implementation."
+                    ),
+                )
 
         agent_id = f"{effective_backend}-{role.value}-{str(task_id)[:8]}"
         run = AgentRun(task_id=task_id, role=role, agent_id=agent_id)
@@ -139,36 +151,25 @@ class FactoryAgentRunner(LocalAgentRunner):
                     run.agent_id = cursor_id
         except Exception as exc:
             logger.exception("Cursor agent failed for %s", role)
-            self.workspace.append_log(
-                project_id,
-                "pipeline.log",
-                f"[{role.value}] Cursor failed ({exc}); falling back to local scaffold",
-            )
-            return await super().run(role, project_id, task_id, workspace, context)
+            message = f"Cursor failed: {exc}"
+            self.workspace.append_log(project_id, "pipeline.log", f"[{role.value}] {message}")
+            run.success = False
+            run.output = message
+            return run
 
         if not success:
             if "stopped by user" in output.lower():
                 run.success = False
                 run.output = output
                 return run
-            capacity_blocked = any(
-                phrase in output.lower()
-                for phrase in (
-                    "capacity unavailable",
-                    "no cursor cloud agent slots",
-                    "no cursor agent slots",
-                )
-            )
-            if capacity_blocked:
-                run.success = False
-                run.output = output
-                return run
             self.workspace.append_log(
                 project_id,
                 "pipeline.log",
-                f"[{role.value}] Cursor unsuccessful; falling back to local scaffold",
+                f"[{role.value}] Cursor unsuccessful: {output[:1500]}",
             )
-            return await super().run(role, project_id, task_id, workspace, context)
+            run.success = False
+            run.output = output or "Cursor agent did not complete successfully"
+            return run
 
         if role == AgentRole.REVIEWER:
             run.success, run.output = await self._finalize_reviewer(project_id, context, output)

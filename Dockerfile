@@ -50,7 +50,7 @@ RUN pip install --no-cache-dir hatchling
 COPY orchestrator/pyproject.toml .
 COPY orchestrator/app ./app
 COPY orchestrator/worker_main.py .
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[cursor]"
 
 COPY --from=dashboard-build /app/public /dashboard/public
 COPY --from=dashboard-build /app/.next/standalone /dashboard/

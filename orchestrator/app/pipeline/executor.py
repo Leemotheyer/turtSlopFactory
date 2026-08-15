@@ -25,7 +25,7 @@ from app.services.agent_concurrency import (
     resolve_concurrency_budget,
     wait_for_cursor_capacity,
 )
-from app.services.factory_settings import get_preview_origin
+from app.services.factory_settings import get_agent_backend, get_preview_origin
 from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
 from app.state_machine import (
     advance_project,
@@ -991,24 +991,27 @@ class PipelineExecutor:
             AgentRole.ARCHITECT, project.id, task.id, str(self.workspace.repo_dir(project.id)), context
         )
         await self.complete_task(session, task, run.success, run.output)
-        if run.success:
-            units, plan, budget = await self._build_work_plan(session, project, context)
-            self.workspace.write_artifact(
-                project.id, "work-plan.json", json.dumps(plan, indent=2)
-            )
-            context["work_plan"] = plan
-            await self._log_progress(
-                session,
-                project.id,
-                "planning",
-                "Architecture planned",
-                (
-                    f"Requirements ready — {len(units)} work stream(s), "
-                    f"up to {budget.max_parallel} parallel agent(s)"
-                ),
-            )
-            await self.transition(session, project, advance_project(ProjectState.PLANNING))
-        return run.success
+        if not run.success:
+            context["last_failure"] = run.output
+            self._persist_last_failure(project.id, context)
+            return False
+        units, plan, budget = await self._build_work_plan(session, project, context)
+        self.workspace.write_artifact(
+            project.id, "work-plan.json", json.dumps(plan, indent=2)
+        )
+        context["work_plan"] = plan
+        await self._log_progress(
+            session,
+            project.id,
+            "planning",
+            "Architecture planned",
+            (
+                f"Requirements ready — {len(units)} work stream(s), "
+                f"up to {budget.max_parallel} parallel agent(s)"
+            ),
+        )
+        await self.transition(session, project, advance_project(ProjectState.PLANNING))
+        return True
 
     async def _run_parallel_developers(
         self, session, project, context: dict

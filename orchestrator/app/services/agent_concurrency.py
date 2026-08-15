@@ -133,7 +133,7 @@ async def count_active_cursor_agents(api_key: str) -> tuple[int, int, list[str]]
         )
 
     async with CursorClient(api_key) as client:
-        agents = await client.list_agents(limit=100)
+        agents, _ = await client.list_agents_page(limit=100, include_archived=False)
 
     running = 0
     idle_active = 0
@@ -200,14 +200,14 @@ async def resolve_concurrency_budget(session: AsyncSession) -> ConcurrencyBudget
     if max_parallel == 0:
         strategy = (
             f"Cursor Cloud: {active} agent run(s) in progress"
-            f"{f' ({idle_active} idle ACTIVE agent(s) not counted)' if idle_active else ''}. "
+            f"{f' ({idle_active} idle Cursor agent(s) parked, not using slots)' if idle_active else ''}. "
             f"No factory slots free (limit {cursor_limit}, {headroom} reserved for manual use). "
             "The factory will wait before starting new cloud agents."
         )
     else:
         strategy = (
             f"Cursor Cloud: {active} running agent run(s)"
-            f"{f' · {idle_active} idle ACTIVE agent(s) ignored' if idle_active else ''}; "
+            f"{f' · {idle_active} idle Cursor agent(s) parked (not using slots)' if idle_active else ''}; "
             f"up to {max_parallel} parallel factory agent(s) "
             f"(limit {cursor_limit}, {headroom} slot(s) reserved for manual use)."
         )
@@ -222,6 +222,39 @@ async def resolve_concurrency_budget(session: AsyncSession) -> ConcurrencyBudget
         strategy=strategy,
         idle_agents=idle_active,
     )
+
+
+async def reclaim_idle_factory_agents(api_key: str, *, keep_recent: int = 3) -> int:
+    """Archive finished factory-* cloud agents so account caps do not block new creates."""
+    archived = 0
+    idle_factory: list[dict] = []
+    async with CursorClient(api_key) as client:
+        cursor: str | None = None
+        for _ in range(8):
+            items, cursor = await client.list_agents_page(
+                limit=100, cursor=cursor, include_archived=False
+            )
+            for agent in items:
+                name = str(agent.get("name") or "")
+                if not name.startswith("factory-"):
+                    continue
+                if agent_consumes_cursor_slot(agent):
+                    continue
+                idle_factory.append(agent)
+            if not cursor:
+                break
+        for agent in idle_factory[max(0, keep_recent) :]:
+            agent_id = agent.get("id")
+            if not agent_id:
+                continue
+            try:
+                await client.archive_agent(str(agent_id))
+                archived += 1
+            except CursorApiError as exc:
+                logger.warning("Could not archive idle factory agent %s: %s", agent_id, exc.message)
+    if archived:
+        invalidate_active_agent_cache()
+    return archived
 
 
 async def wait_for_cursor_capacity(

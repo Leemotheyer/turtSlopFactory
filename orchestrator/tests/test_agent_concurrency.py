@@ -1,6 +1,37 @@
 from app.services.agent_concurrency import _is_active_agent_status
 
 
+def test_reclaim_idle_factory_agents_archives_old_factory_shells():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.services.agent_concurrency import reclaim_idle_factory_agents
+
+    client = AsyncMock()
+    client.list_agents_page = AsyncMock(
+        return_value=(
+            [
+                {"id": "bc-keep", "name": "factory-architect-new", "status": "ACTIVE", "latestRun": {"status": "FINISHED"}},
+                {"id": "bc-old", "name": "factory-developer-old", "status": "ACTIVE", "latestRun": {"status": "FINISHED"}},
+                {"id": "bc-busy", "name": "factory-developer-busy", "status": "ACTIVE", "latestRun": {"status": "RUNNING"}},
+                {"id": "bc-user", "name": "manual research", "status": "ACTIVE", "latestRun": {"status": "FINISHED"}},
+            ],
+            None,
+        )
+    )
+    client.archive_agent = AsyncMock(return_value={"id": "bc-old"})
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+
+    async def _run():
+        with patch("app.services.agent_concurrency.CursorClient", return_value=client):
+            archived = await reclaim_idle_factory_agents("key", keep_recent=1)
+        assert archived == 1
+        client.archive_agent.assert_awaited_once_with("bc-old")
+
+    asyncio.run(_run())
+
+
 def test_active_agent_status():
     assert _is_active_agent_status("RUNNING") is True
     assert _is_active_agent_status("CREATING") is True

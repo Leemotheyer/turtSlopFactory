@@ -22,6 +22,35 @@ class CursorApiError(Exception):
         super().__init__(message)
 
 
+def is_cursor_capacity_error(exc: CursorApiError) -> bool:
+    msg = exc.message.lower()
+    return exc.status in (429, 403) or any(
+        token in msg for token in ("limit", "concurrent", "too many", "capacity", "resource_exhausted")
+    )
+
+
+def is_cursor_model_error(exc: CursorApiError) -> bool:
+    msg = exc.message.lower()
+    return exc.status in (400, 422) and any(token in msg for token in ("model", "invalid", "unknown"))
+
+
+def normalize_model_selection(
+    model_id: str | None,
+    model_params: list[dict[str, str]] | None = None,
+) -> tuple[str | None, list[dict[str, str]] | None]:
+    """Map dashboard ids like composer-2.5-fast onto API {id, params}."""
+    if not model_id or not str(model_id).strip():
+        return None, model_params
+    raw = str(model_id).strip()
+    if raw.lower() in {"default", "auto"}:
+        return None, model_params
+    if model_params:
+        return raw, model_params
+    if raw.endswith("-fast"):
+        return raw[: -len("-fast")], [{"id": "fast", "value": "true"}]
+    return raw, None
+
+
 @dataclass
 class TokenTotals:
     input_tokens: int = 0
@@ -90,9 +119,39 @@ class CursorClient:
     async def get_me(self) -> dict[str, Any]:
         return await self._request("GET", "/v1/me")
 
-    async def list_agents(self, limit: int = 30) -> list[dict[str, Any]]:
-        data = await self._request("GET", "/v1/agents", params={"limit": limit})
-        return data.get("items") or data.get("agents") or []
+    async def list_agents_page(
+        self,
+        *,
+        limit: int = 30,
+        cursor: str | None = None,
+        include_archived: bool = True,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        params: dict[str, Any] = {
+            "limit": limit,
+            "includeArchived": "true" if include_archived else "false",
+        }
+        if cursor:
+            params["cursor"] = cursor
+        data = await self._request("GET", "/v1/agents", params=params)
+        items = data.get("items") or data.get("agents") or []
+        return items, data.get("nextCursor")
+
+    async def list_agents(
+        self,
+        limit: int = 30,
+        cursor: str | None = None,
+        include_archived: bool = True,
+    ) -> list[dict[str, Any]]:
+        items, _ = await self.list_agents_page(
+            limit=limit, cursor=cursor, include_archived=include_archived
+        )
+        return items
+
+    async def get_agent(self, agent_id: str) -> dict[str, Any]:
+        return await self._request("GET", f"/v1/agents/{agent_id}")
+
+    async def archive_agent(self, agent_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/v1/agents/{agent_id}/archive")
 
     async def list_repositories(self) -> list[dict[str, Any]]:
         data = await self._request("GET", "/v1/repositories")
@@ -140,10 +199,11 @@ class CursorClient:
         }
         if name:
             body["name"] = name[:100]
-        if model_id:
-            model_body: dict[str, Any] = {"id": model_id}
-            if model_params:
-                model_body["params"] = model_params
+        resolved_id, resolved_params = normalize_model_selection(model_id, model_params)
+        if resolved_id:
+            model_body: dict[str, Any] = {"id": resolved_id}
+            if resolved_params:
+                model_body["params"] = resolved_params
             body["model"] = model_body
         if repos:
             body["repos"] = repos
@@ -172,7 +232,7 @@ class CursorClient:
         import asyncio
         import time
 
-        terminal = {"FINISHED", "ERROR", "CANCELLED", "EXPIRED"}
+        terminal = {"FINISHED", "ERROR", "CANCELLED", "CANCELED", "EXPIRED", "COMPLETED", "FAILED"}
         deadline = time.monotonic() + timeout_seconds
         last_status = ""
         while time.monotonic() < deadline:
