@@ -25,6 +25,39 @@ def wants_merge_to_main(response: str, question: str = "") -> bool:
     return False
 
 
+def should_schedule_feedback_on_input_response(
+    response: str,
+    question: str,
+    *,
+    role: str = "",
+) -> bool:
+    """Return True only when a human answer should re-run implementation."""
+    if role == "reviewer":
+        return False
+
+    question_lower = question.lower()
+    response_lower = response.strip().lower()
+
+    if wants_merge_to_main(response, question):
+        return False
+    if "merge" in question_lower and "branch" in question_lower:
+        return False
+    if "rate limit" in question_lower:
+        return False
+    if "database storage" in question_lower or "in-memory" in question_lower:
+        return False
+
+    skip_markers = ("skip", "defer", "not in v1", "keep on factory", "later")
+    if any(marker in response_lower for marker in skip_markers):
+        return False
+
+    # Enrichment scope check — only restart when the human explicitly approves work.
+    if "implement it" in question_lower or "out of scope" in question_lower:
+        return response_lower.startswith("yes") and "implement" in response_lower
+
+    return False
+
+
 async def maybe_schedule_feedback_pipeline(session: AsyncSession, project_id: UUID) -> bool:
     """Start a feedback iteration when the project is waiting in REVIEW."""
     row = await session.get(ProjectRow, project_id)

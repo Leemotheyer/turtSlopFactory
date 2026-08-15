@@ -14,7 +14,11 @@ from app.models import (
     ProjectNoteCreate,
 )
 from app.pipeline.executor import pipeline_executor
-from app.services.feedback_pipeline import maybe_schedule_feedback_pipeline, wants_merge_to_main
+from app.services.feedback_pipeline import (
+    maybe_schedule_feedback_pipeline,
+    should_schedule_feedback_on_input_response,
+    wants_merge_to_main,
+)
 from app.services.git_branching import merge_work_branch_to_base, resolve_branch_plan
 from app.services.input_requests import list_input_requests, respond_to_input
 from app.services.notes import add_note, list_notes
@@ -100,8 +104,9 @@ async def respond_input_request(
                 else:
                     raise HTTPException(status_code=500, detail=message)
     else:
-        merge_prompt = "merge" in result.question.lower() and "branch" in result.question.lower()
-        if not merge_prompt:
+        if should_schedule_feedback_on_input_response(
+            body.response, result.question, role=result.role
+        ):
             await maybe_schedule_feedback_pipeline(db, project_id)
 
     return result
