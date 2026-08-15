@@ -180,7 +180,14 @@ class LocalAgentRunner(AgentRunner):
 
         audit = context.get("preview_audit") or {}
         pass_number = int(context.get("enrichment_pass") or 1)
-        plan = local_enrichment_plan(audit, pass_number, context.get("notes", []))
+        completed = set(context.get("enrichment_completed") or [])
+        plan = local_enrichment_plan(
+            audit,
+            pass_number,
+            context.get("notes", []),
+            max_passes=context.get("max_enrichment_passes"),
+            completed_slugs=completed,
+        )
         payload = json.dumps(plan, indent=2)
         self.workspace.write_artifact(project_id, "enrichment-plan.json", payload)
         self.workspace.append_log(

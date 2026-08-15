@@ -9,10 +9,13 @@ def test_enrichment_prompt_excludes_greenfield_planning():
             "name": "Comic Reader",
             "description": "Komga proxy app",
             "enrichment_pass": 1,
+            "max_enrichment_passes": 4,
+            "max_features_per_pass": 8,
             "preview_audit": {"health_ok": True, "has_html_ui": False, "issues": []},
         },
     )
     assert "enrichment-plan.json" in prompt
+    assert "substantial" in prompt.lower()
     assert "NOT** write requirements.md" in prompt or "NOT write requirements.md" in prompt
     assert "Create project requirements and architecture" not in prompt
 

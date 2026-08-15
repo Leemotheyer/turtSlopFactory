@@ -1,8 +1,11 @@
 import pytest
 
+from app.config import settings
 from app.services.product_enrichment import (
     audit_live_preview,
     classify_scope,
+    enrichment_change_summary,
+    enrichment_pass_theme_hint,
     features_to_work_units,
     local_enrichment_plan,
     parse_enrichment_plan,
@@ -30,6 +33,67 @@ def test_features_to_work_units_includes_approved_uncertain():
     responses = [{"question": "Implement OAuth login?", "resolved_decision": "Yes, implement it"}]
     units = features_to_work_units(features, input_responses=responses)
     assert len(units) == 1
+
+
+def test_features_to_work_units_batches_multiple_features():
+    features = [
+        {"id": f"feat-{i}", "title": f"Feature {i}", "description": "Do substantial work " * 5, "scope": "in_scope"}
+        for i in range(6)
+    ]
+    units = features_to_work_units(features)
+    batch_size = max(2, settings.enrichment_features_per_agent)
+    expected_batches = (len(features) + batch_size - 1) // batch_size
+    assert len(units) == expected_batches
+    assert "Implement **all**" in (units[0].feature_content or "")
+
+
+def test_features_to_work_units_skips_completed_slugs():
+    features = [
+        {"id": "core-flows", "title": "Core flows", "description": "Build CRUD", "scope": "in_scope"},
+        {"id": "search", "title": "Search", "description": "Add search UI", "scope": "in_scope"},
+    ]
+    units = features_to_work_units(features, completed_slugs={"core-flows"})
+    assert len(units) == 1
+    assert "Search" in units[0].title or "search" in (units[0].feature_content or "").lower()
+
+
+def test_enrichment_change_summary_lists_deliverables():
+    features = [
+        {"id": "a", "title": "Alpha", "description": "First", "scope": "in_scope"},
+        {"id": "b", "title": "Beta", "description": "Second", "scope": "in_scope"},
+        {"id": "c", "title": "Gamma", "description": "Third", "scope": "in_scope"},
+    ]
+    units = features_to_work_units(features)
+    summary = enrichment_change_summary(units)
+    assert summary
+    assert any("Alpha" in line or "•" in line for line in summary)
+
+
+def test_enrichment_pass_theme_hint_includes_pass_number():
+    hint = enrichment_pass_theme_hint(1)
+    assert "Pass 1" in hint
+    assert "core" in hint.lower() or "journey" in hint.lower()
+
+
+def test_local_enrichment_plan_uses_pass_themes():
+    audit = {
+        "health_ok": True,
+        "has_html_ui": True,
+        "endpoints": [{"method": "GET", "path": "/api/items", "ok": True}],
+    }
+    plan1 = local_enrichment_plan(audit, pass_number=1)
+    plan2 = local_enrichment_plan(audit, pass_number=2)
+    ids1 = {f["id"] for f in plan1["features"]}
+    ids2 = {f["id"] for f in plan2["features"]}
+    assert ids1 != ids2
+
+
+def test_local_enrichment_plan_skips_completed():
+    audit = {"health_ok": True, "has_html_ui": True, "endpoints": [{"path": "/api/items", "ok": True}]}
+    plan = local_enrichment_plan(audit, pass_number=1, completed_slugs={"core-flows", "navigation-shell"})
+    ids = {f["id"] for f in plan["features"]}
+    assert "core-flows" not in ids
+    assert "navigation-shell" not in ids
 
 
 def test_local_enrichment_plan_suggests_ui_polish():

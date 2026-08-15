@@ -27,6 +27,7 @@ from app.services.agent_concurrency import (
 )
 from app.services.factory_settings import get_agent_backend, get_preview_origin
 from app.services.work_planner import (
+    _slugify,
     optimize_work_units,
     plan_from_enrichment_features,
     plan_parallel_work,
@@ -35,6 +36,7 @@ from app.services.work_planner import (
 from app.services.product_enrichment import (
     audit_live_preview,
     classify_scope,
+    enrichment_change_summary,
     local_enrichment_plan,
     parse_enrichment_plan,
 )
@@ -1248,7 +1250,8 @@ class PipelineExecutor:
             return True, "No developer tasks"
 
         budget = await resolve_concurrency_budget(session)
-        units = optimize_work_units(units, budget.max_parallel)
+        if not command.startswith("enrichment_"):
+            units = optimize_work_units(units, budget.max_parallel)
         backend = await get_agent_backend(session)
         if backend == "cursor_cloud":
             budget = await wait_for_cursor_capacity(
@@ -1295,6 +1298,8 @@ class PipelineExecutor:
                     "feature_content": unit.feature_content,
                     "incremental": True,
                 }
+                if command.startswith("enrichment_"):
+                    unit_context["enrichment_command"] = command
                 run = await self.runner.run(
                     AgentRole.DEVELOPER,
                     project.id,
@@ -1338,6 +1343,7 @@ class PipelineExecutor:
         await self._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
 
         passes_done = int(context.get("enrichment_passes_completed") or 0)
+        completed_slugs: set[str] = set(context.get("enrichment_completed") or [])
         context["max_enrichment_passes"] = max_passes
         context["max_features_per_pass"] = settings.max_features_per_enrichment_pass
 
@@ -1362,7 +1368,7 @@ class PipelineExecutor:
                 session,
                 project.id,
                 f"Product ideation (pass {pass_number})",
-                "Audit the live preview and propose improvements",
+                "Audit the live preview and propose substantial improvements",
                 AgentRole.ARCHITECT,
             )
             ideation_context = {
@@ -1386,7 +1392,13 @@ class PipelineExecutor:
             plan = parse_enrichment_plan(plan_raw or run.output)
             used_fallback = False
             if not plan.get("features"):
-                plan = local_enrichment_plan(audit, pass_number, context.get("notes", []))
+                plan = local_enrichment_plan(
+                    audit,
+                    pass_number,
+                    context.get("notes", []),
+                    max_passes=max_passes,
+                    completed_slugs=completed_slugs,
+                )
                 self.workspace.write_artifact(
                     project.id,
                     "enrichment-plan.json",
@@ -1444,6 +1456,7 @@ class PipelineExecutor:
                 plan.get("features") or [],
                 context.get("notes", []),
                 context.get("input_responses", []),
+                completed_slugs=completed_slugs,
             )
             if not units:
                 reason = plan.get("stop_reason") or "no in-scope improvements"
@@ -1453,6 +1466,38 @@ class PipelineExecutor:
                     f"[{log_prefix}] Enrichment complete: {reason}",
                 )
                 break
+
+            change_summary = enrichment_change_summary(units)
+            self.workspace.write_artifact(
+                project.id,
+                f"enrichment-changelog-pass-{pass_number}.json",
+                json.dumps(
+                    {
+                        "pass": pass_number,
+                        "max_passes": max_passes,
+                        "features_planned": plan.get("features") or [],
+                        "work_units": [{"title": u.title, "feature_id": u.feature_id} for u in units],
+                        "change_summary": change_summary,
+                    },
+                    indent=2,
+                ),
+            )
+            summary_preview = "; ".join(change_summary[:6])
+            if len(change_summary) > 6:
+                summary_preview += f" (+{len(change_summary) - 6} more)"
+            await self._log_progress(
+                session,
+                project.id,
+                "enrichment",
+                f"Enrichment pass {pass_number}: implementing {len(units)} work unit(s)",
+                summary_preview,
+                detail="\n".join(change_summary),
+            )
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[{log_prefix}] Pass {pass_number} plan: {summary_preview}",
+            )
 
             success, output = await self._run_developer_units(
                 session, project, context, units, command="enrichment_implement"
@@ -1506,12 +1551,23 @@ class PipelineExecutor:
 
             passes_done += 1
             context["enrichment_passes_completed"] = passes_done
+            for feat in plan.get("features") or []:
+                if isinstance(feat, dict):
+                    slug = _slugify(str(feat.get("id") or feat.get("title") or ""))
+                    if slug:
+                        completed_slugs.add(slug)
+            for unit in units:
+                if unit.feature_id:
+                    completed_slugs.add(unit.feature_id)
+            context["enrichment_completed"] = sorted(completed_slugs)
             await self._log_progress(
                 session,
                 project.id,
                 "enrichment",
                 f"Enrichment pass {pass_number} complete",
-                f"Implemented {len(units)} improvement(s); QA {'passed' if qa_ok else 'noted issues'}",
+                f"Implemented {len(units)} work unit(s) ({len(change_summary)} deliverable(s)); "
+                f"QA {'passed' if qa_ok else 'noted issues'}",
+                detail="\n".join(change_summary),
             )
 
         context[completion_key] = True

@@ -100,10 +100,14 @@ def plan_from_enrichment_features(
     features: list[dict],
     notes: list[dict] | None = None,
     input_responses: list[dict] | None = None,
+    *,
+    completed_slugs: set[str] | None = None,
 ) -> list[WorkUnit]:
     from app.services.product_enrichment import features_to_work_units
 
-    return features_to_work_units(features, notes, input_responses)
+    return features_to_work_units(
+        features, notes, input_responses, completed_slugs=completed_slugs
+    )
 
 
 def work_plan_to_dict(units: list[WorkUnit], concurrency: dict | None = None) -> dict:

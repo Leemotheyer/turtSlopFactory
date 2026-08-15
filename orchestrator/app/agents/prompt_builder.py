@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.models import AgentRole
+from app.services.product_enrichment import enrichment_pass_theme_hint
 
 
 def build_role_prompt(role: AgentRole, context: dict) -> str:
@@ -78,10 +79,15 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
     enrichment_pass = context.get("enrichment_pass")
     if enrichment_pass:
         audit = context.get("preview_audit") or {}
+        max_features = context.get("max_features_per_pass", 8)
+        theme_hint = enrichment_pass_theme_hint(int(enrichment_pass))
         sections.append(
             f"""
-## Autonomous enrichment pass {enrichment_pass}/{context.get('max_enrichment_passes', 3)}
-The app has a **working live preview**. Audit what exists, identify gaps, and propose concrete improvements.
+## Autonomous enrichment pass {enrichment_pass}/{context.get('max_enrichment_passes', 4)}
+The app has a **working live preview**. Each pass must deliver **substantial, user-visible progress** — not tiny tweaks.
+Think in terms of complete flows, screens, or capabilities a user would notice in the preview.
+
+{theme_hint}
 
 Preview audit:
 - Health OK: {audit.get('health_ok', False)}
@@ -95,7 +101,7 @@ Write `enrichment-plan.json` in the workspace AND include the same JSON in your 
     {{
       "id": "slug",
       "title": "Short title",
-      "description": "What to build and why",
+      "description": "Detailed scope: backend routes, frontend screens, validation, tests, and what the user will see",
       "scope": "in_scope | uncertain | out_of_scope",
       "priority": "high | medium | low"
     }}
@@ -106,10 +112,12 @@ Write `enrichment-plan.json` in the workspace AND include the same JSON in your 
 ```
 
 Rules:
-- Propose **{context.get('max_features_per_pass', 4)}** or fewer high-value features that make the app feel complete and polished.
+- Propose **{max_features}** or fewer **high-impact** features. Each feature should touch backend + frontend where applicable.
+- Every description must list concrete deliverables (routes, UI screens, states, tests) — not vague "improve UX".
+- Prefer **fewer, larger features** over many one-line nits (e.g. "full CRUD with forms" not "add a button color").
 - Mark `uncertain` when a feature may be out of scope (payments, OAuth, email/SMS, multi-tenant admin, ML, etc.).
 - Mark `out_of_scope` when it clearly contradicts supervisor notes or intake exclusions.
-- Set `stop_reason` to a short string only when the app is genuinely production-ready and no worthwhile improvements remain.
+- Set `stop_reason` only when the app is genuinely production-ready and no worthwhile improvements remain.
 - Do NOT replan from scratch — iterate on the running product.
 - You **cannot** reach the private preview URL from Cursor Cloud. Use the audit summary above and existing code/docs only.
 - Do **NOT** write requirements.md, architecture.md, or a greenfield project plan. Do **NOT** use plan mode.
@@ -120,7 +128,8 @@ Rules:
             sections.append(
                 """
 ## Your task
-Propose the next batch of in-scope product improvements as `enrichment-plan.json` (see schema above).
+Propose the next batch of **substantial** in-scope improvements as `enrichment-plan.json`.
+Each feature should be enough work to meaningfully change what a user sees or can do in the preview.
 Base decisions on the preview audit, requirements.md, and the current codebase — not a from-scratch redesign.
 """
             )
@@ -185,11 +194,23 @@ Use relative fetch URLs (`api/items`, not `/api/items`) so the UI works through 
         elif stream == "feature":
             feature_id = context.get("feature_id") or "feature"
             content = context.get("feature_content") or context.get("work_description", "")
+            enrichment_cmd = context.get("enrichment_command")
+            enrichment_block = ""
+            if enrichment_cmd:
+                enrichment_block = """
+## Enrichment implementation standards
+This is an **enrichment pass** — implement **all** listed improvements in this task, not a subset.
+- Touch both backend and frontend when the feature needs it.
+- Add or update pytest tests for new/changed API behavior.
+- Wire the UI with loading, error, and empty states — verify through the factory live preview.
+- Do **not** stop after cosmetic-only changes; each item should be a visible capability or flow.
+"""
             sections.append(
                 f"""
 ## Your task
 Implement feature **{feature_id}**:
 {content}
+{enrichment_block}
 """
             )
         else:
@@ -208,9 +229,10 @@ The factory starts the live preview for you — implement the app, do not try to
         stage = context.get("test_stage", "unit")
         if stage == "product_qa":
             audit = context.get("preview_audit") or {}
+            pass_num = context.get("enrichment_pass")
             sections.append(
                 f"""
-## Your task — product QA on the live preview
+## Your task — product QA on the live preview (enrichment pass {pass_num or "?"})
 Interact with the factory live preview like a user. Do not start Docker or uvicorn.
 
 Live preview: {upstream or "not running"}
@@ -218,10 +240,12 @@ Health: GET {health_path}
 Audit summary: health_ok={audit.get('health_ok')}, has_ui={audit.get('has_html_ui')}
 
 Probe key endpoints and the HTML UI. Write `product-qa.json` with:
-- `passed`: boolean — is the app usable and reasonably polished?
-- `issues`: list of concrete UX/functionality problems
-- `suggested_features`: list of improvements worth implementing next
+- `passed`: boolean — did this enrichment pass add **meaningful** user-visible value?
+- `issues`: list of concrete UX/functionality problems still present
+- `suggested_features`: list of substantial improvements worth implementing next (not nits)
 
+**Fail the pass** if the only changes were cosmetic (colors, spacing tweaks) while core flows,
+forms, lists, or error handling are still missing. Enrichment should feel like real product progress.
 Reject bare-minimum demos missing empty states, validation, or core flows.
 """
             )
