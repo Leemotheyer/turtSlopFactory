@@ -15,6 +15,7 @@ from app.services.factory_settings import get_preview_origin
 from app.services.pipeline_launcher import schedule_pipeline, stop_pipeline
 from app.services.preview import preview_from_metadata
 from app.services.agent_activity import get_agent_activity
+from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
 workspace = WorkspaceManager()
