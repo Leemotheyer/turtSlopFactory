@@ -1377,15 +1377,6 @@ class PipelineExecutor:
                 str(self.workspace.repo_dir(project.id)),
                 ideation_context,
             )
-            await self.complete_task(
-                session,
-                task,
-                run.success,
-                run.output,
-                agent_id=run.agent_id or None,
-                cursor_url=run.cursor_url,
-            )
-
             plan_raw = None
             repo_plan = self.workspace.repo_dir(project.id) / "enrichment-plan.json"
             if repo_plan.is_file():
@@ -1393,6 +1384,7 @@ class PipelineExecutor:
             elif "enrichment-plan.json" in self.workspace.list_artifacts(project.id):
                 plan_raw = self.workspace.read_artifact(project.id, "enrichment-plan.json")
             plan = parse_enrichment_plan(plan_raw or run.output)
+            used_fallback = False
             if not plan.get("features"):
                 plan = local_enrichment_plan(audit, pass_number, context.get("notes", []))
                 self.workspace.write_artifact(
@@ -1400,6 +1392,29 @@ class PipelineExecutor:
                     "enrichment-plan.json",
                     json.dumps(plan, indent=2),
                 )
+                used_fallback = True
+
+            ideation_success = run.success or used_fallback
+            ideation_output = run.output
+            if used_fallback and not run.success:
+                ideation_output = (
+                    f"{run.output}\n\n[factory] Applied local enrichment plan from preview audit "
+                    f"({len(plan.get('features') or [])} feature(s))."
+                ).strip()
+            elif used_fallback:
+                ideation_output = (
+                    f"{run.output}\n\n[factory] Cloud reply had no parseable plan — used audit fallback "
+                    f"({len(plan.get('features') or [])} feature(s))."
+                ).strip()
+
+            await self.complete_task(
+                session,
+                task,
+                ideation_success,
+                ideation_output,
+                agent_id=run.agent_id or None,
+                cursor_url=run.cursor_url,
+            )
 
             request_input = context.get("request_input")
             if request_input:

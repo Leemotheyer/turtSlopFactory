@@ -111,10 +111,21 @@ Rules:
 - Mark `out_of_scope` when it clearly contradicts supervisor notes or intake exclusions.
 - Set `stop_reason` to a short string only when the app is genuinely production-ready and no worthwhile improvements remain.
 - Do NOT replan from scratch — iterate on the running product.
+- You **cannot** reach the private preview URL from Cursor Cloud. Use the audit summary above and existing code/docs only.
+- Do **NOT** write requirements.md, architecture.md, or a greenfield project plan. Do **NOT** use plan mode.
+- Your entire reply must be the JSON object (optionally wrapped in a ```json fence). No markdown architecture documents.
 """
         )
+        if role == AgentRole.ARCHITECT:
+            sections.append(
+                """
+## Your task
+Propose the next batch of in-scope product improvements as `enrichment-plan.json` (see schema above).
+Base decisions on the preview audit, requirements.md, and the current codebase — not a from-scratch redesign.
+"""
+            )
 
-    if role == AgentRole.ARCHITECT:
+    elif role == AgentRole.ARCHITECT:
         if context.get("repo_url"):
             sections.append(
                 """

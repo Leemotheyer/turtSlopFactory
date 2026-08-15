@@ -54,7 +54,11 @@ class CursorCloudRunner:
         branch = context.get("branch", "main")
         agent_name = f"factory-{role.value}-{str(task_id)[:8]}"
         selected_model = model_id or settings.cursor_agent_model
-        mode = "plan" if role == AgentRole.ARCHITECT else "agent"
+        mode = (
+            "agent"
+            if context.get("enrichment_pass")
+            else ("plan" if role == AgentRole.ARCHITECT else "agent")
+        )
 
         repos: list[dict[str, str]] | None = None
         if repo_url:
@@ -167,8 +171,7 @@ class CursorCloudRunner:
                 if synced:
                     text = (text + "\n" + synced).strip()
 
-            if not repos:
-                self._write_artifacts_from_response(project_id, role, text, context)
+            self._write_artifacts_from_response(project_id, role, text, context)
 
             has_docs = _architect_docs_ready(self.workspace, project_id, role, context)
             if status not in _TERMINAL_OK:
@@ -184,12 +187,12 @@ class CursorCloudRunner:
 
             if role == AgentRole.ARCHITECT and not repos and not has_docs:
                 if context.get("enrichment_pass"):
-                    return (
-                        False,
-                        "Cursor cloud architect finished without enrichment-plan.json in the reply.",
-                        agent_id,
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        "[architect] Cloud reply missing enrichment-plan.json — factory will use audit fallback",
                     )
-                if text.strip():
+                elif text.strip():
                     self.workspace.write_artifact(project_id, "requirements.md", text)
                     has_docs = True
                 else:
@@ -213,6 +216,10 @@ class CursorCloudRunner:
             plan_json = _extract_json_block(text)
             if plan_json:
                 self.workspace.write_artifact(project_id, "enrichment-plan.json", plan_json)
+                return
+            repo_plan = Path(self.workspace.repo_dir(project_id)) / "enrichment-plan.json"
+            if repo_plan.is_file():
+                return
             return
         if role == AgentRole.ARCHITECT:
             req, arch = _split_requirements_architecture(text)
@@ -321,7 +328,10 @@ def _architect_docs_ready(
     context = context or {}
     if context.get("enrichment_pass"):
         artifacts = workspace.list_artifacts(project_id)
-        return "enrichment-plan.json" in artifacts
+        if "enrichment-plan.json" in artifacts:
+            return True
+        repo_plan = workspace.repo_dir(project_id) / "enrichment-plan.json"
+        return repo_plan.is_file()
     artifacts = workspace.list_artifacts(project_id)
     return "requirements.md" in artifacts
 

@@ -82,6 +82,14 @@ class FactoryAgentRunner(LocalAgentRunner):
             return await super().run(role, project_id, task_id, workspace, context)
 
         effective_backend = backend
+        if role == AgentRole.ARCHITECT and context.get("enrichment_pass") and not context.get("repo_url"):
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                "[architect] Enrichment ideation — using factory preview audit (no repo / private preview)",
+            )
+            return await super().run(role, project_id, task_id, workspace, context)
+
         if backend == "cursor_cloud" and not context.get("repo_url"):
             if role == AgentRole.REVIEWER:
                 self.workspace.append_log(
