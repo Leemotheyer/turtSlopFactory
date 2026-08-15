@@ -391,7 +391,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!selectedId || !detail) return;
-    if (!AUTO_START_PIPELINE_STATES.has(detail.state) || detail.pipeline_running) return;
+    if (!AUTO_START_PIPELINE_STATES.has(detail.state) || detail.pipeline_running || detail.pipeline_paused) return;
     if (pipelineKickoff.current === selectedId) return;
     pipelineKickoff.current = selectedId;
     runPipeline(selectedId)
@@ -515,6 +515,7 @@ export default function DashboardPage() {
     setStoppingPipeline(true);
     try {
       await stopPipeline(selectedId);
+      pipelineKickoff.current = null;
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to stop pipeline");
@@ -1700,6 +1701,19 @@ export default function DashboardPage() {
                     <button className={styles.btnPrimary} onClick={() => setTab("intake")}>
                       Complete intake form
                     </button>
+                  ) : detail.pipeline_paused ? (
+                    <>
+                      <span className={styles.running}>Pipeline paused</span>
+                      <button
+                        type="button"
+                        className={styles.btnPrimary}
+                        onClick={handleRun}
+                        disabled={loading}
+                        title="Clear pause and continue the build pipeline"
+                      >
+                        Resume pipeline
+                      </button>
+                    </>
                   ) : AUTO_START_PIPELINE_STATES.has(detail.state) ? (
                     <span className={styles.running}>Build pipeline starting…</span>
                   ) : (

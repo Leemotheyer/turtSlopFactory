@@ -38,6 +38,11 @@ from app.services.product_enrichment import (
     local_enrichment_plan,
     parse_enrichment_plan,
 )
+from app.services.pipeline_control import (
+    archive_project_cloud_agents,
+    clear_live_agents,
+    set_pipeline_paused,
+)
 from app.state_machine import (
     advance_project,
     block_autonomous,
@@ -418,10 +423,21 @@ class PipelineExecutor:
         project_id: UUID,
         project: ProjectRow,
     ) -> None:
-        await self._cancel_running_tasks(session, project_id)
+        await self._finalize_stop(session, project_id, project)
+
+    async def _finalize_stop(
+        self,
+        session: AsyncSession,
+        project_id: UUID,
+        project: ProjectRow | None,
+    ) -> None:
         meta = self.workspace.load_metadata(project_id)
-        meta.pop("live_agents", None)
-        self.workspace.save_metadata(project_id, meta)
+        if meta.get("stop_cleanup_done"):
+            return
+        set_pipeline_paused(project_id, True)
+        await archive_project_cloud_agents(session, project_id)
+        await self._cancel_running_tasks(session, project_id)
+        clear_live_agents(project_id)
         try:
             await stop_preview(
                 project_id,
@@ -430,12 +446,25 @@ class PipelineExecutor:
         except Exception:
             logger.exception("Failed to stop preview while stopping pipeline for %s", project_id)
         self.workspace.append_log(project_id, "pipeline.log", "[stop] Pipeline stopped by user")
-        await self.emit(
-            session,
-            EventType.PIPELINE_STOPPED,
-            project_id,
-            payload={"state": project.state, "reason": "user_requested"},
-        )
+        meta = self.workspace.load_metadata(project_id)
+        meta["stop_cleanup_done"] = True
+        self.workspace.save_metadata(project_id, meta)
+        if project:
+            await self.emit(
+                session,
+                EventType.PIPELINE_STOPPED,
+                project_id,
+                payload={"state": project.state, "reason": "user_requested"},
+            )
+
+    async def force_stop(self, project_id: UUID) -> None:
+        """Pause the project and tear down in-flight work."""
+        set_pipeline_paused(project_id, True)
+        if project_id in self._running:
+            self.request_stop(project_id)
+        async with SessionLocal() as session:
+            project = await session.get(ProjectRow, project_id)
+            await self._finalize_stop(session, project_id, project)
 
     async def _cancel_running_tasks(self, session: AsyncSession, project_id: UUID) -> None:
         result = await session.execute(
@@ -835,6 +864,7 @@ class PipelineExecutor:
                 context["request_input"] = request_input
                 context["request_env_var"] = request_env
                 meta["pipeline_started_at"] = datetime.utcnow().isoformat()
+                meta.pop("stop_cleanup_done", None)
                 self.workspace.save_metadata(project_id, meta)
 
                 stages: list[tuple[ProjectState, str | None, object]] = [

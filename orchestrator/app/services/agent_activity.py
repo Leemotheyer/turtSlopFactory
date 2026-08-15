@@ -123,6 +123,8 @@ async def get_agent_activity(
     for task in tasks:
         if task.status != TaskStatus.RUNNING.value:
             continue
+        if not pipeline_running:
+            continue
         tid = str(task.id)
         agent_id = agent_ids_by_task.get(tid)
         live = next(
