@@ -46,6 +46,8 @@ export interface ProjectDetail extends Project {
   preview_status: string | null;
   artifacts: string[];
   pipeline_running: boolean;
+  pipeline_paused?: boolean;
+  pipeline_paused_at?: string | null;
   failed_gate: string | null;
   failed_substage: string | null;
   discovery_status: string | null;

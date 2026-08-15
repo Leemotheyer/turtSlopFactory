@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -241,6 +242,9 @@ class CursorClient:
         last_status = ""
         while time.monotonic() < deadline:
             if should_stop and should_stop():
+                if agent_id:
+                    with contextlib.suppress(Exception):
+                        await self.archive_agent(agent_id)
                 return {"status": "CANCELLED", "result": {"error": "Stopped by user"}}
             run = await self.get_run(agent_id, run_id)
             status = (run.get("status") or "").upper()
