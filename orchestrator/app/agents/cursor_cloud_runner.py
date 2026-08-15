@@ -168,9 +168,9 @@ class CursorCloudRunner:
                     text = (text + "\n" + synced).strip()
 
             if not repos:
-                self._write_artifacts_from_response(project_id, role, text)
+                self._write_artifacts_from_response(project_id, role, text, context)
 
-            has_docs = _architect_docs_ready(self.workspace, project_id, role)
+            has_docs = _architect_docs_ready(self.workspace, project_id, role, context)
             if status not in _TERMINAL_OK:
                 err = _as_dict(final_run.get("result")).get("error") or final_run.get("error") or status
                 if role in _TEXT_ROLES and (text.strip() or has_docs):
@@ -183,6 +183,12 @@ class CursorCloudRunner:
                     return False, f"Cursor cloud run {status}: {err}", agent_id
 
             if role == AgentRole.ARCHITECT and not repos and not has_docs:
+                if context.get("enrichment_pass"):
+                    return (
+                        False,
+                        "Cursor cloud architect finished without enrichment-plan.json in the reply.",
+                        agent_id,
+                    )
                 if text.strip():
                     self.workspace.write_artifact(project_id, "requirements.md", text)
                     has_docs = True
@@ -197,8 +203,16 @@ class CursorCloudRunner:
             output = text or f"Cursor cloud agent completed ({agent_url})"
             return True, output, agent_id
 
-    def _write_artifacts_from_response(self, project_id: UUID, role: AgentRole, text: str) -> None:
+    def _write_artifacts_from_response(
+        self, project_id: UUID, role: AgentRole, text: str, context: dict | None = None
+    ) -> None:
         if not text:
+            return
+        context = context or {}
+        if role == AgentRole.ARCHITECT and context.get("enrichment_pass"):
+            plan_json = _extract_json_block(text)
+            if plan_json:
+                self.workspace.write_artifact(project_id, "enrichment-plan.json", plan_json)
             return
         if role == AgentRole.ARCHITECT:
             req, arch = _split_requirements_architecture(text)
@@ -299,9 +313,15 @@ def _run_result_text(final_run: dict) -> str:
     return ""
 
 
-def _architect_docs_ready(workspace: WorkspaceManager, project_id: UUID, role: AgentRole) -> bool:
+def _architect_docs_ready(
+    workspace: WorkspaceManager, project_id: UUID, role: AgentRole, context: dict | None = None
+) -> bool:
     if role != AgentRole.ARCHITECT:
         return True
+    context = context or {}
+    if context.get("enrichment_pass"):
+        artifacts = workspace.list_artifacts(project_id)
+        return "enrichment-plan.json" in artifacts
     artifacts = workspace.list_artifacts(project_id)
     return "requirements.md" in artifacts
 

@@ -26,7 +26,18 @@ from app.services.agent_concurrency import (
     wait_for_cursor_capacity,
 )
 from app.services.factory_settings import get_agent_backend, get_preview_origin
-from app.services.work_planner import optimize_work_units, plan_parallel_work, work_plan_to_dict
+from app.services.work_planner import (
+    optimize_work_units,
+    plan_from_enrichment_features,
+    plan_parallel_work,
+    work_plan_to_dict,
+)
+from app.services.product_enrichment import (
+    audit_live_preview,
+    classify_scope,
+    local_enrichment_plan,
+    parse_enrichment_plan,
+)
 from app.state_machine import (
     advance_project,
     block_autonomous,
@@ -54,9 +65,12 @@ from app.workspace.scaffolder import ensure_dockerfile, scaffold_base
 
 logger = logging.getLogger(__name__)
 
-# Two substages run while the project state remains IMPLEMENTING.
+# Substages while the project state remains IMPLEMENTING or SMOKE_TESTING.
 _STAGE_IMPLEMENTING = "implementing"
 _STAGE_UNIT_TESTING = "unit_testing"
+_STAGE_ENRICHMENT = "enrichment"
+_STAGE_SMOKE = "smoke"
+_STAGE_REVIEW_SUBSTAGE = "review"
 
 
 class PipelineStopped(Exception):
@@ -173,8 +187,26 @@ class PipelineExecutor:
         # Same gate — run substages in order (implementing before unit tests).
         if expected_gate == ProjectState.IMPLEMENTING:
             if substage == _STAGE_UNIT_TESTING:
-                return context.get("implementation_complete", False)
-            return not context.get("implementation_complete", False)
+                return context.get("implementation_complete", False) and not context.get(
+                    "unit_testing_complete", False
+                )
+            if substage == _STAGE_ENRICHMENT:
+                return context.get("unit_testing_complete", False) and not context.get(
+                    "enrichment_complete", False
+                )
+            if substage == _STAGE_IMPLEMENTING:
+                return not context.get("implementation_complete", False)
+            return False
+        if expected_gate == ProjectState.SMOKE_TESTING:
+            if substage == _STAGE_ENRICHMENT:
+                return context.get("smoke_testing_complete", False) and not context.get(
+                    "post_smoke_enrichment_complete", False
+                )
+            if substage == _STAGE_REVIEW_SUBSTAGE:
+                return context.get("post_smoke_enrichment_complete", False)
+            if substage is None:
+                return not context.get("smoke_testing_complete", False)
+            return False
         return True
 
     async def _ensure_repo_scaffold(self, project: ProjectRow, context: dict) -> None:
@@ -766,6 +798,11 @@ class PipelineExecutor:
                 if ProjectState(project.state) == ProjectState.REVIEW:
                     context["feedback_iteration"] = True
                     context.pop("implementation_complete", None)
+                    context.pop("unit_testing_complete", None)
+                    context.pop("enrichment_complete", None)
+                    context.pop("post_smoke_enrichment_complete", None)
+                    context.pop("enrichment_passes_completed", None)
+                    context.pop("smoke_testing_complete", None)
                     context.pop("fix_attempt", None)
                     context.pop("failed_gate", None)
                     context.pop("failed_substage", None)
@@ -804,11 +841,13 @@ class PipelineExecutor:
                     (ProjectState.PLANNING, None, self._stage_planning),
                     (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
                     (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
+                    (ProjectState.IMPLEMENTING, _STAGE_ENRICHMENT, self._stage_autonomous_enrichment),
                     (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
                     (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
                     (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
                     (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
-                    (ProjectState.SMOKE_TESTING, None, self._stage_review),
+                    (ProjectState.SMOKE_TESTING, _STAGE_ENRICHMENT, self._stage_post_smoke_enrichment),
+                    (ProjectState.SMOKE_TESTING, _STAGE_REVIEW_SUBSTAGE, self._stage_review),
                 ]
 
                 for expected_gate, substage, stage_fn in stages:
@@ -968,11 +1007,13 @@ class PipelineExecutor:
             (ProjectState.PLANNING, None, self._stage_planning),
             (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
             (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
+            (ProjectState.IMPLEMENTING, _STAGE_ENRICHMENT, self._stage_autonomous_enrichment),
             (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
             (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
             (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
             (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
-            (ProjectState.SMOKE_TESTING, None, self._stage_review),
+            (ProjectState.SMOKE_TESTING, _STAGE_ENRICHMENT, self._stage_post_smoke_enrichment),
+            (ProjectState.SMOKE_TESTING, _STAGE_REVIEW_SUBSTAGE, self._stage_review),
         ]
 
         failed_idx = pipeline_gate_index(failed_at) or 0
@@ -982,6 +1023,28 @@ class PipelineExecutor:
             if substage == _STAGE_UNIT_TESTING and not context.get("implementation_complete"):
                 continue
             if substage == _STAGE_IMPLEMENTING and context.get("implementation_complete"):
+                continue
+            if (
+                substage == _STAGE_ENRICHMENT
+                and expected_gate == ProjectState.IMPLEMENTING
+                and not context.get("unit_testing_complete")
+            ):
+                continue
+            if (
+                substage == _STAGE_ENRICHMENT
+                and expected_gate == ProjectState.IMPLEMENTING
+                and context.get("enrichment_complete")
+            ):
+                continue
+            if (
+                substage == _STAGE_ENRICHMENT
+                and expected_gate == ProjectState.SMOKE_TESTING
+                and not context.get("smoke_testing_complete")
+            ):
+                continue
+            if substage == _STAGE_REVIEW_SUBSTAGE and not context.get(
+                "post_smoke_enrichment_complete"
+            ):
                 continue
 
             await session.refresh(project)
@@ -1172,6 +1235,300 @@ class PipelineExecutor:
         combined = "; ".join(outputs)
         return all_ok, combined
 
+    async def _run_developer_units(
+        self,
+        session,
+        project,
+        context: dict,
+        units: list,
+        *,
+        command: str = "parallel_implement",
+    ) -> tuple[bool, str]:
+        if not units:
+            return True, "No developer tasks"
+
+        budget = await resolve_concurrency_budget(session)
+        units = optimize_work_units(units, budget.max_parallel)
+        backend = await get_agent_backend(session)
+        if backend == "cursor_cloud":
+            budget = await wait_for_cursor_capacity(
+                session, min_slots=1, timeout_seconds=600, poll_seconds=20
+            )
+            self.workspace.append_log(project.id, "pipeline.log", f"[concurrency] {budget.strategy}")
+
+        if budget.max_parallel < 1:
+            return False, "No Cursor Cloud agent slots available for implementation."
+
+        await self._ensure_repo_scaffold(project, context)
+        task_rows: list[tuple] = []
+        for unit in units:
+            task = await self.create_task(
+                session,
+                project.id,
+                unit.title,
+                unit.description,
+                AgentRole.DEVELOPER,
+            )
+            task_rows.append((unit, task))
+
+        await self.emit(
+            session,
+            EventType.AGENT_COMMAND_STARTED,
+            project.id,
+            payload={
+                "command": command,
+                "streams": [u.stream for u in units],
+                "count": len(units),
+                "max_parallel": budget.max_parallel,
+            },
+        )
+
+        semaphore = asyncio.Semaphore(budget.max_parallel)
+
+        async def run_unit(unit, task_row: TaskRow) -> tuple[TaskRow, bool, str, str | None, str | None]:
+            async with semaphore:
+                unit_context = {
+                    **context,
+                    "work_stream": unit.stream,
+                    "work_description": unit.description,
+                    "feature_id": unit.feature_id,
+                    "feature_content": unit.feature_content,
+                    "incremental": True,
+                }
+                run = await self.runner.run(
+                    AgentRole.DEVELOPER,
+                    project.id,
+                    task_row.id,
+                    str(self.workspace.repo_dir(project.id)),
+                    unit_context,
+                )
+                return task_row, run.success, run.output, run.agent_id or None, run.cursor_url
+
+        results = await asyncio.gather(*[run_unit(u, t) for u, t in task_rows])
+        outputs: list[str] = []
+        all_ok = True
+        for task_row, success, output, agent_id, cursor_url in results:
+            await self.complete_task(
+                session,
+                task_row,
+                success,
+                output,
+                agent_id=agent_id,
+                cursor_url=cursor_url,
+            )
+            outputs.append(output)
+            if not success:
+                all_ok = False
+        return all_ok, "; ".join(outputs)
+
+    async def _run_enrichment_passes(
+        self,
+        session,
+        project,
+        context: dict,
+        *,
+        max_passes: int,
+        completion_key: str,
+        log_prefix: str,
+    ) -> bool:
+        if context.get(completion_key):
+            return True
+
+        await self._refresh_context(session, project, context)
+        await self._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
+
+        passes_done = int(context.get("enrichment_passes_completed") or 0)
+        context["max_enrichment_passes"] = max_passes
+        context["max_features_per_pass"] = settings.max_features_per_enrichment_pass
+
+        while passes_done < max_passes:
+            pass_number = passes_done + 1
+            context["enrichment_pass"] = pass_number
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[{log_prefix}] Starting enrichment pass {pass_number}/{max_passes}",
+            )
+
+            audit = await audit_live_preview(context)
+            context["preview_audit"] = audit
+            self.workspace.write_artifact(
+                project.id,
+                f"preview-audit-{log_prefix}-pass-{pass_number}.json",
+                json.dumps(audit, indent=2),
+            )
+
+            task = await self.create_task(
+                session,
+                project.id,
+                f"Product ideation (pass {pass_number})",
+                "Audit the live preview and propose improvements",
+                AgentRole.ARCHITECT,
+            )
+            ideation_context = {
+                **context,
+                "enrichment_pass": pass_number,
+                "incremental": True,
+            }
+            run = await self.runner.run(
+                AgentRole.ARCHITECT,
+                project.id,
+                task.id,
+                str(self.workspace.repo_dir(project.id)),
+                ideation_context,
+            )
+            await self.complete_task(
+                session,
+                task,
+                run.success,
+                run.output,
+                agent_id=run.agent_id or None,
+                cursor_url=run.cursor_url,
+            )
+
+            plan_raw = None
+            repo_plan = self.workspace.repo_dir(project.id) / "enrichment-plan.json"
+            if repo_plan.is_file():
+                plan_raw = repo_plan.read_text(encoding="utf-8")
+            elif "enrichment-plan.json" in self.workspace.list_artifacts(project.id):
+                plan_raw = self.workspace.read_artifact(project.id, "enrichment-plan.json")
+            plan = parse_enrichment_plan(plan_raw or run.output)
+            if not plan.get("features"):
+                plan = local_enrichment_plan(audit, pass_number, context.get("notes", []))
+                self.workspace.write_artifact(
+                    project.id,
+                    "enrichment-plan.json",
+                    json.dumps(plan, indent=2),
+                )
+
+            request_input = context.get("request_input")
+            if request_input:
+                for feat in plan.get("features") or []:
+                    if not isinstance(feat, dict):
+                        continue
+                    title = str(feat.get("title") or "feature")
+                    description = str(feat.get("description") or title)
+                    scope = feat.get("scope") or classify_scope(title, description, context.get("notes"))
+                    feat["scope"] = scope
+                    if scope != "uncertain":
+                        continue
+                    await request_input(
+                        agent_id="enrichment",
+                        role="architect",
+                        question=(
+                            f"The factory wants to add “{title}”. This may be out of scope — implement it?"
+                        ),
+                        context_detail=description,
+                        options=["Yes, implement it", "Skip for now — not in v1 scope"],
+                        default_decision="Skip for now — not in v1 scope",
+                        task_id=task.id,
+                    )
+
+            await self._refresh_context(session, project, context)
+            units = plan_from_enrichment_features(
+                plan.get("features") or [],
+                context.get("notes", []),
+                context.get("input_responses", []),
+            )
+            if not units:
+                reason = plan.get("stop_reason") or "no in-scope improvements"
+                self.workspace.append_log(
+                    project.id,
+                    "pipeline.log",
+                    f"[{log_prefix}] Enrichment complete: {reason}",
+                )
+                break
+
+            success, output = await self._run_developer_units(
+                session, project, context, units, command="enrichment_implement"
+            )
+            if not success:
+                context["last_failure"] = output
+                for _ in range(settings.enrichment_fix_attempts_per_pass):
+                    fixed = await self._stage_fix_from_failure(session, project, context)
+                    if not fixed:
+                        return False
+                    success, output = await self._run_developer_units(
+                        session, project, context, units, command="enrichment_fix"
+                    )
+                    if success:
+                        break
+                if not success:
+                    context["last_failure"] = output
+                    return False
+
+            test_task = await self.create_task(
+                session,
+                project.id,
+                f"Tests after enrichment pass {pass_number}",
+                "Run pytest after enrichment",
+                AgentRole.TESTER,
+            )
+            test_ok, test_output = await self.runner._tester(
+                project.id, {**context, "test_stage": "unit"}
+            )
+            await self.complete_task(session, test_task, test_ok, test_output)
+            if not test_ok:
+                context["last_failure"] = test_output
+                return False
+
+            await self._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
+            audit = await audit_live_preview(context)
+            context["preview_audit"] = audit
+
+            qa_task = await self.create_task(
+                session,
+                project.id,
+                f"Product QA (pass {pass_number})",
+                "Evaluate live preview quality",
+                AgentRole.TESTER,
+            )
+            qa_ok, qa_output = await self.runner._tester(
+                project.id, {**context, "test_stage": "product_qa"}
+            )
+            await self.complete_task(session, qa_task, qa_ok, qa_output)
+            context["product_qa"] = qa_output
+
+            passes_done += 1
+            context["enrichment_passes_completed"] = passes_done
+            await self._log_progress(
+                session,
+                project.id,
+                "enrichment",
+                f"Enrichment pass {pass_number} complete",
+                f"Implemented {len(units)} improvement(s); QA {'passed' if qa_ok else 'noted issues'}",
+            )
+
+        context[completion_key] = True
+        return True
+
+    async def _stage_autonomous_enrichment(self, session, project, context) -> bool:
+        ok = await self._run_enrichment_passes(
+            session,
+            project,
+            context,
+            max_passes=settings.max_enrichment_passes,
+            completion_key="enrichment_complete",
+            log_prefix="enrichment",
+        )
+        if ok:
+            context["enrichment_complete"] = True
+            await self.transition(session, project, advance_project(ProjectState.IMPLEMENTING))
+        return ok
+
+    async def _stage_post_smoke_enrichment(self, session, project, context) -> bool:
+        ok = await self._run_enrichment_passes(
+            session,
+            project,
+            context,
+            max_passes=1,
+            completion_key="post_smoke_enrichment_complete",
+            log_prefix="pre-review",
+        )
+        if ok:
+            context["post_smoke_enrichment_complete"] = True
+        return ok
+
     async def _stage_implementing(self, session, project, context) -> bool:
         await self._refresh_context(session, project, context)
         success, output = await self._run_parallel_developers(session, project, context)
@@ -1214,6 +1571,7 @@ class PipelineExecutor:
             session, EventType.TEST_COMPLETED, project.id, task.id, payload={"passed": success, "stage": "unit"}
         )
         if success:
+            context["unit_testing_complete"] = True
             await self._log_progress(
                 session,
                 project.id,
@@ -1221,7 +1579,6 @@ class PipelineExecutor:
                 "Unit tests passed",
                 output[:200] if output else "All unit tests green",
             )
-            await self.transition(session, project, advance_project(ProjectState.IMPLEMENTING))
         else:
             context["last_failure"] = output
         return success
@@ -1341,6 +1698,7 @@ class PipelineExecutor:
             payload={"passed": success, "stage": "smoke"},
         )
         if success:
+            context["smoke_testing_complete"] = True
             await self._log_progress(
                 session,
                 project.id,
@@ -1348,7 +1706,6 @@ class PipelineExecutor:
                 "Smoke tests passed",
                 output[:200] if output else "Health check OK on staging",
             )
-            await self.transition(session, project, advance_project(ProjectState.STAGING_DEPLOY))
         else:
             context["last_failure"] = output
         return success

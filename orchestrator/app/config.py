@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: list[str] = ["http://localhost:3000"]
     max_fix_attempts: int = 5
+    max_enrichment_passes: int = 3
+    max_features_per_enrichment_pass: int = 4
+    enrichment_fix_attempts_per_pass: int = 2
     workspace_root: str = "/data/workspaces"
     factory_config_dir: str = "/data/config"  # Persistent config (encryption key, local.env)
     api_key: str | None = None  # Set in production to require X-API-Key header

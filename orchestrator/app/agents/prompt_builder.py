@@ -75,16 +75,56 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
     if role == AgentRole.ARCHITECT and context.get("last_failure"):
         sections.append(f"\n## Previous attempt failed\n{str(context['last_failure'])[:4000]}")
 
+    enrichment_pass = context.get("enrichment_pass")
+    if enrichment_pass:
+        audit = context.get("preview_audit") or {}
+        sections.append(
+            f"""
+## Autonomous enrichment pass {enrichment_pass}/{context.get('max_enrichment_passes', 3)}
+The app has a **working live preview**. Audit what exists, identify gaps, and propose concrete improvements.
+
+Preview audit:
+- Health OK: {audit.get('health_ok', False)}
+- HTML UI detected: {audit.get('has_html_ui', False)}
+- Issues found: {', '.join(audit.get('issues') or []) or 'none recorded'}
+
+Write `enrichment-plan.json` in the workspace AND include the same JSON in your reply:
+```json
+{{
+  "features": [
+    {{
+      "id": "slug",
+      "title": "Short title",
+      "description": "What to build and why",
+      "scope": "in_scope | uncertain | out_of_scope",
+      "priority": "high | medium | low"
+    }}
+  ],
+  "quality_issues": ["list of UX or reliability problems observed"],
+  "stop_reason": null
+}}
+```
+
+Rules:
+- Propose **{context.get('max_features_per_pass', 4)}** or fewer high-value features that make the app feel complete and polished.
+- Mark `uncertain` when a feature may be out of scope (payments, OAuth, email/SMS, multi-tenant admin, ML, etc.).
+- Mark `out_of_scope` when it clearly contradicts supervisor notes or intake exclusions.
+- Set `stop_reason` to a short string only when the app is genuinely production-ready and no worthwhile improvements remain.
+- Do NOT replan from scratch — iterate on the running product.
+"""
+        )
+
     if role == AgentRole.ARCHITECT:
         if context.get("repo_url"):
             sections.append(
                 """
 ## Your task
-Create project requirements and architecture documentation.
+Create project requirements and architecture documentation for a **complete, polished application** — not a bare-minimum demo.
 
+Plan user journeys, error handling, validation, empty states, and the core features needed for a shippable v1.
 Write two markdown files in the workspace AND repeat both documents in your final reply:
-1. `requirements.md` — functional/non-functional requirements, exclusions, overview
-2. `architecture.md` — stack, API design, testing strategy
+1. `requirements.md` — functional/non-functional requirements, user flows, exclusions, quality bar
+2. `architecture.md` — stack, API design, UI structure, testing strategy
 
 Start the reply with `# Requirements` then `# Architecture` so the factory can copy them.
 
@@ -102,10 +142,10 @@ Do not try to commit, push, clone, or create a repo.
 Put BOTH documents in your final reply as markdown headings the factory will copy into `requirements.md` and `architecture.md`:
 
 # Requirements
-functional/non-functional requirements, exclusions, overview
+functional/non-functional requirements, user flows, exclusions, quality bar for a complete v1
 
 # Architecture
-stack, API design, testing strategy
+stack, API design, UI structure, testing strategy
 
 Use Python 3.12 + FastAPI, Docker on port 8080, pytest coverage, and a `/health` endpoint.
 Do not document a manual docker-compose demo workflow — the factory live preview is how the app is run during development.
@@ -117,9 +157,9 @@ Do not document a manual docker-compose demo workflow — the factory live previ
             sections.append(
                 """
 ## Your task
-Implement or update the **backend API** (FastAPI): routes, models, tests under `tests/`.
-Ensure `/health` and item CRUD endpoints work. Match requirements.md if present.
-Do not start a server or container; the factory live preview already runs the app.
+Implement or update the **backend API** (FastAPI): routes, models, validation, tests under `tests/`.
+Ensure `/health` and core CRUD endpoints work with proper error responses. Match requirements.md if present.
+Build production-quality code — not stubs. Do not start a server or container; the factory live preview already runs the app.
 """
             )
         elif stream == "frontend":
@@ -127,7 +167,7 @@ Do not start a server or container; the factory live preview already runs the ap
                 """
 ## Your task
 Implement or update the **frontend UI**: static HTML/JS served by FastAPI under `app/static/`.
-Provide a usable browser interface for the API.
+Provide a polished browser interface: loading states, empty states, validation feedback, mobile-friendly layout.
 Use relative fetch URLs (`api/items`, not `/api/items`) so the UI works through the factory preview gateway.
 """
             )
@@ -154,8 +194,29 @@ The factory starts the live preview for you — implement the app, do not try to
             sections.append(f"\n## Fix previous failure\n{context['last_failure'][:4000]}")
     elif role == AgentRole.TESTER:
         upstream = context.get("preview_upstream") or context.get("preview_url") or ""
-        sections.append(
-            f"""
+        stage = context.get("test_stage", "unit")
+        if stage == "product_qa":
+            audit = context.get("preview_audit") or {}
+            sections.append(
+                f"""
+## Your task — product QA on the live preview
+Interact with the factory live preview like a user. Do not start Docker or uvicorn.
+
+Live preview: {upstream or "not running"}
+Health: GET {health_path}
+Audit summary: health_ok={audit.get('health_ok')}, has_ui={audit.get('has_html_ui')}
+
+Probe key endpoints and the HTML UI. Write `product-qa.json` with:
+- `passed`: boolean — is the app usable and reasonably polished?
+- `issues`: list of concrete UX/functionality problems
+- `suggested_features`: list of improvements worth implementing next
+
+Reject bare-minimum demos missing empty states, validation, or core flows.
+"""
+            )
+        else:
+            sections.append(
+                f"""
 ## Your task
 Probe the factory live preview. Do not start Docker or uvicorn.
 
@@ -165,13 +226,17 @@ Health: GET {health_path}
 Report whether the running preview meets the acceptance contract. If it is down, say so —
 do not try to start a replacement container.
 """
-        )
+            )
     elif role == AgentRole.REVIEWER:
         tests_passed = context.get("tests_passed", False)
         sections.append(
             f"""
 ## Your task
 Review the project for production readiness. Tests passed: {tests_passed}.
+Enrichment passes completed: {context.get('enrichment_passes_completed', 0)}.
+
+The app should feel **complete and polished**, not a bare scaffold. Reject if core UX polish is missing
+unless enrichment passes were exhausted and remaining gaps are documented.
 
 Write `review.json` with:
 - decision: "approve" or "reject"
