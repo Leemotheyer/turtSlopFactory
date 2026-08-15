@@ -101,6 +101,7 @@ async def _ensure_factory_settings_columns() -> None:
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS work_branch VARCHAR(255)"),
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS isolate_branch BOOLEAN DEFAULT TRUE"),
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS merge_status VARCHAR(32)"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_enrichment_passes INTEGER"),
     ]
     async with engine.begin() as conn:
         for table, stmt in statements:

@@ -31,6 +31,7 @@ export interface Project {
   isolate_branch: boolean;
   merge_status: string | null;
   image_tag: string | null;
+  max_enrichment_passes: number | null;
   preview_url: string | null;
   created_at: string;
   updated_at: string;
@@ -45,10 +46,30 @@ export interface ProjectDetail extends Project {
   preview_status: string | null;
   artifacts: string[];
   pipeline_running: boolean;
+  pipeline_paused?: boolean;
+  pipeline_paused_at?: string | null;
   failed_gate: string | null;
   failed_substage: string | null;
   discovery_status: string | null;
   intake_ready: boolean;
+  max_enrichment_passes?: number | null;
+  factory_default_enrichment_passes?: number;
+  effective_enrichment_passes?: number;
+  pipeline_substage?: {
+    gate?: string;
+    step?: string;
+    phase?: string;
+    current_pass?: number;
+    max_passes?: number;
+    passes_completed?: number;
+  } | null;
+  enrichment_progress?: {
+    phase?: string;
+    current_pass?: number;
+    max_passes?: number;
+    passes_completed?: number;
+    status?: string;
+  } | null;
 }
 
 export type IntakeFieldType = "text" | "textarea" | "select" | "multiselect";
@@ -175,6 +196,7 @@ export interface ProjectSecret {
   masked_value: string;
   description: string;
   configured: boolean;
+  needs_value?: boolean;
 }
 
 export interface ProjectSecrets {
@@ -543,6 +565,7 @@ export async function updateProjectRepo(
     work_branch?: string;
     isolate_branch?: boolean;
     clear_repo?: boolean;
+    max_enrichment_passes?: number | null;
   }
 ): Promise<Project> {
   const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}`, {

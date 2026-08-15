@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import re
 import subprocess
 from uuid import UUID
 
@@ -20,16 +19,7 @@ from app.workspace.scaffolder import (
 )
 
 
-_ENV_KEY_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
-    (re.compile(r"\bopenai\b", re.I), "OPENAI_API_KEY", "OpenAI API key for LLM features"),
-    (re.compile(r"\banthropic\b|\bclaude\b", re.I), "ANTHROPIC_API_KEY", "Anthropic API key"),
-    (re.compile(r"\bstripe\b", re.I), "STRIPE_SECRET_KEY", "Stripe secret key for payments"),
-    (re.compile(r"\bsendgrid\b", re.I), "SENDGRID_API_KEY", "SendGrid API key for email"),
-    (re.compile(r"\btwilio\b", re.I), "TWILIO_AUTH_TOKEN", "Twilio auth token for SMS/voice"),
-    (re.compile(r"\baws\b|\bs3\b", re.I), "AWS_SECRET_ACCESS_KEY", "AWS secret access key"),
-    (re.compile(r"\bgithub\b.*\btoken\b|\bgh[_\s]?token\b", re.I), "GITHUB_TOKEN", "GitHub personal access token"),
-    (re.compile(r"\bapi[_\s]?key\b", re.I), "API_KEY", "Generic API key referenced in project spec"),
-]
+from app.services.env_detection import detect_env_keys_from_text
 
 
 class LocalAgentRunner(AgentRunner):
@@ -49,8 +39,8 @@ class LocalAgentRunner(AgentRunner):
             text += " " + note.get("content", "")
 
         requested: set[str] = set()
-        for pattern, key_name, desc in _ENV_KEY_PATTERNS:
-            if pattern.search(text) and key_name not in configured and key_name not in requested:
+        for key_name, desc in detect_env_keys_from_text(text):
+            if key_name not in configured and key_name not in requested:
                 await request_env(key_name, desc, requested_by="developer")
                 requested.add(key_name)
                 self.workspace.append_log(

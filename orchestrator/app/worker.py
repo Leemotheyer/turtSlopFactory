@@ -59,6 +59,11 @@ class JobQueue:
                     async with SessionLocal() as session:
                         await run_discovery(session, project_id)
                 else:
+                    from app.services.pipeline_control import is_pipeline_paused
+
+                    if is_pipeline_paused(project_id):
+                        logger.info("Skipping queued pipeline for paused project %s", project_id)
+                        continue
                     logger.info("Processing pipeline for %s", project_id)
                     await pipeline_executor.run_pipeline(project_id)
             except Exception:

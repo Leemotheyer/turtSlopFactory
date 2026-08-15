@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db_models import ProjectRow
 from app.models import ProjectState
 from app.pipeline.executor import pipeline_executor
+from app.services.pipeline_control import is_pipeline_paused
 from app.services.pipeline_launcher import schedule_pipeline
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,9 @@ async def maybe_schedule_feedback_pipeline(session: AsyncSession, project_id: UU
     if not row or row.state != ProjectState.REVIEW.value:
         return False
     if pipeline_executor.is_running(project_id):
+        return False
+    if is_pipeline_paused(project_id):
+        logger.info("Skipping feedback pipeline for %s — pipeline is paused", project_id)
         return False
     started = schedule_pipeline(project_id)
     if started:

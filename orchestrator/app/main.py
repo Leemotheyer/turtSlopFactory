@@ -25,6 +25,7 @@ from app.models import FactoryEvent
 from app.services.discovery import auto_submit_expired_intake
 from app.services.input_requests import expire_stale_requests
 from app.services.instance_bootstrap import run_instance_bootstrap
+from app.services.pipeline_control import reconcile_stale_running_tasks
 from app.services.preview_manager import (
     cleanup_orphan_preview_resources,
     ensure_preview_network,
@@ -72,6 +73,8 @@ async def _expire_input_requests_loop() -> None:
 async def lifespan(app: FastAPI):
     await init_db()
     await run_instance_bootstrap()
+    async with SessionLocal() as session:
+        await reconcile_stale_running_tasks(session)
     ensure_preview_network()
     await cleanup_orphan_preview_resources()
     asyncio.create_task(warmup_preview_runtime())

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.db_models import DeploymentRow, ProjectRow
 from app.models import Deployment, ProjectState
@@ -51,8 +52,19 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         "preview_status": preview["preview_status"],
         "artifacts": workspace.list_artifacts(project_id),
         "pipeline_running": pipeline_executor.is_running(project_id),
+        "pipeline_paused": bool(meta.get("pipeline_paused")),
+        "pipeline_paused_at": meta.get("pipeline_paused_at"),
         "failed_gate": meta.get("failed_gate"),
         "failed_substage": meta.get("failed_substage"),
+        "max_enrichment_passes": row.max_enrichment_passes,
+        "factory_default_enrichment_passes": settings.max_enrichment_passes,
+        "effective_enrichment_passes": (
+            row.max_enrichment_passes
+            if row.max_enrichment_passes is not None
+            else settings.max_enrichment_passes
+        ),
+        "pipeline_substage": meta.get("pipeline_substage"),
+        "enrichment_progress": meta.get("enrichment"),
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "created_at": row.created_at.isoformat(),
@@ -103,7 +115,7 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
             detail=f"Cannot run pipeline from state {row.state}",
         )
 
-    started = schedule_pipeline(project_id)
+    started = schedule_pipeline(project_id, force=True)
     if not started:
         return {"status": "already_running", "project_id": str(project_id)}
     mode = "feedback" if row.state == ProjectState.REVIEW.value else "pipeline"
@@ -116,13 +128,12 @@ async def stop_project_pipeline(project_id: UUID, db: AsyncSession = Depends(get
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if not pipeline_executor.is_running(project_id):
-        return {"status": "not_running", "project_id": str(project_id)}
-
-    stopped = stop_pipeline(project_id)
-    if not stopped:
-        return {"status": "not_running", "project_id": str(project_id)}
-    return {"status": "stopping", "project_id": str(project_id)}
+    await stop_pipeline(project_id)
+    return {
+        "status": "stopped",
+        "project_id": str(project_id),
+        "pipeline_paused": True,
+    }
 
 
 @router.get("/{project_id}/agent-activity")

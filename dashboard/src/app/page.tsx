@@ -196,6 +196,7 @@ export default function DashboardPage() {
   const [editRepoUrl, setEditRepoUrl] = useState("");
   const [editBranch, setEditBranch] = useState("main");
   const [editIsolateBranch, setEditIsolateBranch] = useState(true);
+  const [editEnrichmentPasses, setEditEnrichmentPasses] = useState("");
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [repoNote, setRepoNote] = useState<string | null>(null);
@@ -340,8 +341,18 @@ export default function DashboardPage() {
       setEditRepoUrl(detail.repo_url ?? "");
       setEditBranch(detail.base_branch ?? detail.branch ?? "main");
       setEditIsolateBranch(detail.isolate_branch ?? true);
+      setEditEnrichmentPasses(
+        detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""
+      );
     }
-  }, [detail?.id, detail?.repo_url, detail?.branch, detail?.base_branch, detail?.isolate_branch]);
+  }, [
+    detail?.id,
+    detail?.repo_url,
+    detail?.branch,
+    detail?.base_branch,
+    detail?.isolate_branch,
+    detail?.max_enrichment_passes,
+  ]);
 
   useEffect(() => {
     if (showCursor) loadCursor();
@@ -391,7 +402,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!selectedId || !detail) return;
-    if (!AUTO_START_PIPELINE_STATES.has(detail.state) || detail.pipeline_running) return;
+    if (!AUTO_START_PIPELINE_STATES.has(detail.state) || detail.pipeline_running || detail.pipeline_paused) return;
     if (pipelineKickoff.current === selectedId) return;
     pipelineKickoff.current = selectedId;
     runPipeline(selectedId)
@@ -483,6 +494,10 @@ export default function DashboardPage() {
         base_branch: editBranch || "main",
         isolate_branch: editRepoUrl ? editIsolateBranch : false,
         clear_repo: !editRepoUrl,
+        max_enrichment_passes:
+          editEnrichmentPasses.trim() === ""
+            ? null
+            : Math.max(0, Math.min(20, parseInt(editEnrichmentPasses, 10) || 0)),
       });
       await refresh();
     } catch (err) {
@@ -515,6 +530,7 @@ export default function DashboardPage() {
     setStoppingPipeline(true);
     try {
       await stopPipeline(selectedId);
+      pipelineKickoff.current = null;
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to stop pipeline");
@@ -553,7 +569,19 @@ export default function DashboardPage() {
     !!detail &&
     (editRepoUrl !== (detail.repo_url ?? "") ||
       editBranch !== (detail.base_branch ?? detail.branch ?? "main") ||
-      editIsolateBranch !== (detail.isolate_branch ?? true));
+      editIsolateBranch !== (detail.isolate_branch ?? true) ||
+      editEnrichmentPasses !==
+        (detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""));
+
+  const effectiveEnrichmentPasses =
+    detail?.effective_enrichment_passes ??
+    detail?.factory_default_enrichment_passes ??
+    3;
+
+  const enrichmentProgress = detail?.enrichment_progress;
+  const pipelineSubstage = detail?.pipeline_substage;
+  const enrichmentProgressLines =
+    progress?.summary_lines.filter((line) => /enrichment pass/i.test(line)) ?? [];
 
   async function viewArtifact(name: string) {
     if (!selectedId) return;
@@ -1700,6 +1728,19 @@ export default function DashboardPage() {
                     <button className={styles.btnPrimary} onClick={() => setTab("intake")}>
                       Complete intake form
                     </button>
+                  ) : detail.pipeline_paused ? (
+                    <>
+                      <span className={styles.running}>Pipeline paused</span>
+                      <button
+                        type="button"
+                        className={styles.btnPrimary}
+                        onClick={handleRun}
+                        disabled={loading}
+                        title="Clear pause and continue the build pipeline"
+                      >
+                        Resume pipeline
+                      </button>
+                    </>
                   ) : AUTO_START_PIPELINE_STATES.has(detail.state) ? (
                     <span className={styles.running}>Build pipeline starting…</span>
                   ) : (
@@ -2018,22 +2059,118 @@ export default function DashboardPage() {
               </div>
 
               {tab === "overview" && (
-                <div className={styles.pipeline}>
-                  {PIPELINE.map((state, i) => {
-                    const done = currentIdx > i;
-                    const active = detail.state === state;
-                    const failed = ["DIAGNOSING", "FIXING", "AUTONOMOUSLY_BLOCKED"].includes(detail.state) && i === currentIdx;
-                    return (
-                      <div
-                        key={state}
-                        className={`${styles.step} ${done ? styles.stepDone : ""} ${active ? styles.stepActive : ""} ${failed ? styles.stepFailed : ""}`}
-                      >
-                        <div className={styles.stepDot} />
-                        <span>{state.replace(/_/g, " ")}</span>
+                <>
+                  <div className={styles.pipeline}>
+                    {PIPELINE.map((state, i) => {
+                      const done = currentIdx > i;
+                      const active = detail.state === state;
+                      const failed = ["DIAGNOSING", "FIXING", "AUTONOMOUSLY_BLOCKED"].includes(detail.state) && i === currentIdx;
+                      return (
+                        <div
+                          key={state}
+                          className={`${styles.step} ${done ? styles.stepDone : ""} ${active ? styles.stepActive : ""} ${failed ? styles.stepFailed : ""}`}
+                        >
+                          <div className={styles.stepDot} />
+                          <span>{state.replace(/_/g, " ")}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {(detail.state === "IMPLEMENTING" || pipelineSubstage?.step === "enrichment") && (
+                    <div className={styles.substageTrack}>
+                      <h4>Implementation substages</h4>
+                      <div className={styles.substageSteps}>
+                        {[
+                          { id: "implement", label: "Build" },
+                          { id: "unit_test", label: "Unit tests" },
+                          { id: "enrichment", label: "Product enrichment" },
+                        ].map((step) => {
+                          const isEnrichment = step.id === "enrichment";
+                          const active =
+                            pipelineSubstage?.step === "enrichment"
+                              ? isEnrichment
+                              : detail.state === "IMPLEMENTING" &&
+                                !pipelineSubstage?.step &&
+                                step.id === "implement";
+                          return (
+                            <div
+                              key={step.id}
+                              className={`${styles.substageStep} ${active ? styles.substageStepActive : ""}`}
+                            >
+                              {step.label}
+                              {isEnrichment && (
+                                <span className={styles.substageMeta}>
+                                  {detail.max_enrichment_passes != null
+                                    ? `${detail.max_enrichment_passes} max`
+                                    : `${effectiveEnrichmentPasses} max (factory default)`}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  )}
+
+                  {(enrichmentProgress || enrichmentProgressLines.length > 0) && (
+                    <div className={styles.enrichmentPanel}>
+                      <h4>Enrichment iterations</h4>
+                      {enrichmentProgress && (
+                        <p className={styles.enrichmentStatus}>
+                          {enrichmentProgress.phase === "pre-review" ? "Pre-review polish" : "Autonomous enrichment"}
+                          {" — "}
+                          pass {enrichmentProgress.current_pass ?? enrichmentProgress.passes_completed ?? 0}
+                          {" of "}
+                          {enrichmentProgress.max_passes ?? effectiveEnrichmentPasses}
+                          {enrichmentProgress.status ? ` (${enrichmentProgress.status})` : ""}
+                        </p>
+                      )}
+                      {enrichmentProgressLines.length > 0 && (
+                        <ul className={styles.enrichmentHistory}>
+                          {enrichmentProgressLines.map((line, i) => (
+                            <li key={i}>{line.replace(/^✓\s*/, "")}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
+                  <section className={styles.pipelineSettings}>
+                    <h4>Pipeline settings</h4>
+                    <form
+                      className={styles.pipelineSettingsForm}
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        await handleSaveRepo(e);
+                      }}
+                    >
+                      <label className={styles.repoField}>
+                        Enrichment iterations
+                        <input
+                          type="number"
+                          min={0}
+                          max={20}
+                          placeholder={`Factory default (${detail.factory_default_enrichment_passes ?? 3})`}
+                          value={editEnrichmentPasses}
+                          onChange={(e) => setEditEnrichmentPasses(e.target.value)}
+                        />
+                      </label>
+                      <p className={styles.repoHint}>
+                        How many autonomous product-improvement passes run after the first working build.
+                        Leave blank to use the factory default ({detail.factory_default_enrichment_passes ?? 3}).
+                        Set to 0 to skip enrichment.
+                      </p>
+                      <button
+                        type="submit"
+                        className={styles.btnSecondary}
+                        disabled={loading || !repoSettingsDirty}
+                      >
+                        Save pipeline settings
+                      </button>
+                    </form>
+                  </section>
+                </>
               )}
 
               {tab === "intake" && (
@@ -2233,10 +2370,18 @@ export default function DashboardPage() {
 
                     <ul className={styles.secretsList}>
                       {(secrets?.secrets ?? []).map((s) => (
-                        <li key={s.key_name} className={styles.secretItem}>
+                        <li
+                          key={s.key_name}
+                          className={`${styles.secretItem} ${s.needs_value ? styles.secretNeedsValue : ""}`}
+                        >
                           <div>
                             <strong>{s.key_name}</strong>
                             <code>{s.masked_value}</code>
+                            {s.needs_value && (
+                              <p className={styles.secretNeedsHint}>
+                                Placeholder created — enter a value above and save so preview testing can proceed.
+                              </p>
+                            )}
                             {s.description && <p>{s.description}</p>}
                           </div>
                           <button

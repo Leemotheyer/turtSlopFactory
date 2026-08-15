@@ -13,7 +13,6 @@ from app.models import (
     ProjectNote,
     ProjectNoteCreate,
 )
-from app.pipeline.executor import pipeline_executor
 from app.services.feedback_pipeline import maybe_schedule_feedback_pipeline, wants_merge_to_main
 from app.services.git_branching import merge_work_branch_to_base, resolve_branch_plan
 from app.services.input_requests import list_input_requests, respond_to_input
