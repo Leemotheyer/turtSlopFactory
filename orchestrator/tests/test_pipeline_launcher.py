@@ -25,3 +25,4 @@ async def test_schedule_pipeline_starts_background_task():
         assert schedule_pipeline(project_id) is True
         await asyncio.sleep(0.05)
         executor.run_pipeline.assert_awaited_once_with(project_id)
+        executor.register_task.assert_called_once()

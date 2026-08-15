@@ -84,17 +84,52 @@ class CursorCloudRunner:
 
             invalidate_active_agent_cache()
 
+            agent_url = agent.get("url") or f"https://cursor.com/agents/{agent_id}"
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[{role.value}] Cursor cloud agent {agent_id} — {agent_url}",
+            )
+
+            should_stop = context.get("should_stop")
+            on_agent_progress = context.get("on_agent_progress")
+
+            async def _emit_progress(status: str, run_payload: dict) -> None:
+                if not on_agent_progress:
+                    return
+                detail = (run_payload.get("statusMessage") or run_payload.get("message") or "")[:500]
+                await on_agent_progress(
+                    role.value,
+                    status.lower(),
+                    detail,
+                    agent_id=agent_id,
+                    task_id=str(task_id),
+                )
+
+            def _sync_progress(status: str, run_payload: dict) -> None:
+                if not on_agent_progress:
+                    return
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_emit_progress(status, run_payload))
+                except RuntimeError:
+                    pass
+
             try:
                 final_run = await client.wait_for_run(
                     agent_id,
                     run_id,
                     poll_seconds=settings.cursor_cloud_poll_seconds,
                     timeout_seconds=settings.cursor_cloud_timeout_seconds,
+                    should_stop=should_stop,
+                    on_progress=_sync_progress if on_agent_progress else None,
                 )
             except TimeoutError as exc:
                 return False, str(exc), agent_id
 
             status = (final_run.get("status") or "").upper()
+            if status == "CANCELLED":
+                return False, "Stopped by user", agent_id
             result = _as_dict(final_run.get("result"))
             text = result.get("text") or final_run.get("text") or ""
             if isinstance(final_run.get("result"), str) and not text:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -165,15 +166,23 @@ class CursorClient:
         *,
         poll_seconds: float = 5.0,
         timeout_seconds: int = 3600,
+        should_stop: Callable[[], bool] | None = None,
+        on_progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         import asyncio
         import time
 
         terminal = {"FINISHED", "ERROR", "CANCELLED", "EXPIRED"}
         deadline = time.monotonic() + timeout_seconds
+        last_status = ""
         while time.monotonic() < deadline:
+            if should_stop and should_stop():
+                return {"status": "CANCELLED", "result": {"error": "Stopped by user"}}
             run = await self.get_run(agent_id, run_id)
             status = (run.get("status") or "").upper()
+            if on_progress and status and status != last_status:
+                last_status = status
+                on_progress(status, run)
             if status in terminal:
                 return run
             await asyncio.sleep(poll_seconds)

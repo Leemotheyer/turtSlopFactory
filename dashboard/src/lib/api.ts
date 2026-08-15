@@ -630,6 +630,66 @@ export async function runPipeline(projectId: string): Promise<{ status: string }
   return res.json();
 }
 
+export async function stopPipeline(projectId: string): Promise<{ status: string }> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/stop`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to stop pipeline");
+  }
+  return res.json();
+}
+
+export interface AgentActivityItem {
+  task_id: string;
+  title: string;
+  description: string;
+  role: string;
+  status: string;
+  started_at: string;
+  updated_at?: string;
+  output_preview?: string | null;
+  agent_id?: string | null;
+  cursor_url?: string | null;
+  live_status?: string | null;
+  live_detail?: string | null;
+}
+
+export interface AgentActivityFeedItem {
+  id: string;
+  type: string;
+  task_id: string | null;
+  agent_id: string | null;
+  created_at: string;
+  summary: string;
+  detail: string | null;
+  cursor_url: string | null;
+}
+
+export interface AgentActivity {
+  project_id: string;
+  current_state: string;
+  pipeline_running: boolean;
+  stop_requested: boolean;
+  active_agents: AgentActivityItem[];
+  live_agents: Record<string, unknown>[];
+  recent_tasks: AgentActivityItem[];
+  activity_feed: AgentActivityFeedItem[];
+  progress_entries: ProgressEntry[];
+  pipeline_log_tail: string;
+}
+
+export async function fetchAgentActivity(projectId: string): Promise<AgentActivity> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/agent-activity`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch agent activity");
+  return res.json();
+}
+
 export async function promoteProject(projectId: string): Promise<{ production_url: string | null }> {
   const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/promote`, {
     method: "POST",

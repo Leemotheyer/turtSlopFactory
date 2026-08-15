@@ -620,6 +620,126 @@
   color: var(--text);
 }
 
+.agentActivityPanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.agentActiveList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.agentActiveItem {
+  padding: 0.75rem 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.agentActiveHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.agentActiveHeader a {
+  font-size: 0.8rem;
+  margin-left: auto;
+}
+
+.agentActiveStatus {
+  font-size: 0.875rem;
+  color: var(--accent);
+  margin: 0.25rem 0;
+}
+
+.agentActiveDesc {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.35rem 0 0;
+}
+
+.agentFeedDetails {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.agentFeedDetails summary {
+  cursor: pointer;
+  color: var(--muted);
+  user-select: none;
+}
+
+.agentFeedList {
+  list-style: none;
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.agentFeedItem {
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+
+.agentFeedItem time {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-bottom: 0.2rem;
+}
+
+.agentFeedDetail {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.taskDetailRow td {
+  background: var(--bg);
+  border-top: none;
+}
+
+.taskDetailPanel {
+  padding: 0.75rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+.taskDetailPanel p {
+  margin: 0.35rem 0;
+}
+
+.taskOutput {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 12rem;
+  overflow: auto;
+}
+
 .alertBadge {
   font-size: 0.75rem;
   padding: 0.25rem 0.6rem;

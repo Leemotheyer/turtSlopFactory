@@ -112,6 +112,7 @@ class EventType(StrEnum):
     INTAKE_SUBMITTED = "intake.submitted"
     NOTIFICATION_CREATED = "notification.created"
     ENV_REQUIRED = "env.required"
+    PIPELINE_STOPPED = "pipeline.stopped"
 
 
 class NotificationType(StrEnum):

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   addNote,
   connectCursor,
@@ -36,6 +36,8 @@ import {
   mergeToMain,
   respondToInput,
   runPipeline,
+  stopPipeline,
+  fetchAgentActivity,
   setSecret,
   submitIntake,
   updateAgentBackend,
@@ -71,6 +73,7 @@ import {
   type ProjectNote,
   type ProjectSecrets,
   type Task,
+  type AgentActivity,
 } from "@/lib/api";
 import styles from "./page.module.css";
 
@@ -145,6 +148,9 @@ export default function DashboardPage() {
   const [artifactView, setArtifactView] = useState<{ name: string; content: string } | null>(null);
   const [logView, setLogView] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressDigest | null>(null);
+  const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [stoppingPipeline, setStoppingPipeline] = useState(false);
   const [notes, setNotes] = useState<ProjectNote[]>([]);
   const [inputRequests, setInputRequests] = useState<InputRequest[]>([]);
   const [noteText, setNoteText] = useState("");
@@ -241,7 +247,7 @@ export default function DashboardPage() {
       setUnreadCount(unread);
 
       if (selectedId) {
-        const [d, t, dep, e, prog, n, inputs, disc, sec] = await Promise.all([
+        const [d, t, dep, e, prog, n, inputs, disc, sec, activity] = await Promise.all([
           fetchProjectDetail(selectedId),
           fetchProjectTasks(selectedId),
           fetchDeployments(selectedId),
@@ -251,12 +257,14 @@ export default function DashboardPage() {
           fetchInputRequests(selectedId),
           fetchDiscovery(selectedId),
           fetchSecrets(selectedId),
+          fetchAgentActivity(selectedId),
         ]);
         setDetail(d);
         setTasks(t);
         setDeployments(dep);
         setEvents(e);
         setProgress(prog);
+        setAgentActivity(activity);
         setNotes(n);
         setInputRequests(inputs);
         setDiscovery(disc);
@@ -493,6 +501,19 @@ export default function DashboardPage() {
       setError(err instanceof Error ? err.message : "Pipeline start failed");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleStop() {
+    if (!selectedId) return;
+    setStoppingPipeline(true);
+    try {
+      await stopPipeline(selectedId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stop pipeline");
+    } finally {
+      setStoppingPipeline(false);
     }
   }
 
@@ -1651,7 +1672,20 @@ export default function DashboardPage() {
                 </div>
                 <div className={styles.actions}>
                   {detail.pipeline_running ? (
-                    <span className={styles.running}>Pipeline running…</span>
+                    <>
+                      <span className={styles.running}>
+                        {agentActivity?.stop_requested ? "Stopping pipeline…" : "Pipeline running…"}
+                      </span>
+                      <button
+                        type="button"
+                        className={styles.btnDanger}
+                        onClick={handleStop}
+                        disabled={stoppingPipeline || agentActivity?.stop_requested}
+                        title="Hard stop — cancels in-flight work on this project"
+                      >
+                        {stoppingPipeline || agentActivity?.stop_requested ? "Stopping…" : "Stop pipeline"}
+                      </button>
+                    </>
                   ) : detail.state === "REQUESTED" ? (
                     <span className={styles.running}>Starting discovery…</span>
                   ) : detail.state === "DISCOVERY" ? (
@@ -1872,6 +1906,74 @@ export default function DashboardPage() {
                         <li key={i}>{line}</li>
                       ))}
                     </ul>
+                  )}
+                </div>
+              )}
+
+              {agentActivity &&
+                (agentActivity.pipeline_running ||
+                  agentActivity.active_agents.length > 0 ||
+                  agentActivity.activity_feed.length > 0) && (
+                <div className={styles.agentActivityPanel}>
+                  <div className={styles.progressHeader}>
+                    <h3>Agent activity</h3>
+                    {agentActivity.pipeline_running && (
+                      <span className={styles.running}>Live</span>
+                    )}
+                  </div>
+
+                  {agentActivity.active_agents.length > 0 ? (
+                    <ul className={styles.agentActiveList}>
+                      {agentActivity.active_agents.map((agent) => (
+                        <li key={agent.task_id} className={styles.agentActiveItem}>
+                          <div className={styles.agentActiveHeader}>
+                            <span className={styles.roleBadge}>{agent.role}</span>
+                            <strong>{agent.title}</strong>
+                            {agent.cursor_url && (
+                              <a href={agent.cursor_url} target="_blank" rel="noreferrer">
+                                Open in Cursor ↗
+                              </a>
+                            )}
+                          </div>
+                          <p className={styles.agentActiveStatus}>
+                            {agent.live_status
+                              ? `${agent.live_status}${agent.live_detail ? ` — ${agent.live_detail}` : ""}`
+                              : "Working…"}
+                          </p>
+                          {agent.description && (
+                            <p className={styles.agentActiveDesc}>{agent.description}</p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className={styles.emptyHint}>
+                      {detail.pipeline_running
+                        ? "Agents are starting — activity will appear here shortly."
+                        : "No active agents."}
+                    </p>
+                  )}
+
+                  {agentActivity.activity_feed.length > 0 && (
+                    <details className={styles.agentFeedDetails}>
+                      <summary>Recent agent events ({agentActivity.activity_feed.length})</summary>
+                      <ul className={styles.agentFeedList}>
+                        {[...agentActivity.activity_feed].reverse().slice(0, 15).map((item) => (
+                          <li key={item.id} className={styles.agentFeedItem}>
+                            <time>{new Date(item.created_at).toLocaleTimeString()}</time>
+                            <span>{item.summary}</span>
+                            {item.detail && (
+                              <pre className={styles.agentFeedDetail}>{item.detail}</pre>
+                            )}
+                            {item.cursor_url && (
+                              <a href={item.cursor_url} target="_blank" rel="noreferrer">
+                                View agent ↗
+                              </a>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                   )}
                 </div>
               )}
@@ -2156,17 +2258,63 @@ export default function DashboardPage() {
                           <th>Role</th>
                           <th>Status</th>
                           <th>Time</th>
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {tasks.map((t) => (
-                          <tr key={t.id}>
-                            <td>{t.title}</td>
-                            <td><span className={styles.roleBadge}>{t.role}</span></td>
-                            <td><span className={styles[`status_${t.status}`] ?? ""}>{t.status}</span></td>
-                            <td>{new Date(t.created_at).toLocaleString()}</td>
-                          </tr>
-                        ))}
+                        {tasks.map((t) => {
+                          const activityTask = agentActivity?.recent_tasks.find(
+                            (a) => a.task_id === t.id
+                          );
+                          const expanded = expandedTaskId === t.id;
+                          return (
+                            <Fragment key={t.id}>
+                              <tr>
+                                <td>{t.title}</td>
+                                <td><span className={styles.roleBadge}>{t.role}</span></td>
+                                <td><span className={styles[`status_${t.status}`] ?? ""}>{t.status}</span></td>
+                                <td>{new Date(t.created_at).toLocaleString()}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className={styles.btnSecondary}
+                                    onClick={() => setExpandedTaskId(expanded ? null : t.id)}
+                                  >
+                                    {expanded ? "Hide" : "Details"}
+                                  </button>
+                                </td>
+                              </tr>
+                              {expanded && (
+                                <tr className={styles.taskDetailRow}>
+                                  <td colSpan={5}>
+                                    <div className={styles.taskDetailPanel}>
+                                      <p><strong>Description</strong> {t.description || "—"}</p>
+                                      {activityTask?.live_status && (
+                                        <p><strong>Live status</strong> {activityTask.live_status}</p>
+                                      )}
+                                      {activityTask?.output_preview && (
+                                        <div>
+                                          <strong>Output</strong>
+                                          <pre className={styles.taskOutput}>{activityTask.output_preview}</pre>
+                                        </div>
+                                      )}
+                                      {activityTask?.cursor_url && (
+                                        <a href={activityTask.cursor_url} target="_blank" rel="noreferrer">
+                                          Open Cursor agent ↗
+                                        </a>
+                                      )}
+                                      {!activityTask?.output_preview && t.status === "RUNNING" && (
+                                        <p className={styles.emptyHint}>
+                                          Agent is working — check Agent activity on the overview tab for live updates.
+                                        </p>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   )}
@@ -2324,7 +2472,19 @@ function formatEvent(ev: FactoryEvent): string {
     const url = String(p.url ?? "");
     return url ? `${env} preview: ${url}` : `${env} deploy`;
   }
+  if (ev.type === "agent.command.started") {
+    const role = String(p.role ?? "agent");
+    const title = String(p.title ?? p.command ?? "task");
+    return `${role} started: ${title}`;
+  }
+  if (ev.type === "agent.command.output") {
+    const role = String(p.role ?? "agent");
+    const status = String(p.status ?? "working");
+    const detail = p.detail ? ` — ${String(p.detail).slice(0, 60)}` : "";
+    return `${role} ${status}${detail}`;
+  }
   if (ev.type === "agent.command.finished") return String(p.output ?? p.command ?? "").slice(0, 80);
+  if (ev.type === "pipeline.stopped") return "Pipeline stopped by user";
   if (ev.type === "progress.updated") return `${p.title}: ${p.summary}`;
   if (ev.type === "note.added") return String(p.content ?? "").slice(0, 80);
   if (ev.type === "input.requested") return String(p.question ?? "").slice(0, 80);

@@ -42,6 +42,7 @@ from app.services.preview import (
     update_preview_metadata,
 )
 from app.services.preview_manager import (
+    dev_preview_image_tag,
     preview_container_name,
     start_dev_preview,
     start_docker_preview,
@@ -58,15 +59,45 @@ _STAGE_IMPLEMENTING = "implementing"
 _STAGE_UNIT_TESTING = "unit_testing"
 
 
+class PipelineStopped(Exception):
+    """Raised when the user requests a hard stop of the pipeline."""
+
+
 class PipelineExecutor:
     def __init__(self) -> None:
         self.workspace = WorkspaceManager()
         self.runner = create_agent_runner(self.workspace)
         self._running: set[UUID] = set()
+        self._stop_requested: set[UUID] = set()
+        self._pipeline_tasks: dict[UUID, asyncio.Task] = {}
         self._locks: dict[UUID, asyncio.Lock] = {}
 
     def is_running(self, project_id: UUID) -> bool:
         return project_id in self._running
+
+    def is_stop_requested(self, project_id: UUID) -> bool:
+        return project_id in self._stop_requested
+
+    def register_task(self, project_id: UUID, task: asyncio.Task) -> None:
+        self._pipeline_tasks[project_id] = task
+
+        def _clear(_task: asyncio.Task) -> None:
+            self._pipeline_tasks.pop(project_id, None)
+
+        task.add_done_callback(_clear)
+
+    def request_stop(self, project_id: UUID) -> bool:
+        if project_id not in self._running:
+            return False
+        self._stop_requested.add(project_id)
+        task = self._pipeline_tasks.get(project_id)
+        if task and not task.done():
+            task.cancel()
+        return True
+
+    def _check_stop(self, project_id: UUID) -> None:
+        if project_id in self._stop_requested:
+            raise PipelineStopped()
 
     def _lock_for(self, project_id: UUID) -> asyncio.Lock:
         if project_id not in self._locks:
@@ -307,6 +338,18 @@ class PipelineExecutor:
             row.id,
             payload={"status": "RUNNING", "title": title, "role": role.value},
         )
+        await self.emit(
+            session,
+            EventType.AGENT_COMMAND_STARTED,
+            project_id,
+            row.id,
+            agent_id=f"{role.value}-{str(row.id)[:8]}",
+            payload={
+                "role": role.value,
+                "title": title,
+                "description": description[:500],
+            },
+        )
         return row
 
     async def complete_task(
@@ -323,6 +366,51 @@ class PipelineExecutor:
             agent_id=f"{task.role}-{str(task.id)[:8]}",
             payload={"success": success, "output": output[:2000]},
         )
+
+    async def _handle_stop(
+        self,
+        session: AsyncSession,
+        project_id: UUID,
+        project: ProjectRow,
+    ) -> None:
+        await self._cancel_running_tasks(session, project_id)
+        meta = self.workspace.load_metadata(project_id)
+        meta.pop("live_agents", None)
+        self.workspace.save_metadata(project_id, meta)
+        try:
+            await stop_preview(
+                project_id,
+                ephemeral_image=dev_preview_image_tag(project_id),
+            )
+        except Exception:
+            logger.exception("Failed to stop preview while stopping pipeline for %s", project_id)
+        self.workspace.append_log(project_id, "pipeline.log", "[stop] Pipeline stopped by user")
+        await self.emit(
+            session,
+            EventType.PIPELINE_STOPPED,
+            project_id,
+            payload={"state": project.state, "reason": "user_requested"},
+        )
+
+    async def _cancel_running_tasks(self, session: AsyncSession, project_id: UUID) -> None:
+        result = await session.execute(
+            select(TaskRow).where(
+                TaskRow.project_id == project_id,
+                TaskRow.status == TaskStatus.RUNNING.value,
+            )
+        )
+        for task in result.scalars():
+            task.status = TaskStatus.FAILED.value
+            task.updated_at = datetime.utcnow()
+            await self.emit(
+                session,
+                EventType.AGENT_COMMAND_FINISHED,
+                project_id,
+                task.id,
+                agent_id=f"{task.role}-{str(task.id)[:8]}",
+                payload={"success": False, "output": "Stopped by user"},
+            )
+        await session.commit()
 
     async def _refresh_context(self, session: AsyncSession, project: ProjectRow, context: dict) -> None:
         context["notes"] = await get_notes_for_agents(session, project.id)
@@ -348,6 +436,55 @@ class PipelineExecutor:
         spec = load_preview_spec(repo)
         context["preview_health_path"] = meta.get("preview_health_path") or spec.path
         context["preview_app_port"] = meta.get("preview_app_port") or spec.port
+        context["should_stop"] = lambda: self.is_stop_requested(project.id)
+
+    def _bind_agent_progress(self, project_id: UUID) -> object:
+        async def on_agent_progress(
+            role: str,
+            status: str,
+            detail: str = "",
+            *,
+            agent_id: str | None = None,
+            task_id: str | None = None,
+        ) -> None:
+            line = f"[agent-progress] [{role}] {status}"
+            if detail:
+                line += f" — {detail[:200]}"
+            self.workspace.append_log(project_id, "pipeline.log", line)
+            meta = self.workspace.load_metadata(project_id)
+            live = meta.get("live_agents") or {}
+            key = agent_id or f"{role}-{task_id or 'active'}"
+            live[key] = {
+                "role": role,
+                "status": status,
+                "detail": detail[:1000],
+                "agent_id": agent_id,
+                "task_id": task_id,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            meta["live_agents"] = live
+            self.workspace.save_metadata(project_id, meta)
+            parsed_task_id = None
+            if task_id:
+                try:
+                    parsed_task_id = UUID(task_id)
+                except ValueError:
+                    parsed_task_id = None
+            async with SessionLocal() as session:
+                await self.emit(
+                    session,
+                    EventType.AGENT_COMMAND_OUTPUT,
+                    project_id,
+                    parsed_task_id,
+                    agent_id=agent_id,
+                    payload={
+                        "role": role,
+                        "status": status,
+                        "detail": detail[:2000],
+                    },
+                )
+
+        return on_agent_progress
 
     async def _log_progress(
         self,
@@ -539,7 +676,9 @@ class PipelineExecutor:
             if project_id in self._running:
                 return
             self._running.add(project_id)
+            self._stop_requested.discard(project_id)
 
+        stopped = False
         try:
             async with SessionLocal() as session:
                 project = await session.get(ProjectRow, project_id)
@@ -554,6 +693,7 @@ class PipelineExecutor:
                     "tests_passed": False,
                     "notes": [],
                 }
+                context["on_agent_progress"] = self._bind_agent_progress(project_id)
                 await self._refresh_context(session, project, context)
 
                 if project.repo_url:
@@ -630,6 +770,7 @@ class PipelineExecutor:
                 ]
 
                 for expected_gate, substage, stage_fn in stages:
+                    self._check_stop(project_id)
                     await session.refresh(project)
                     current = ProjectState(project.state)
 
@@ -677,25 +818,50 @@ class PipelineExecutor:
                     context.pop("failed_gate", None)
                     context.pop("failed_substage", None)
 
-        except Exception:
-            logger.exception("Pipeline failed for project %s", project_id)
+        except PipelineStopped:
+            stopped = True
             async with SessionLocal() as session:
                 project = await session.get(ProjectRow, project_id)
                 if project:
-                    await self.transition(
-                        session, project, ProjectState.AUTONOMOUSLY_BLOCKED, reason="exception"
-                    )
-                    await create_notification(
-                        session,
-                        project.id,
-                        NotificationType.PIPELINE_BLOCKED,
-                        "Pipeline blocked",
-                        f"{project.name} hit an unexpected error and needs review.",
-                        action="guidance",
-                    )
+                    await self._handle_stop(session, project_id, project)
+        except asyncio.CancelledError:
+            if project_id in self._stop_requested:
+                stopped = True
+                async with SessionLocal() as session:
+                    project = await session.get(ProjectRow, project_id)
+                    if project:
+                        await self._handle_stop(session, project_id, project)
+        except Exception:
+            if project_id in self._stop_requested:
+                stopped = True
+                async with SessionLocal() as session:
+                    project = await session.get(ProjectRow, project_id)
+                    if project:
+                        await self._handle_stop(session, project_id, project)
+            else:
+                logger.exception("Pipeline failed for project %s", project_id)
+                async with SessionLocal() as session:
+                    project = await session.get(ProjectRow, project_id)
+                    if project:
+                        await self.transition(
+                            session, project, ProjectState.AUTONOMOUSLY_BLOCKED, reason="exception"
+                        )
+                        await create_notification(
+                            session,
+                            project.id,
+                            NotificationType.PIPELINE_BLOCKED,
+                            "Pipeline blocked",
+                            f"{project.name} hit an unexpected error and needs review.",
+                            action="guidance",
+                        )
         finally:
             async with self._lock_for(project_id):
                 self._running.discard(project_id)
+                self._stop_requested.discard(project_id)
+                meta = self.workspace.load_metadata(project_id)
+                if not stopped:
+                    meta.pop("live_agents", None)
+                    self.workspace.save_metadata(project_id, meta)
 
     async def _handle_failure(
         self,

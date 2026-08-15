@@ -12,9 +12,9 @@ from app.services.secrets import get_github_token, maybe_request_github_token
 from app.services.discovery import get_discovery
 from app.pipeline.executor import pipeline_executor
 from app.services.factory_settings import get_preview_origin
-from app.services.pipeline_launcher import schedule_pipeline
+from app.services.pipeline_launcher import schedule_pipeline, stop_pipeline
 from app.services.preview import preview_from_metadata
-from app.workspace.manager import WorkspaceManager
+from app.services.agent_activity import get_agent_activity
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
 workspace = WorkspaceManager()
@@ -106,6 +106,36 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
     if not started:
         return {"status": "already_running", "project_id": str(project_id)}
     return {"status": "started", "project_id": str(project_id)}
+
+
+@router.post("/{project_id}/stop")
+async def stop_project_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not pipeline_executor.is_running(project_id):
+        return {"status": "not_running", "project_id": str(project_id)}
+
+    stopped = stop_pipeline(project_id)
+    if not stopped:
+        return {"status": "not_running", "project_id": str(project_id)}
+    return {"status": "stopping", "project_id": str(project_id)}
+
+
+@router.get("/{project_id}/agent-activity")
+async def get_project_agent_activity(project_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    return await get_agent_activity(
+        db,
+        project_id,
+        pipeline_running=pipeline_executor.is_running(project_id),
+        stop_requested=pipeline_executor.is_stop_requested(project_id),
+        current_state=row.state,
+    )
 
 
 @router.post("/{project_id}/promote")

@@ -96,6 +96,15 @@ class FactoryAgentRunner(LocalAgentRunner):
             f"[{role.value}] Using model {model}",
         )
 
+        on_agent_progress = context.get("on_agent_progress")
+        if on_agent_progress:
+            await on_agent_progress(
+                role.value,
+                "starting",
+                f"Launching {effective_backend} agent",
+                task_id=str(task_id),
+            )
+
         try:
             if effective_backend == "cursor_cloud":
                 async with SessionLocal() as session:
@@ -138,6 +147,10 @@ class FactoryAgentRunner(LocalAgentRunner):
             return await super().run(role, project_id, task_id, workspace, context)
 
         if not success:
+            if "stopped by user" in output.lower():
+                run.success = False
+                run.output = output
+                return run
             capacity_blocked = any(
                 phrase in output.lower()
                 for phrase in (
@@ -162,6 +175,14 @@ class FactoryAgentRunner(LocalAgentRunner):
         else:
             run.success = True
             run.output = output
+        if on_agent_progress:
+            await on_agent_progress(
+                role.value,
+                "finished" if run.success else "failed",
+                (run.output or "")[:300],
+                agent_id=run.agent_id,
+                task_id=str(task_id),
+            )
         return run
 
     async def _finalize_reviewer(
