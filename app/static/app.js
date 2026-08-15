@@ -25,13 +25,13 @@ function formatTime(iso) {
 }
 
 async function fetchProjects() {
-  const res = await fetch('/api/projects');
+  const res = await fetch('api/projects');
   if (!res.ok) throw new Error('Failed to load projects');
   return res.json();
 }
 
 async function fetchProject(id) {
-  const res = await fetch(`/api/projects/${id}`);
+  const res = await fetch(`api/projects/${id}`);
   if (!res.ok) throw new Error('Project not found');
   return res.json();
 }
@@ -117,7 +117,7 @@ form.addEventListener('submit', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Starting…';
   try {
-    const res = await fetch('/api/projects', {
+    const res = await fetch('api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, idea }),
