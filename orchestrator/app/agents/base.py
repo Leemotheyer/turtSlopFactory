@@ -13,6 +13,7 @@ class AgentRun:
     task_id: UUID | None = None
     role: AgentRole = AgentRole.DEVELOPER
     agent_id: str = ""
+    cursor_url: str | None = None
     started_at: datetime = field(default_factory=datetime.utcnow)
     finished_at: datetime | None = None
     success: bool = False

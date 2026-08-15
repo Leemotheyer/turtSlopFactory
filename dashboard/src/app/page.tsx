@@ -46,6 +46,7 @@ import {
   fetchCursorModels,
   agentBackendLabel,
   ensurePublicConfig,
+  resolvePreviewUrl,
   completeSetup,
   fetchSetupStatus,
   updatePreviewHost,
@@ -946,7 +947,7 @@ export default function DashboardPage() {
   const openInputs = inputRequests.filter((r) => r.status === "open");
   const runningTasks = tasks.filter((t) => t.status === "RUNNING");
   const pendingSecrets = secrets?.pending_requirements.length ?? 0;
-  const livePreviewUrl = detail?.preview_url ?? detail?.staging_url;
+  const livePreviewUrl = resolvePreviewUrl(detail?.preview_url ?? detail?.staging_url);
   const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
 
   const defaultAgentModel =
@@ -1582,9 +1583,9 @@ export default function DashboardPage() {
                         {repoLabel(p.repo_url)}
                       </span>
                     )}
-                    {p.preview_url && (
+                    {resolvePreviewUrl(p.preview_url) && (
                       <a
-                        href={p.preview_url}
+                        href={resolvePreviewUrl(p.preview_url)!}
                         target="_blank"
                         rel="noreferrer"
                         className={styles.previewLink}
@@ -1753,8 +1754,13 @@ export default function DashboardPage() {
 
               <div className={styles.meta}>
                 {detail.image_tag && <span>Image: <code>{detail.image_tag}</code></span>}
-                {detail.production_url && (
-                  <a href={detail.production_url} target="_blank" rel="noreferrer" className={styles.prodLink}>
+                {detail.production_url && resolvePreviewUrl(detail.production_url) && (
+                  <a
+                    href={resolvePreviewUrl(detail.production_url)!}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={styles.prodLink}
+                  >
                     Production ↗
                   </a>
                 )}

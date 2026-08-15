@@ -76,3 +76,16 @@ def test_match_member_spend_fallback():
     members = [{"email": "alice@example.com", "spendCents": 100}]
     match = _match_member_spend(members, None)
     assert match["spendCents"] == 100
+
+
+@pytest.mark.asyncio
+async def test_archive_agent_sends_empty_json_body():
+    from unittest.mock import AsyncMock, patch
+
+    client = CursorClient("test-key")
+    client._request = AsyncMock(return_value={"id": "bc-1"})  # type: ignore[method-assign]
+
+    await client.archive_agent("bc-1")
+
+    client._request.assert_awaited_once_with("POST", "/v1/agents/bc-1/archive", json={})
+    await client.close()

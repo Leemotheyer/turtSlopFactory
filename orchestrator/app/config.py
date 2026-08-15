@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     cursor_agent_model: str = "composer-2"
     cursor_cloud_poll_seconds: float = 5.0
     cursor_cloud_timeout_seconds: int = 3600
+    cursor_api_timeout_seconds: float = 120.0  # HTTP timeout for Cursor Cloud API calls
     # Parallel agent limits — factory stays under Cursor subscription concurrent agent caps
     max_parallel_agents: int = 4
     cursor_concurrent_agent_limit: int = 8  # Typical Pro plan; override via dashboard or env

@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 CURSOR_API_BASE = "https://api.cursor.com"
@@ -84,12 +86,13 @@ class CursorUsageSummary:
 
 
 class CursorClient:
-    def __init__(self, api_key: str, timeout: float = 30.0) -> None:
+    def __init__(self, api_key: str, timeout: float | None = None) -> None:
         self.api_key = api_key.strip()
+        resolved_timeout = timeout if timeout is not None else settings.cursor_api_timeout_seconds
         self._client = httpx.AsyncClient(
             base_url=CURSOR_API_BASE,
             auth=(self.api_key, ""),
-            timeout=timeout,
+            timeout=resolved_timeout,
             headers={"Content-Type": "application/json"},
         )
 
@@ -151,7 +154,8 @@ class CursorClient:
         return await self._request("GET", f"/v1/agents/{agent_id}")
 
     async def archive_agent(self, agent_id: str) -> dict[str, Any]:
-        return await self._request("POST", f"/v1/agents/{agent_id}/archive")
+        # Cursor rejects POSTs with Content-Type: application/json and an empty body.
+        return await self._request("POST", f"/v1/agents/{agent_id}/archive", json={})
 
     async def list_repositories(self) -> list[dict[str, Any]]:
         data = await self._request("GET", "/v1/repositories")

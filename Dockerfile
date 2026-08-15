@@ -69,6 +69,8 @@ COPY deploy/start-postgres.sh /deploy/start-postgres.sh
 COPY deploy/healthcheck.sh /deploy/healthcheck.sh
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/factory.conf
 
+RUN sed -i 's/\r$//' /entrypoint.sh /deploy/*.sh
+
 RUN chmod +x /entrypoint.sh /deploy/wait-for-services.sh /deploy/start-postgres.sh /deploy/healthcheck.sh
 
 ENV FACTORY_DATA=/data \

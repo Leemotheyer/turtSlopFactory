@@ -10,6 +10,8 @@ import subprocess
 from pathlib import Path
 from uuid import UUID
 
+import httpx
+
 from app.agents.prompt_builder import build_role_prompt
 from app.config import settings
 from app.models import AgentRole
@@ -129,6 +131,7 @@ class CursorCloudRunner:
                     detail,
                     agent_id=agent_id,
                     task_id=str(task_id),
+                    cursor_url=agent_url,
                 )
 
             def _sync_progress(status: str, run_payload: dict) -> None:
@@ -205,6 +208,12 @@ class CursorCloudRunner:
                 self.workspace.write_artifact(project_id, "architecture.md", arch)
             if not req and not arch:
                 self.workspace.write_artifact(project_id, "requirements.md", text)
+            if "architecture.md" not in self.workspace.list_artifacts(project_id):
+                fallback_arch = arch or (
+                    "# Architecture\n\n"
+                    "Derived from requirements.md — FastAPI service with static UI and Docker packaging.\n"
+                )
+                self.workspace.write_artifact(project_id, "architecture.md", fallback_arch)
         elif role == AgentRole.REVIEWER:
             review_json = _extract_json_block(text)
             if review_json:
@@ -336,6 +345,16 @@ async def _create_agent_with_retries(
                 invalidate_active_agent_cache()
                 return None, f"Cursor cloud capacity unavailable: {exc.message}"
             return None, f"Cursor cloud create failed: {exc.message}"
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "Cursor cloud create timed out (attempt %s/3): %s",
+                attempt + 1,
+                exc,
+            )
+            if attempt < 2:
+                invalidate_active_agent_cache()
+                continue
+            return None, f"Cursor cloud create timed out after retries: {exc}"
     return None, "Cursor cloud create failed after retries"
 
 

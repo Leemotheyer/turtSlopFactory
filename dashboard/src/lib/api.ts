@@ -234,6 +234,21 @@ function browserOrigin(): string {
   return window.location.origin;
 }
 
+/** Rebase /preview/... links onto the current browser origin (fixes missing :8044 port). */
+export function resolvePreviewUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (!parsed.pathname.startsWith("/preview/")) {
+      return sanitizeApiUrl(url);
+    }
+    const origin = browserOrigin().replace(/\/$/, "");
+    return `${origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return url;
+  }
+}
+
 /** Drop stale URLs that point at the internal API port or a different browser origin. */
 function sanitizeApiUrl(url: string): string {
   const origin = browserOrigin();

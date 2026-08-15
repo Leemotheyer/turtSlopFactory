@@ -23,12 +23,45 @@ _AGENT_EVENT_TYPES = {
 workspace = WorkspaceManager()
 
 
-def _cursor_url(agent_id: str | None) -> str | None:
-    if not agent_id or agent_id.startswith(("cursor_local", "local")):
+def _is_cursor_cloud_agent_id(agent_id: str) -> bool:
+    return agent_id.startswith("bc-")
+
+
+def _cursor_url(agent_id: str | None, explicit_url: str | None = None) -> str | None:
+    if explicit_url and explicit_url.startswith("http"):
+        return explicit_url
+    if not agent_id:
+        return None
+    if agent_id.startswith(("cursor_local", "cursor_cloud", "local")):
         return None
     if agent_id.startswith("http"):
         return agent_id
+    if agent_id.startswith(("architect-", "developer-", "reviewer-", "tester-")):
+        return None
+    if not _is_cursor_cloud_agent_id(agent_id):
+        return None
     return f"https://cursor.com/agents/{agent_id}"
+
+
+def _remember_task_agent(
+    agent_ids_by_task: dict[str, str],
+    cursor_urls_by_task: dict[str, str],
+    task_id: str,
+    agent_id: str | None,
+    *,
+    cursor_url: str | None = None,
+) -> None:
+    """Prefer real Cursor cloud agent ids over placeholder role-task ids."""
+    if cursor_url and cursor_url.startswith("http"):
+        cursor_urls_by_task[task_id] = cursor_url
+    if not agent_id:
+        return
+    existing = agent_ids_by_task.get(task_id)
+    if _is_cursor_cloud_agent_id(agent_id):
+        agent_ids_by_task[task_id] = agent_id
+        cursor_urls_by_task.setdefault(task_id, cursor_url or f"https://cursor.com/agents/{agent_id}")
+    elif not existing or not _is_cursor_cloud_agent_id(existing):
+        agent_ids_by_task[task_id] = agent_id
 
 
 async def get_agent_activity(
@@ -54,7 +87,7 @@ async def get_agent_activity(
             EventRow.type.in_(_AGENT_EVENT_TYPES),
         )
         .order_by(EventRow.created_at.desc())
-        .limit(80)
+        .limit(200)
     )
     events = list(reversed(event_result.scalars().all()))
 
@@ -68,12 +101,20 @@ async def get_agent_activity(
 
     outputs_by_task: dict[str, str] = {}
     agent_ids_by_task: dict[str, str] = {}
+    cursor_urls_by_task: dict[str, str] = {}
     for ev in events:
-        if ev.task_id and ev.type == EventType.AGENT_COMMAND_FINISHED.value:
-            payload = ev.payload or {}
-            outputs_by_task[str(ev.task_id)] = str(payload.get("output") or "")
-        if ev.task_id and ev.agent_id:
-            agent_ids_by_task[str(ev.task_id)] = ev.agent_id
+        tid = str(ev.task_id) if ev.task_id else None
+        payload = ev.payload if isinstance(ev.payload, dict) else {}
+        if tid and ev.type == EventType.AGENT_COMMAND_FINISHED.value:
+            outputs_by_task[tid] = str(payload.get("output") or "")
+        if tid:
+            _remember_task_agent(
+                agent_ids_by_task,
+                cursor_urls_by_task,
+                tid,
+                ev.agent_id,
+                cursor_url=str(payload["cursor_url"]) if payload.get("cursor_url") else None,
+            )
 
     meta = workspace.load_metadata(project_id)
     live_agents = meta.get("live_agents") or {}
@@ -97,7 +138,10 @@ async def get_agent_activity(
                 "status": task.status,
                 "started_at": task.created_at.isoformat(),
                 "agent_id": live.get("agent_id") or agent_id,
-                "cursor_url": _cursor_url(live.get("agent_id") or agent_id),
+                "cursor_url": _cursor_url(
+                    live.get("agent_id") or agent_id,
+                    live.get("cursor_url") or cursor_urls_by_task.get(tid),
+                ),
                 "live_status": live.get("status"),
                 "live_detail": live.get("detail"),
             }
@@ -106,7 +150,9 @@ async def get_agent_activity(
     recent_tasks = []
     for task in tasks[:20]:
         tid = str(task.id)
-        agent_id = agent_ids_by_task.get(tid)
+        live = next((v for v in live_agents.values() if v.get("task_id") == tid), {})
+        agent_id = live.get("agent_id") or agent_ids_by_task.get(tid)
+        explicit_url = live.get("cursor_url") or cursor_urls_by_task.get(tid)
         recent_tasks.append(
             {
                 "task_id": tid,
@@ -118,7 +164,7 @@ async def get_agent_activity(
                 "updated_at": task.updated_at.isoformat(),
                 "output_preview": (outputs_by_task.get(tid) or "")[:500] or None,
                 "agent_id": agent_id,
-                "cursor_url": _cursor_url(agent_id),
+                "cursor_url": _cursor_url(agent_id, explicit_url),
             }
         )
 
@@ -134,7 +180,11 @@ async def get_agent_activity(
                 "created_at": ev.created_at.isoformat(),
                 "summary": _summarize_event(ev.type, payload),
                 "detail": _event_detail(ev.type, payload),
-                "cursor_url": _cursor_url(ev.agent_id),
+                "cursor_url": _cursor_url(
+                    ev.agent_id,
+                    (payload.get("cursor_url") if isinstance(payload, dict) else None)
+                    or (cursor_urls_by_task.get(str(ev.task_id)) if ev.task_id else None),
+                ),
             }
         )
 

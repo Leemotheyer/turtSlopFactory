@@ -35,6 +35,14 @@ def _should_append_public_port(hostname: str, port: int | None) -> bool:
     return False
 
 
+def _gateway_origin(host_header: str, *, scheme: str = "http") -> str:
+    """Browser-reachable gateway origin; adds :8044-style port for local/IP hosts when omitted."""
+    hostname, port = _split_host_port(host_header)
+    if port is not None:
+        return f"{scheme}://{host_header}".rstrip("/")
+    return build_public_origin(host_header, scheme=scheme, public_port=settings.dashboard_port)
+
+
 def build_public_origin(
     host: str,
     *,
@@ -67,10 +75,14 @@ def resolve_request_context(request: Request | None) -> tuple[str, str, str, boo
     if forwarded:
         host_header = forwarded.split(",")[0].strip()
         scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-        hostname, _ = _split_host_port(host_header)
+        hostname, port = _split_host_port(host_header)
         ws_scheme = "wss" if scheme == "https" else "ws"
-        api_url = f"{scheme}://{host_header}".rstrip("/")
+        api_url = _gateway_origin(host_header, scheme=scheme)
         ws_url = f"{ws_scheme}://{host_header}".rstrip("/")
+        if port is None:
+            _, ws_port = _split_host_port(api_url.replace(f"{scheme}://", "", 1))
+            if ws_port:
+                ws_url = f"{ws_scheme}://{hostname}:{ws_port}"
         return hostname, api_url, ws_url, True
 
     host_header = request.headers.get("host") or default_host
@@ -80,9 +92,14 @@ def resolve_request_context(request: Request | None) -> tuple[str, str, str, boo
     # Standard HTTP(S) ports or any non-API port (e.g. 8044) — single-origin gateway deploy
     is_gateway_port = port in (80, 443, None) or (port is not None and port != settings.api_port)
     if is_gateway_port:
-        api_url = f"{scheme}://{host_header}".rstrip("/")
+        api_url = _gateway_origin(host_header, scheme=scheme)
         ws_scheme = "wss" if scheme == "https" else "ws"
-        return hostname, api_url, f"{ws_scheme}://{host_header}".rstrip("/"), True
+        ws_host = host_header
+        if port is None:
+            _, ws_port = _split_host_port(api_url.replace(f"{scheme}://", "", 1))
+            if ws_port:
+                ws_host = f"{hostname}:{ws_port}"
+        return hostname, api_url, f"{ws_scheme}://{ws_host}".rstrip("/"), True
 
     preview_host = default_host if hostname in ("localhost", "127.0.0.1") else hostname
     api_url = f"http://{preview_host}:{settings.api_port}"

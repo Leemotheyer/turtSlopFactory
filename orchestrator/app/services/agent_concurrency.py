@@ -228,6 +228,8 @@ async def reclaim_idle_factory_agents(api_key: str, *, keep_recent: int = 3) -> 
     """Archive finished factory-* cloud agents so account caps do not block new creates."""
     archived = 0
     idle_factory: list[dict] = []
+    max_archive_per_call = 15
+    consecutive_failures = 0
     async with CursorClient(api_key) as client:
         cursor: str | None = None
         for _ in range(8):
@@ -244,14 +246,20 @@ async def reclaim_idle_factory_agents(api_key: str, *, keep_recent: int = 3) -> 
             if not cursor:
                 break
         for agent in idle_factory[max(0, keep_recent) :]:
+            if archived >= max_archive_per_call:
+                break
             agent_id = agent.get("id")
             if not agent_id:
                 continue
             try:
                 await client.archive_agent(str(agent_id))
                 archived += 1
+                consecutive_failures = 0
             except CursorApiError as exc:
+                consecutive_failures += 1
                 logger.warning("Could not archive idle factory agent %s: %s", agent_id, exc.message)
+                if consecutive_failures >= 3:
+                    break
     if archived:
         invalidate_active_agent_cache()
     return archived

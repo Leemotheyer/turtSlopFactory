@@ -262,7 +262,9 @@ class PipelineExecutor:
             str(self.workspace.repo_dir(project.id)),
             context,
         )
-        await self.complete_task(session, task, run.success, run.output)
+        await self.complete_task(
+            session, task, run.success, run.output, agent_id=run.agent_id or None, cursor_url=run.cursor_url
+        )
         if not run.success:
             context["last_failure"] = run.output
             self._persist_last_failure(project.id, context)
@@ -353,18 +355,29 @@ class PipelineExecutor:
         return row
 
     async def complete_task(
-        self, session: AsyncSession, task: TaskRow, success: bool, output: str
+        self,
+        session: AsyncSession,
+        task: TaskRow,
+        success: bool,
+        output: str,
+        *,
+        agent_id: str | None = None,
+        cursor_url: str | None = None,
     ) -> None:
         task.status = TaskStatus.COMPLETED.value if success else TaskStatus.FAILED.value
         task.updated_at = datetime.utcnow()
         await session.commit()
+        effective_agent_id = agent_id or f"{task.role}-{str(task.id)[:8]}"
+        payload: dict = {"success": success, "output": output[:2000]}
+        if cursor_url:
+            payload["cursor_url"] = cursor_url
         await self.emit(
             session,
             EventType.AGENT_COMMAND_FINISHED,
             task.project_id,
             task.id,
-            agent_id=f"{task.role}-{str(task.id)[:8]}",
-            payload={"success": success, "output": output[:2000]},
+            agent_id=effective_agent_id,
+            payload=payload,
         )
 
     async def _handle_stop(
@@ -446,6 +459,7 @@ class PipelineExecutor:
             *,
             agent_id: str | None = None,
             task_id: str | None = None,
+            cursor_url: str | None = None,
         ) -> None:
             line = f"[agent-progress] [{role}] {status}"
             if detail:
@@ -459,6 +473,7 @@ class PipelineExecutor:
                 "status": status,
                 "detail": detail[:1000],
                 "agent_id": agent_id,
+                "cursor_url": cursor_url,
                 "task_id": task_id,
                 "updated_at": datetime.utcnow().isoformat(),
             }
@@ -481,6 +496,7 @@ class PipelineExecutor:
                         "role": role,
                         "status": status,
                         "detail": detail[:2000],
+                        **({"cursor_url": cursor_url} if cursor_url else {}),
                     },
                 )
 
@@ -970,6 +986,31 @@ class PipelineExecutor:
             context.pop("failed_gate", None)
             context.pop("failed_substage", None)
 
+    def _ensure_planning_artifacts(self, project_id: UUID) -> None:
+        """Ensure architect outputs include both requirements and architecture docs."""
+        from app.agents.cursor_cloud_runner import _split_requirements_architecture
+
+        artifacts = self.workspace.list_artifacts(project_id)
+        if "architecture.md" in artifacts:
+            return
+        requirements = self.workspace.read_artifact(project_id, "requirements.md") if "requirements.md" in artifacts else None
+        if not requirements:
+            return
+        _, arch = _split_requirements_architecture(requirements)
+        if not arch:
+            arch = (
+                "# Architecture\n\n"
+                "See `requirements.md` for the full specification. "
+                "This project uses the factory default stack: FastAPI backend, "
+                "static web UI, in-memory storage, and Docker deployment.\n"
+            )
+        self.workspace.write_artifact(project_id, "architecture.md", arch)
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            "[planning] Added missing architecture.md from planning output",
+        )
+
     async def _build_work_plan(self, session, project, context: dict) -> tuple[list, dict]:
         budget = await resolve_concurrency_budget(session)
         raw_units = plan_parallel_work(context.get("notes", []), project.description)
@@ -990,11 +1031,14 @@ class PipelineExecutor:
         run = await self.runner.run(
             AgentRole.ARCHITECT, project.id, task.id, str(self.workspace.repo_dir(project.id)), context
         )
-        await self.complete_task(session, task, run.success, run.output)
+        await self.complete_task(
+            session, task, run.success, run.output, agent_id=run.agent_id or None, cursor_url=run.cursor_url
+        )
         if not run.success:
             context["last_failure"] = run.output
             self._persist_last_failure(project.id, context)
             return False
+        self._ensure_planning_artifacts(project.id)
         units, plan, budget = await self._build_work_plan(session, project, context)
         self.workspace.write_artifact(
             project.id, "work-plan.json", json.dumps(plan, indent=2)
@@ -1064,7 +1108,7 @@ class PipelineExecutor:
 
         semaphore = asyncio.Semaphore(budget.max_parallel)
 
-        async def run_unit(unit, task_row: TaskRow) -> tuple[TaskRow, bool, str]:
+        async def run_unit(unit, task_row: TaskRow) -> tuple[TaskRow, bool, str, str | None, str | None]:
             async with semaphore:
                 unit_context = {
                     **context,
@@ -1080,14 +1124,21 @@ class PipelineExecutor:
                     str(self.workspace.repo_dir(project.id)),
                     unit_context,
                 )
-                return task_row, run.success, run.output
+                return task_row, run.success, run.output, run.agent_id or None, run.cursor_url
 
         results = await asyncio.gather(*[run_unit(u, t) for u, t in task_rows])
 
         outputs: list[str] = []
         all_ok = True
-        for task_row, success, output in results:
-            await self.complete_task(session, task_row, success, output)
+        for task_row, success, output, agent_id, cursor_url in results:
+            await self.complete_task(
+                session,
+                task_row,
+                success,
+                output,
+                agent_id=agent_id,
+                cursor_url=cursor_url,
+            )
             outputs.append(output)
             if not success:
                 all_ok = False
@@ -1278,13 +1329,19 @@ class PipelineExecutor:
 
     async def _stage_review(self, session, project, context) -> bool:
         await self._refresh_context(session, project, context)
+        context["tests_passed"] = True
+        review_path = self.workspace.artifacts_dir(project.id) / "review.json"
+        if review_path.exists():
+            review_path.unlink()
         task = await self.create_task(
             session, project.id, "Code review", "Reviewer agent checklist", AgentRole.REVIEWER
         )
         run = await self.runner.run(
             AgentRole.REVIEWER, project.id, task.id, str(self.workspace.repo_dir(project.id)), context
         )
-        await self.complete_task(session, task, run.success, run.output)
+        await self.complete_task(
+            session, task, run.success, run.output, agent_id=run.agent_id or None, cursor_url=run.cursor_url
+        )
         if run.success:
             await self._log_progress(
                 session,

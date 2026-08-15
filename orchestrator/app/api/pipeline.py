@@ -44,7 +44,7 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         "merge_status": row.merge_status,
         "image_tag": row.image_tag,
         "staging_url": preview["staging_url"],
-        "production_url": meta.get("production_url"),
+        "production_url": preview["preview_url"] if meta.get("production_url") else None,
         "preview_url": preview["preview_url"],
         "preview_port": preview["preview_port"],
         "preview_type": preview["preview_type"],
@@ -140,7 +140,9 @@ async def get_project_agent_activity(project_id: UUID, db: AsyncSession = Depend
 
 
 @router.post("/{project_id}/promote")
-async def promote_to_production(project_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+async def promote_to_production(
+    project_id: UUID, request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
     row = await db.get(ProjectRow, project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -154,10 +156,12 @@ async def promote_to_production(project_id: UUID, db: AsyncSession = Depends(get
 
     await db.refresh(row)
     meta = workspace.load_metadata(project_id)
+    origin = await get_preview_origin(db, request)
+    preview = preview_from_metadata(meta, origin=origin, project_id=project_id)
     return {
         "status": "promoted",
         "state": row.state,
-        "production_url": meta.get("production_url"),
+        "production_url": preview["preview_url"] if meta.get("production_url") else None,
     }
 
 

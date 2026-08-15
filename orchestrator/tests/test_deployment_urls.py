@@ -66,6 +66,19 @@ def test_resolve_gateway_localhost_name_nonstandard_port():
     assert gateway is True
 
 
+def test_resolve_gateway_localhost_without_port():
+    """Host header localhost (no port) must still get :8044 in gateway mode."""
+    request = MagicMock()
+    request.headers = {"host": "localhost"}
+    request.url.scheme = "http"
+
+    host, api_url, ws_url, gateway = resolve_request_context(request)
+    assert host == "localhost"
+    assert api_url == "http://localhost:8044"
+    assert ws_url == "ws://localhost:8044"
+    assert gateway is True
+
+
 def test_build_public_origin_localhost_adds_dashboard_port():
     assert build_public_origin("localhost") == "http://localhost:8044"
 
