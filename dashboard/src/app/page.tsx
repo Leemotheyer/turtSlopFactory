@@ -206,6 +206,7 @@ export default function DashboardPage() {
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const discoveryKickoff = useRef<string | null>(null);
   const pipelineKickoff = useRef<string | null>(null);
+  const intakeInitializedFor = useRef<string | null>(null);
 
   function selectProject(id: string) {
     setSelectedId(id);
@@ -271,13 +272,6 @@ export default function DashboardPage() {
         setInputRequests(inputs);
         setDiscovery(disc);
         setSecrets(sec);
-        if (disc?.form_fields && Object.keys(intakeAnswers).length === 0) {
-          const defaults: Record<string, string | string[]> = {};
-          disc.form_fields.forEach((f) => {
-            if (f.default) defaults[f.id] = f.default;
-          });
-          setIntakeAnswers(defaults);
-        }
       }
       setError(null);
     } catch (err) {
@@ -375,6 +369,31 @@ export default function DashboardPage() {
       loadCursorModels();
     }
   }, [showCursor, cursorStatus?.connected, loadCursorModels]);
+
+  useEffect(() => {
+    intakeInitializedFor.current = null;
+    setIntakeAnswers({});
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!discovery?.id || discovery.status !== "awaiting_user" || !discovery.form_fields.length) {
+      return;
+    }
+    const initKey = `${discovery.id}:${discovery.form_fields.length}`;
+    if (intakeInitializedFor.current === initKey) return;
+    intakeInitializedFor.current = initKey;
+
+    const initial: Record<string, string | string[]> = {};
+    discovery.form_fields.forEach((f) => {
+      const saved = discovery.responses?.[f.id];
+      if (saved !== undefined && saved !== "") {
+        initial[f.id] = saved as string | string[];
+      } else if (f.default) {
+        initial[f.id] = f.default;
+      }
+    });
+    setIntakeAnswers(initial);
+  }, [discovery?.id, discovery?.status, discovery?.form_fields, discovery?.responses]);
 
   useEffect(() => {
     if (detail?.state === "INTAKE_PENDING") {
