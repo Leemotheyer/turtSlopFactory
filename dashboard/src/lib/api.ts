@@ -558,6 +558,8 @@ export async function createProject(
 export async function updateProjectRepo(
   projectId: string,
   params: {
+    name?: string;
+    description?: string;
     repo_url?: string | null;
     branch?: string;
     base_branch?: string;
@@ -815,8 +817,36 @@ export async function addNote(
     headers: headers(),
     body: JSON.stringify({ content, note_type: noteType }),
   });
-  if (!res.ok) throw new Error("Failed to add note");
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to add note"));
+  }
   return res.json();
+}
+
+export async function updateNote(
+  projectId: string,
+  noteId: string,
+  params: { content?: string; note_type?: NoteType }
+): Promise<ProjectNote> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/notes/${noteId}`, {
+    method: "PATCH",
+    headers: headers(),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to update note"));
+  }
+  return res.json();
+}
+
+export async function deleteNote(projectId: string, noteId: string): Promise<void> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/notes/${noteId}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    throw new Error(await parseApiError(res, "Failed to delete note"));
+  }
 }
 
 export async function fetchInputRequests(projectId: string): Promise<InputRequest[]> {
