@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1117" />
+  <meta name="description" content="Self-propelling AI development factory — build production-ready apps with minimal interaction." />
+  <title>turtslopfactory</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="header">
+      <div class="header__brand">
+        <div class="header__logo" aria-hidden="true">🐢</div>
+        <div class="header__titles">
+          <h1 class="header__title" id="app-name">turtslopfactory</h1>
+          <p class="header__tagline" id="app-description">Self-propelling AI development factory</p>
+        </div>
+      </div>
+      <div class="header__status" id="health-status" role="status" aria-live="polite">
+        <span class="status-dot status-dot--loading" aria-hidden="true"></span>
+        <span class="status-label">Checking…</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="panel panel--form" aria-labelledby="form-heading">
+        <div class="panel__header">
+          <h2 id="form-heading" class="panel__title">Add work item</h2>
+          <p class="panel__subtitle">Queue a task for the development pipeline</p>
+        </div>
+
+        <form id="item-form" class="item-form" novalidate>
+          <div class="field">
+            <label class="field__label" for="item-title">Title <span class="required" aria-hidden="true">*</span></label>
+            <input
+              id="item-title"
+              name="title"
+              class="field__input"
+              type="text"
+              placeholder="e.g. Add user authentication flow"
+              maxlength="200"
+              autocomplete="off"
+              required
+              aria-describedby="title-error title-hint"
+            />
+            <p id="title-hint" class="field__hint">Required · up to 200 characters</p>
+            <p id="title-error" class="field__error" role="alert" hidden></p>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="item-body">Details</label>
+            <textarea
+              id="item-body"
+              name="body"
+              class="field__input field__textarea"
+              placeholder="Optional context, acceptance criteria, or notes…"
+              maxlength="2000"
+              rows="3"
+              aria-describedby="body-error body-hint"
+            ></textarea>
+            <p id="body-hint" class="field__hint">Optional · up to 2,000 characters</p>
+            <p id="body-error" class="field__error" role="alert" hidden></p>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn--primary" id="submit-btn">
+              <span class="btn__label">Add to queue</span>
+              <span class="btn__spinner" hidden aria-hidden="true"></span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel panel--list" aria-labelledby="list-heading">
+        <div class="panel__header panel__header--row">
+          <div>
+            <h2 id="list-heading" class="panel__title">Work queue</h2>
+            <p class="panel__subtitle" id="item-count">Loading items…</p>
+          </div>
+          <button type="button" class="btn btn--ghost btn--icon" id="refresh-btn" aria-label="Refresh work queue">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+              <polyline points="21 3 21 9 15 9"/>
+            </svg>
+          </button>
+        </div>
+
+        <div id="list-loading" class="skeleton-list" aria-hidden="true">
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+        </div>
+
+        <div id="list-error" class="empty-state empty-state--error" hidden role="alert">
+          <div class="empty-state__icon" aria-hidden="true">⚠️</div>
+          <h3 class="empty-state__title">Could not load items</h3>
+          <p class="empty-state__text" id="list-error-message">Something went wrong.</p>
+          <button type="button" class="btn btn--secondary" id="retry-btn">Try again</button>
+        </div>
+
+        <ul id="items-list" class="items-list" hidden></ul>
+
+        <div id="list-empty" class="empty-state" hidden>
+          <div class="empty-state__icon" aria-hidden="true">📋</div>
+          <h3 class="empty-state__title">Queue is empty</h3>
+          <p class="empty-state__text">Add your first work item above to kick off the pipeline.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Built for homelab · single-user · no auth</p>
+    </footer>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
