@@ -59,9 +59,17 @@ def should_schedule_feedback_on_input_response(
 
 
 async def maybe_schedule_feedback_pipeline(session: AsyncSession, project_id: UUID) -> bool:
-    """Start a feedback iteration when the project is waiting in REVIEW."""
+    """Start a feedback iteration when the project is waiting in REVIEW or PRODUCTION."""
+    from app.services.self_propelling import is_self_propelling_enabled, maybe_schedule_post_production
+
     row = await session.get(ProjectRow, project_id)
-    if not row or row.state != ProjectState.REVIEW.value:
+    if not row:
+        return False
+    if row.state == ProjectState.PRODUCTION.value:
+        if not is_self_propelling_enabled(project_id):
+            return False
+        return await maybe_schedule_post_production(session, project_id, force=True)
+    if row.state != ProjectState.REVIEW.value:
         return False
     if pipeline_executor.is_running(project_id):
         return False

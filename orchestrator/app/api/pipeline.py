@@ -16,6 +16,11 @@ from app.services.factory_settings import get_preview_origin
 from app.services.pipeline_launcher import schedule_pipeline, stop_pipeline
 from app.services.preview import preview_from_metadata
 from app.services.agent_activity import get_agent_activity
+from app.services.self_propelling import (
+    get_self_propelling_settings,
+    maybe_schedule_post_production,
+    save_self_propelling_settings,
+)
 from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
@@ -65,6 +70,7 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         ),
         "pipeline_substage": meta.get("pipeline_substage"),
         "enrichment_progress": meta.get("enrichment"),
+        "self_propelling": get_self_propelling_settings(project_id, workspace),
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "created_at": row.created_at.isoformat(),
@@ -100,16 +106,21 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
             detail="Complete the intake form before starting the build pipeline",
         )
     if row.state == ProjectState.PRODUCTION.value:
-        raise HTTPException(
-            status_code=400,
-            detail="Project is already in production — nothing to run",
-        )
-    if row.state in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value):
+        settings = get_self_propelling_settings(project_id, workspace)
+        if not settings.get("enabled"):
+            raise HTTPException(
+                status_code=400,
+                detail="Project is in production — enable self-propelling development to run improvement cycles",
+            )
+        meta = workspace.load_metadata(project_id)
+        meta["post_production_pending"] = True
+        workspace.save_metadata(project_id, meta)
+    elif row.state in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value):
         raise HTTPException(
             status_code=400,
             detail="Discovery is still in progress — wait for the intake form",
         )
-    if row.state not in allowed_states:
+    elif row.state not in allowed_states:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot run pipeline from state {row.state}",
@@ -119,7 +130,57 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
     if not started:
         return {"status": "already_running", "project_id": str(project_id)}
     mode = "feedback" if row.state == ProjectState.REVIEW.value else "pipeline"
+    if row.state == ProjectState.PRODUCTION.value:
+        mode = "post_production"
     return {"status": "started", "project_id": str(project_id), "mode": mode}
+
+
+@router.patch("/{project_id}/self-propelling")
+async def update_self_propelling(
+    project_id: UUID,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    enabled = body.get("enabled")
+    post_production_passes = body.get("post_production_passes")
+    interval_hours = body.get("interval_hours")
+    token_budget_per_cycle = body.get("token_budget_per_cycle")
+
+    if post_production_passes is not None:
+        value = int(post_production_passes)
+        if value < 0 or value > 10:
+            raise HTTPException(status_code=400, detail="post_production_passes must be between 0 and 10")
+        post_production_passes = value
+
+    if interval_hours is not None:
+        value = int(interval_hours)
+        if value < 1 or value > 168:
+            raise HTTPException(status_code=400, detail="interval_hours must be between 1 and 168")
+        interval_hours = value
+
+    if token_budget_per_cycle is not None:
+        value = int(token_budget_per_cycle)
+        if value < 0:
+            raise HTTPException(status_code=400, detail="token_budget_per_cycle must be >= 0")
+        token_budget_per_cycle = value if value > 0 else None
+
+    settings = save_self_propelling_settings(
+        project_id,
+        enabled=enabled if enabled is not None else None,
+        post_production_passes=post_production_passes,
+        interval_hours=interval_hours,
+        token_budget_per_cycle=token_budget_per_cycle,
+        workspace=workspace,
+    )
+
+    if enabled and row.state == ProjectState.PRODUCTION.value:
+        await maybe_schedule_post_production(db, project_id, force=True)
+
+    return settings
 
 
 @router.post("/{project_id}/stop")

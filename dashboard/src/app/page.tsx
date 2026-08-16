@@ -37,6 +37,7 @@ import {
   respondToInput,
   runPipeline,
   stopPipeline,
+  updateSelfPropelling,
   fetchAgentActivity,
   setSecret,
   submitIntake,
@@ -197,6 +198,10 @@ export default function DashboardPage() {
   const [editBranch, setEditBranch] = useState("main");
   const [editIsolateBranch, setEditIsolateBranch] = useState(true);
   const [editEnrichmentPasses, setEditEnrichmentPasses] = useState("");
+  const [selfPropellingEnabled, setSelfPropellingEnabled] = useState(false);
+  const [editPostProdPasses, setEditPostProdPasses] = useState("");
+  const [editCycleInterval, setEditCycleInterval] = useState("");
+  const [editTokenBudget, setEditTokenBudget] = useState("");
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [repoNote, setRepoNote] = useState<string | null>(null);
@@ -344,6 +349,15 @@ export default function DashboardPage() {
       setEditEnrichmentPasses(
         detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""
       );
+      const sp = detail.self_propelling;
+      setSelfPropellingEnabled(Boolean(sp?.enabled));
+      setEditPostProdPasses(
+        sp?.post_production_passes != null ? String(sp.post_production_passes) : ""
+      );
+      setEditCycleInterval(sp?.interval_hours != null ? String(sp.interval_hours) : "");
+      setEditTokenBudget(
+        sp?.token_budget_per_cycle != null ? String(sp.token_budget_per_cycle) : ""
+      );
     }
   }, [
     detail?.id,
@@ -352,6 +366,7 @@ export default function DashboardPage() {
     detail?.base_branch,
     detail?.isolate_branch,
     detail?.max_enrichment_passes,
+    detail?.self_propelling,
   ]);
 
   useEffect(() => {
@@ -479,6 +494,34 @@ export default function DashboardPage() {
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveSelfPropelling(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId) return;
+    setLoading(true);
+    try {
+      await updateSelfPropelling(selectedId, {
+        enabled: selfPropellingEnabled,
+        post_production_passes:
+          editPostProdPasses.trim() === ""
+            ? null
+            : Math.max(0, Math.min(10, parseInt(editPostProdPasses, 10) || 0)),
+        interval_hours:
+          editCycleInterval.trim() === ""
+            ? null
+            : Math.max(1, Math.min(168, parseInt(editCycleInterval, 10) || 24)),
+        token_budget_per_cycle:
+          editTokenBudget.trim() === ""
+            ? null
+            : Math.max(0, parseInt(editTokenBudget, 10) || 0) || null,
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save self-propelling settings");
     } finally {
       setLoading(false);
     }
@@ -1750,6 +1793,34 @@ export default function DashboardPage() {
                           Resume pipeline
                         </button>
                       )}
+                      {detail.state === "PRODUCTION" && (
+                        <>
+                          {detail.self_propelling?.enabled ? (
+                            <button className={styles.btnPrimary} onClick={handleRun} disabled={loading || detail.pipeline_running}>
+                              Improve now
+                            </button>
+                          ) : (
+                            <button
+                              className={styles.btnSecondary}
+                              onClick={async () => {
+                                if (!selectedId) return;
+                                setLoading(true);
+                                try {
+                                  await updateSelfPropelling(selectedId, { enabled: true });
+                                  await refresh();
+                                } catch (err) {
+                                  setError(err instanceof Error ? err.message : "Failed to enable self-propelling");
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                              disabled={loading}
+                            >
+                              Enable self-propelling
+                            </button>
+                          )}
+                        </>
+                      )}
                       {detail.state !== "PRODUCTION" && detail.state !== "AUTONOMOUSLY_BLOCKED" && (
                         <button className={styles.btnPrimary} onClick={handleRun} disabled={loading || detail.pipeline_running}>
                           {detail.state === "REVIEW" ? "Apply feedback & rebuild" : "Re-run pipeline"}
@@ -2167,6 +2238,79 @@ export default function DashboardPage() {
                         disabled={loading || !repoSettingsDirty}
                       >
                         Save pipeline settings
+                      </button>
+                    </form>
+                  </section>
+
+                  <section className={styles.selfPropellingPanel}>
+                    <h4>Self-propelling development</h4>
+                    <p className={styles.repoHint}>
+                      After production, the factory can keep improving your app on a schedule — auditing the live
+                      preview, implementing features, running tests, and redeploying with optimised token usage.
+                    </p>
+                    {detail.state === "PRODUCTION" && detail.self_propelling && (
+                      <div className={styles.selfPropellingStatus}>
+                        <span>
+                          {detail.self_propelling.enabled ? "Active" : "Disabled"}
+                          {detail.self_propelling.cycles_completed
+                            ? ` · ${detail.self_propelling.cycles_completed} cycle(s) completed`
+                            : ""}
+                        </span>
+                        {detail.self_propelling.next_cycle_at && detail.self_propelling.enabled && (
+                          <span className={styles.substageMeta}>
+                            Next cycle: {new Date(detail.self_propelling.next_cycle_at).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    <form className={styles.pipelineSettingsForm} onSubmit={handleSaveSelfPropelling}>
+                      <label className={styles.toggleRow}>
+                        <input
+                          type="checkbox"
+                          checked={selfPropellingEnabled}
+                          onChange={(e) => setSelfPropellingEnabled(e.target.checked)}
+                        />
+                        Enable automatic post-production improvement cycles
+                      </label>
+                      <label className={styles.repoField}>
+                        Passes per cycle
+                        <input
+                          type="number"
+                          min={0}
+                          max={10}
+                          placeholder={`Default (${detail.self_propelling?.factory_defaults?.post_production_passes ?? 2})`}
+                          value={editPostProdPasses}
+                          onChange={(e) => setEditPostProdPasses(e.target.value)}
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Cycle interval (hours)
+                        <input
+                          type="number"
+                          min={1}
+                          max={168}
+                          placeholder={`Default (${detail.self_propelling?.factory_defaults?.interval_hours ?? 24})`}
+                          value={editCycleInterval}
+                          onChange={(e) => setEditCycleInterval(e.target.value)}
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Token budget per cycle
+                        <input
+                          type="number"
+                          min={0}
+                          step={10000}
+                          placeholder={`Default (${detail.self_propelling?.factory_defaults?.token_budget_per_cycle?.toLocaleString() ?? "500,000"})`}
+                          value={editTokenBudget}
+                          onChange={(e) => setEditTokenBudget(e.target.value)}
+                        />
+                      </label>
+                      <p className={styles.repoHint}>
+                        Skips architect calls when the preview audit is unchanged to save tokens. Mobile and product QA
+                        run after each enrichment pass.
+                      </p>
+                      <button type="submit" className={styles.btnSecondary} disabled={loading}>
+                        Save self-propelling settings
                       </button>
                     </form>
                   </section>

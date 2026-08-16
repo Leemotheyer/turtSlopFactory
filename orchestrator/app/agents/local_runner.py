@@ -326,6 +326,8 @@ class LocalAgentRunner(AgentRunner):
             return await self._run_smoke(project_id, context)
         if stage == "product_qa":
             return await self._run_product_qa(project_id, context)
+        if stage == "mobile_check":
+            return await self._run_mobile_check(project_id, context)
         return False, f"Unknown test stage: {stage}"
 
     async def _run_pytest(self, repo, project_id: UUID, target: str) -> tuple[bool, str]:
@@ -416,6 +418,8 @@ class LocalAgentRunner(AgentRunner):
             issues.append("Health endpoint is not healthy")
         if not audit.get("has_html_ui"):
             suggested.append("Add or fix the HTML UI served at /")
+        if audit.get("has_html_ui") and not audit.get("mobile_friendly"):
+            issues.append("UI lacks mobile-friendly signals (viewport meta / responsive CSS)")
 
         for endpoint in audit.get("endpoints") or []:
             if endpoint.get("path") == "/api/items" and endpoint.get("ok"):
@@ -438,6 +442,30 @@ class LocalAgentRunner(AgentRunner):
             f"[tester] Product QA {'passed' if passed else 'found issues'} ({len(issues)} issue(s))",
         )
         summary = f"Product QA: {'PASS' if passed else 'ISSUES'} — {', '.join(issues[:3]) or 'ok'}"
+        return passed, summary
+
+    async def _run_mobile_check(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        from app.services.product_enrichment import audit_live_preview
+
+        audit = context.get("preview_audit") or await audit_live_preview(context)
+        issues: list[str] = []
+        if not audit.get("has_html_ui"):
+            issues.append("No HTML UI to evaluate")
+        elif not audit.get("viewport_meta"):
+            issues.append("Missing viewport meta tag")
+        if audit.get("has_html_ui") and not audit.get("responsive_signals"):
+            issues.append("No responsive CSS signals detected")
+
+        passed = audit.get("mobile_friendly", False) and audit.get("has_html_ui", False)
+        report = {
+            "passed": passed,
+            "viewport_meta": audit.get("viewport_meta"),
+            "responsive_signals": audit.get("responsive_signals") or [],
+            "issues": issues,
+        }
+        payload = json.dumps(report, indent=2)
+        self.workspace.write_artifact(project_id, "mobile-check.json", payload)
+        summary = f"Mobile check: {'PASS' if passed else 'ISSUES'} — {', '.join(issues[:3]) or 'ok'}"
         return passed, summary
 
     async def _reviewer(
