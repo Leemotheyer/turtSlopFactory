@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.db_models import EventRow, TaskRow
 from app.events import event_bus
-from app.models import AgentRole, EventType, FactoryEvent, Task, TaskStatus
+from app.models import AgentRole, EventType, FactoryEvent, Task, TaskStatus, TaskUpdate
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -39,6 +39,61 @@ async def get_task(task_id: UUID, db: AsyncSession = Depends(get_db)) -> Task:
     if not row:
         raise HTTPException(status_code=404, detail="Task not found")
     return _task_from_row(row)
+
+
+@router.patch("/{task_id}", response_model=Task)
+async def update_task(
+    task_id: UUID, body: TaskUpdate, db: AsyncSession = Depends(get_db)
+) -> Task:
+    row = await db.get(TaskRow, task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    previous_status = row.status
+    changed = False
+
+    if body.title is not None:
+        row.title = body.title
+        changed = True
+    if body.description is not None:
+        row.description = body.description
+        changed = True
+    if body.status is not None:
+        row.status = body.status.value
+        changed = True
+
+    if not changed:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    await db.commit()
+    await db.refresh(row)
+
+    if body.status is not None and body.status.value != previous_status:
+        await event_bus.publish(
+            db,
+            FactoryEvent(
+                type=EventType.TASK_STATUS_CHANGED,
+                project_id=row.project_id,
+                task_id=row.id,
+                payload={"from": previous_status, "to": body.status.value, "title": row.title},
+            ),
+        )
+
+    return _task_from_row(row)
+
+
+@router.delete("/{task_id}")
+async def delete_task(task_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    row = await db.get(TaskRow, task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if row.status == TaskStatus.RUNNING.value:
+        raise HTTPException(status_code=409, detail="Cannot delete a running task")
+
+    await db.delete(row)
+    await db.commit()
+    return {"status": "deleted", "task_id": str(task_id)}
 
 
 @router.post("/{task_id}/status", response_model=Task)

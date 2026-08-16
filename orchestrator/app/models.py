@@ -41,13 +41,13 @@ class TaskStatus(StrEnum):
 
 
 class ProjectCreate(BaseModel):
-    name: str
-    description: str
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(max_length=10000)
     repo_url: str | None = None
-    branch: str = "main"
-    base_branch: str | None = None
+    branch: str = Field(default="main", min_length=1, max_length=255)
+    base_branch: str | None = Field(default=None, max_length=255)
     isolate_branch: bool = True
-    max_enrichment_passes: int | None = None
+    max_enrichment_passes: int | None = Field(default=None, ge=0, le=20)
 
 
 class ProjectUpdate(BaseModel):
@@ -79,9 +79,15 @@ class Project(BaseModel):
 
 
 class TaskCreate(BaseModel):
-    title: str
-    description: str
+    title: str = Field(min_length=1, max_length=512)
+    description: str = Field(max_length=10000)
     role: AgentRole = AgentRole.DEVELOPER
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    description: str | None = Field(default=None, max_length=10000)
+    status: TaskStatus | None = None
 
 
 class Task(BaseModel):
