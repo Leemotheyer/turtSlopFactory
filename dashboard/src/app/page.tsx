@@ -3,6 +3,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   addNote,
+  updateNote,
+  deleteNote,
   connectCursor,
   connectGithubToken,
   disconnectGithubToken,
@@ -133,6 +135,14 @@ const NOTE_TYPES: { value: NoteType; label: string }[] = [
   { value: "general", label: "General" },
 ];
 
+const PROJECT_NAME_MAX = 200;
+const PROJECT_DESC_MAX = 10000;
+const NOTE_CONTENT_MAX = 5000;
+
+function confirmAction(message: string): boolean {
+  return window.confirm(message);
+}
+
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
@@ -156,6 +166,15 @@ export default function DashboardPage() {
   const [inputRequests, setInputRequests] = useState<InputRequest[]>([]);
   const [noteText, setNoteText] = useState("");
   const [noteType, setNoteType] = useState<NoteType>("instruction");
+  const [noteFormError, setNoteFormError] = useState<string | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editNoteText, setEditNoteText] = useState("");
+  const [editNoteType, setEditNoteType] = useState<NoteType>("instruction");
+  const [editProjectName, setEditProjectName] = useState("");
+  const [editProjectDesc, setEditProjectDesc] = useState("");
+  const [createFormErrors, setCreateFormErrors] = useState<{ name?: string; description?: string }>({});
+  const [projectDetailsError, setProjectDetailsError] = useState<string | null>(null);
+  const [secretFormError, setSecretFormError] = useState<string | null>(null);
   const [inputResponses, setInputResponses] = useState<Record<string, string>>({});
   const [discovery, setDiscovery] = useState<DiscoverySession | null>(null);
   const [intakeAnswers, setIntakeAnswers] = useState<Record<string, string | string[]>>({});
@@ -344,6 +363,9 @@ export default function DashboardPage() {
       setEditEnrichmentPasses(
         detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""
       );
+      setEditProjectName(detail.name);
+      setEditProjectDesc(detail.description);
+      setProjectDetailsError(null);
     }
   }, [
     detail?.id,
@@ -462,10 +484,25 @@ export default function DashboardPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!newName.trim()) return;
+    const name = newName.trim();
+    const description = newDesc.trim();
+    const errors: { name?: string; description?: string } = {};
+    if (!name) errors.name = "Project name is required";
+    else if (name.length > PROJECT_NAME_MAX) {
+      errors.name = `Name must be at most ${PROJECT_NAME_MAX} characters`;
+    }
+    if (!description) errors.description = "Description is required";
+    else if (description.length > PROJECT_DESC_MAX) {
+      errors.description = `Description must be at most ${PROJECT_DESC_MAX} characters`;
+    }
+    if (Object.keys(errors).length > 0) {
+      setCreateFormErrors(errors);
+      return;
+    }
+    setCreateFormErrors({});
     setLoading(true);
     try {
-      const p = await createProject(newName, newDesc, {
+      const p = await createProject(name, description, {
         repo_url: newRepoUrl || null,
         base_branch: newBranch || "main",
         isolate_branch: newRepoUrl ? newIsolateBranch : false,
@@ -525,8 +562,52 @@ export default function DashboardPage() {
     }
   }
 
+  const projectDetailsDirty =
+    !!detail &&
+    (editProjectName.trim() !== detail.name || editProjectDesc.trim() !== detail.description);
+
+  async function handleSaveProjectDetails(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId || !detail) return;
+    const name = editProjectName.trim();
+    const description = editProjectDesc.trim();
+    if (!name) {
+      setProjectDetailsError("Project name is required");
+      return;
+    }
+    if (name.length > PROJECT_NAME_MAX) {
+      setProjectDetailsError(`Name must be at most ${PROJECT_NAME_MAX} characters`);
+      return;
+    }
+    if (!description) {
+      setProjectDetailsError("Description is required");
+      return;
+    }
+    if (description.length > PROJECT_DESC_MAX) {
+      setProjectDetailsError(`Description must be at most ${PROJECT_DESC_MAX} characters`);
+      return;
+    }
+    setProjectDetailsError(null);
+    setLoading(true);
+    try {
+      await updateProjectRepo(selectedId, { name, description });
+      await refresh();
+    } catch (err) {
+      setProjectDetailsError(err instanceof Error ? err.message : "Failed to save project details");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleStop() {
     if (!selectedId) return;
+    if (
+      !confirmAction(
+        "Stop the pipeline now? In-flight agent work on this project will be cancelled."
+      )
+    ) {
+      return;
+    }
     setStoppingPipeline(true);
     try {
       await stopPipeline(selectedId);
@@ -553,7 +634,14 @@ export default function DashboardPage() {
   }
 
   async function handleMergeToMain() {
-    if (!selectedId) return;
+    if (!selectedId || !detail) return;
+    if (
+      !confirmAction(
+        `Merge factory branch ${detail.work_branch ?? "work branch"} into ${detail.base_branch ?? "main"}? This pushes to GitHub.`
+      )
+    ) {
+      return;
+    }
     setLoading(true);
     try {
       await mergeToMain(selectedId);
@@ -597,14 +685,83 @@ export default function DashboardPage() {
 
   async function handleAddNote(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedId || !noteText.trim()) return;
+    if (!selectedId) return;
+    const content = noteText.trim();
+    if (!content) {
+      setNoteFormError("Note content is required");
+      return;
+    }
+    if (content.length > NOTE_CONTENT_MAX) {
+      setNoteFormError(`Note must be at most ${NOTE_CONTENT_MAX} characters`);
+      return;
+    }
+    setNoteFormError(null);
     setLoading(true);
     try {
-      await addNote(selectedId, noteText, noteType);
+      await addNote(selectedId, content, noteType);
       setNoteText("");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add note");
+      setNoteFormError(err instanceof Error ? err.message : "Failed to add note");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function startEditNote(note: ProjectNote) {
+    setEditingNoteId(note.id);
+    setEditNoteText(note.content);
+    setEditNoteType(note.note_type);
+    setNoteFormError(null);
+  }
+
+  function cancelEditNote() {
+    setEditingNoteId(null);
+    setEditNoteText("");
+    setNoteFormError(null);
+  }
+
+  async function handleUpdateNote(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId || !editingNoteId) return;
+    const content = editNoteText.trim();
+    if (!content) {
+      setNoteFormError("Note content is required");
+      return;
+    }
+    if (content.length > NOTE_CONTENT_MAX) {
+      setNoteFormError(`Note must be at most ${NOTE_CONTENT_MAX} characters`);
+      return;
+    }
+    setNoteFormError(null);
+    setLoading(true);
+    try {
+      await updateNote(selectedId, editingNoteId, { content, note_type: editNoteType });
+      cancelEditNote();
+      await refresh();
+    } catch (err) {
+      setNoteFormError(err instanceof Error ? err.message : "Failed to update note");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteNote(note: ProjectNote) {
+    if (!selectedId) return;
+    if (
+      !confirmAction(
+        `Delete this ${note.note_type.replace("_", " ")} note? Agents will no longer see it on the next step.`
+      )
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      await deleteNote(selectedId, note.id);
+      if (editingNoteId === note.id) cancelEditNote();
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete note");
     } finally {
       setLoading(false);
     }
@@ -644,16 +801,27 @@ export default function DashboardPage() {
 
   async function handleSetSecret(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedId || !secretKey.trim() || !secretValue.trim()) return;
+    if (!selectedId) return;
+    const key = secretKey.trim();
+    const value = secretValue.trim();
+    if (!key || !value) {
+      setSecretFormError("Key name and secret value are required");
+      return;
+    }
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+      setSecretFormError("Key name must start with a letter and use A-Z, 0-9, and underscores");
+      return;
+    }
+    setSecretFormError(null);
     setLoading(true);
     try {
-      await setSecret(selectedId, secretKey, secretValue, secretDesc);
+      await setSecret(selectedId, key, value, secretDesc);
       setSecretKey("");
       setSecretValue("");
       setSecretDesc("");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save secret");
+      setSecretFormError(err instanceof Error ? err.message : "Failed to save secret");
     } finally {
       setLoading(false);
     }
@@ -661,6 +829,13 @@ export default function DashboardPage() {
 
   async function handleDeleteSecret(keyName: string) {
     if (!selectedId) return;
+    if (
+      !confirmAction(
+        `Remove secret ${keyName}? Agents will no longer have access to this value.`
+      )
+    ) {
+      return;
+    }
     setLoading(true);
     try {
       await deleteSecret(selectedId, keyName);
@@ -721,6 +896,13 @@ export default function DashboardPage() {
   }
 
   async function handleDisconnectGithub() {
+    if (
+      !confirmAction(
+        "Disconnect GitHub? The factory will not be able to push work branches until you connect again."
+      )
+    ) {
+      return;
+    }
     setCursorLoading(true);
     try {
       await disconnectGithubToken();
@@ -760,6 +942,13 @@ export default function DashboardPage() {
   }
 
   async function handleDisconnectCursor() {
+    if (
+      !confirmAction(
+        "Disconnect Cursor? Running pipelines and agent tasks will fail until you connect again."
+      )
+    ) {
+      return;
+    }
     setCursorLoading(true);
     try {
       await disconnectCursor();
@@ -1642,15 +1831,32 @@ export default function DashboardPage() {
             <input
               placeholder="e.g. Invoice Manager"
               value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              onChange={(e) => {
+                setNewName(e.target.value);
+                if (createFormErrors.name) setCreateFormErrors((prev) => ({ ...prev, name: undefined }));
+              }}
               required
+              maxLength={PROJECT_NAME_MAX}
+              aria-invalid={Boolean(createFormErrors.name)}
             />
+            {createFormErrors.name && <p className={styles.fieldError}>{createFormErrors.name}</p>}
             <textarea
               placeholder="Describe what to build: a Docker-deployable web app with REST API..."
               value={newDesc}
-              onChange={(e) => setNewDesc(e.target.value)}
+              onChange={(e) => {
+                setNewDesc(e.target.value);
+                if (createFormErrors.description) {
+                  setCreateFormErrors((prev) => ({ ...prev, description: undefined }));
+                }
+              }}
               rows={4}
+              required
+              maxLength={PROJECT_DESC_MAX}
+              aria-invalid={Boolean(createFormErrors.description)}
             />
+            {createFormErrors.description && (
+              <p className={styles.fieldError}>{createFormErrors.description}</p>
+            )}
             <label className={styles.repoField}>
               GitHub repo (optional)
               <select
@@ -2136,6 +2342,48 @@ export default function DashboardPage() {
                     </div>
                   )}
 
+                  <section className={styles.projectDetailsPanel}>
+                    <h4>Project details</h4>
+                    <form className={styles.projectDetailsForm} onSubmit={handleSaveProjectDetails}>
+                      <label className={styles.repoField}>
+                        Name
+                        <input
+                          type="text"
+                          value={editProjectName}
+                          onChange={(e) => {
+                            setEditProjectName(e.target.value);
+                            if (projectDetailsError) setProjectDetailsError(null);
+                          }}
+                          maxLength={PROJECT_NAME_MAX}
+                          required
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Description
+                        <textarea
+                          value={editProjectDesc}
+                          onChange={(e) => {
+                            setEditProjectDesc(e.target.value);
+                            if (projectDetailsError) setProjectDetailsError(null);
+                          }}
+                          rows={4}
+                          maxLength={PROJECT_DESC_MAX}
+                          required
+                        />
+                      </label>
+                      {projectDetailsError && (
+                        <p className={styles.fieldError}>{projectDetailsError}</p>
+                      )}
+                      <button
+                        type="submit"
+                        className={styles.btnSecondary}
+                        disabled={loading || !projectDetailsDirty}
+                      >
+                        Save project details
+                      </button>
+                    </form>
+                  </section>
+
                   <section className={styles.pipelineSettings}>
                     <h4>Pipeline settings</h4>
                     <form
@@ -2237,9 +2485,16 @@ export default function DashboardPage() {
                       <textarea
                         placeholder="e.g. Don't add user auth — keep it simple. OR: Add export to CSV feature."
                         value={noteText}
-                        onChange={(e) => setNoteText(e.target.value)}
+                        onChange={(e) => {
+                          setNoteText(e.target.value);
+                          if (noteFormError) setNoteFormError(null);
+                        }}
                         rows={3}
+                        maxLength={NOTE_CONTENT_MAX}
                       />
+                      {noteFormError && !editingNoteId && (
+                        <p className={styles.fieldError}>{noteFormError}</p>
+                      )}
                       <button type="submit" className={styles.btnPrimary} disabled={loading || !noteText.trim()}>
                         Add note
                       </button>
@@ -2247,9 +2502,70 @@ export default function DashboardPage() {
                     <ul className={styles.notesList}>
                       {notes.map((n) => (
                         <li key={n.id} className={styles.noteItem}>
-                          <span className={styles.noteTypeBadge}>{n.note_type.replace("_", " ")}</span>
-                          <p>{n.content}</p>
-                          <time>{new Date(n.created_at).toLocaleString()}</time>
+                          {editingNoteId === n.id ? (
+                            <form className={styles.noteEditForm} onSubmit={handleUpdateNote}>
+                              <select
+                                value={editNoteType}
+                                onChange={(e) => setEditNoteType(e.target.value as NoteType)}
+                              >
+                                {NOTE_TYPES.map((t) => (
+                                  <option key={t.value} value={t.value}>{t.label}</option>
+                                ))}
+                              </select>
+                              <textarea
+                                value={editNoteText}
+                                onChange={(e) => {
+                                  setEditNoteText(e.target.value);
+                                  if (noteFormError) setNoteFormError(null);
+                                }}
+                                rows={3}
+                                maxLength={NOTE_CONTENT_MAX}
+                                autoFocus
+                              />
+                              {noteFormError && (
+                                <p className={styles.fieldError}>{noteFormError}</p>
+                              )}
+                              <div className={styles.noteActions}>
+                                <button type="submit" className={styles.btnPrimary} disabled={loading}>
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.btnSecondary}
+                                  onClick={cancelEditNote}
+                                  disabled={loading}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              <div className={styles.noteItemHeader}>
+                                <span className={styles.noteTypeBadge}>{n.note_type.replace("_", " ")}</span>
+                                <div className={styles.noteActions}>
+                                  <button
+                                    type="button"
+                                    className={styles.btnSecondary}
+                                    onClick={() => startEditNote(n)}
+                                    disabled={loading}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={styles.btnDanger}
+                                    onClick={() => handleDeleteNote(n)}
+                                    disabled={loading}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                              <p>{n.content}</p>
+                              <time>{new Date(n.created_at).toLocaleString()}</time>
+                            </>
+                          )}
                         </li>
                       ))}
                       {notes.length === 0 && <p className={styles.emptyHint}>No notes yet</p>}
@@ -2367,6 +2683,7 @@ export default function DashboardPage() {
                         Save secret
                       </button>
                     </form>
+                    {secretFormError && <p className={styles.fieldError}>{secretFormError}</p>}
 
                     <ul className={styles.secretsList}>
                       {(secrets?.secrets ?? []).map((s) => (
@@ -2651,6 +2968,8 @@ function formatEvent(ev: FactoryEvent): string {
   if (ev.type === "pipeline.stopped") return "Pipeline stopped by user";
   if (ev.type === "progress.updated") return `${p.title}: ${p.summary}`;
   if (ev.type === "note.added") return String(p.content ?? "").slice(0, 80);
+  if (ev.type === "note.updated") return `Updated: ${String(p.content ?? "").slice(0, 72)}`;
+  if (ev.type === "note.deleted") return `Deleted note: ${String(p.content ?? "").slice(0, 64)}`;
   if (ev.type === "input.requested") return String(p.question ?? "").slice(0, 80);
   if (ev.type === "input.resolved") return `${p.status}: ${p.decision ?? ""}`.slice(0, 80);
   if (ev.type === "discovery.started") return "Discovery agent started";
