@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from app.agents.rules import rules_for_role
 from app.models import AgentRole
 from app.services.product_enrichment import enrichment_pass_theme_hint
+from app.services.repo_analysis import format_repo_analysis_for_prompt
 
 
 def build_role_prompt(role: AgentRole, context: dict) -> str:
     name = context.get("name", "app")
     description = context.get("description", "")
+    original = context.get("original_description") or description
     notes = context.get("notes", [])
     intake = context.get("intake", {})
     input_responses = context.get("input_responses", [])
@@ -16,8 +19,16 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
     sections: list[str] = [
         f"You are the **{role.value}** agent for the turtSlopFactory software pipeline.",
         f"Project: **{name}**",
-        f"\n## Description\n{description}",
+        rules_for_role(role),
+        f"\n## Product vision (original request)\n{original.strip()}",
     ]
+
+    if description.strip() and description.strip() != original.strip():
+        sections.append(f"\n## Refined specification (after intake)\n{description.strip()}")
+
+    repo_block = format_repo_analysis_for_prompt(context.get("repo_analysis"))
+    if repo_block:
+        sections.append(f"\n{repo_block}")
 
     if notes:
         sections.append("\n## Supervisor notes (must follow)")
@@ -62,7 +73,7 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
         f"""
 ## Live preview (factory-managed — do not start it yourself)
 The factory automatically deploys and refreshes a live preview container for users and pipeline testers.
-You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any other server to demo or test the app. That wastes time; the factory already owns the running container.
+You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any other server to demo or test the app.
 
 - Public demo URL: {preview_url or "(the factory will publish this after it starts the container)"}
 - Preview status: {preview_status}
@@ -135,21 +146,33 @@ Base decisions on the preview audit, requirements.md, and the current codebase �
             )
 
     elif role == AgentRole.ARCHITECT:
+        draft = context.get("requirements_draft")
+        if draft:
+            sections.append(
+                f"""
+## Requirements draft (factory-generated — refine, do not ignore)
+The factory prepared this draft from intake and repo analysis. **Update and complete it** rather than starting from scratch:
+
+{draft[:6000]}
+"""
+            )
         if context.get("repo_url"):
             sections.append(
                 """
 ## Your task
-Create project requirements and architecture documentation for a **complete, polished application** — not a bare-minimum demo.
+Create or **refine** project requirements and architecture for a **complete, polished application**.
 
-Plan user journeys, error handling, validation, empty states, and the core features needed for a shippable v1.
+**Ground everything in the Product vision and intake answers above.** Do not produce generic boilerplate that ignores the project's stated goal.
+
+When an existing repository is linked, document how to **extend** the current codebase — not replace it.
+
 Write two markdown files in the workspace AND repeat both documents in your final reply:
 1. `requirements.md` — functional/non-functional requirements, user flows, exclusions, quality bar
-2. `architecture.md` — stack, API design, UI structure, testing strategy
+2. `architecture.md` — stack, API design, UI structure, testing strategy (respect existing layout)
 
 Start the reply with `# Requirements` then `# Architecture` so the factory can copy them.
 
-Use Python 3.12 + FastAPI, Docker on port 8080, pytest coverage, and a `/health` endpoint.
-Do not document a manual docker-compose demo workflow — the factory live preview is how the app is run during development.
+Ensure `/health` and deployment on port 8080. The factory live preview runs the app — do not document manual docker-compose demos.
 """
             )
         else:
@@ -157,7 +180,8 @@ Do not document a manual docker-compose demo workflow — the factory live previ
                 """
 ## Your task
 You are a no-repo Cloud Agent. There is no GitHub repository and nothing you write to disk will be synced.
-Do not try to commit, push, clone, or create a repo.
+
+**Ground everything in the Product vision and intake answers above.**
 
 Put BOTH documents in your final reply as markdown headings the factory will copy into `requirements.md` and `architecture.md`:
 
@@ -168,27 +192,34 @@ functional/non-functional requirements, user flows, exclusions, quality bar for 
 stack, API design, UI structure, testing strategy
 
 Use Python 3.12 + FastAPI, Docker on port 8080, pytest coverage, and a `/health` endpoint.
-Do not document a manual docker-compose demo workflow — the factory live preview is how the app is run during development.
 """
             )
     elif role == AgentRole.DEVELOPER:
         stream = context.get("work_stream")
+        existing_note = ""
+        if context.get("repo_analysis", {}).get("has_existing_app"):
+            existing_note = """
+## Existing codebase
+Extend the current implementation. **Do not rebuild** working routes, models, or UI unless this task explicitly says to replace them.
+"""
         if stream == "backend":
             sections.append(
-                """
+                f"""
 ## Your task
 Implement or update the **backend API** (FastAPI): routes, models, validation, tests under `tests/`.
 Ensure `/health` and core CRUD endpoints work with proper error responses. Match requirements.md if present.
 Build production-quality code — not stubs. Do not start a server or container; the factory live preview already runs the app.
+{existing_note}
 """
             )
         elif stream == "frontend":
             sections.append(
-                """
+                f"""
 ## Your task
 Implement or update the **frontend UI**: static HTML/JS served by FastAPI under `app/static/`.
 Provide a polished browser interface: loading states, empty states, validation feedback, mobile-friendly layout.
 Use relative fetch URLs (`api/items`, not `/api/items`) so the UI works through the factory preview gateway.
+{existing_note}
 """
             )
         elif stream == "feature":
@@ -210,16 +241,18 @@ This is an **enrichment pass** — implement **all** listed improvements in this
 ## Your task
 Implement feature **{feature_id}**:
 {content}
+{existing_note}
 {enrichment_block}
 """
             )
         else:
             sections.append(
-                """
+                f"""
 ## Your task
 Implement the full application: FastAPI backend, static frontend, Dockerfile, docker-compose,
 requirements.txt, and pytest tests. Match requirements.md and architecture.md if present.
 The factory starts the live preview for you — implement the app, do not try to run Docker.
+{existing_note}
 """
             )
         if context.get("incremental") and context.get("last_failure"):
@@ -244,9 +277,7 @@ Probe key endpoints and the HTML UI. Write `product-qa.json` with:
 - `issues`: list of concrete UX/functionality problems still present
 - `suggested_features`: list of substantial improvements worth implementing next (not nits)
 
-**Fail the pass** if the only changes were cosmetic (colors, spacing tweaks) while core flows,
-forms, lists, or error handling are still missing. Enrichment should feel like real product progress.
-Reject bare-minimum demos missing empty states, validation, or core flows.
+**Fail the pass** if the only changes were cosmetic while core flows are still missing.
 """
             )
         else:

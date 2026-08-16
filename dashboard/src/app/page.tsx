@@ -77,6 +77,7 @@ import {
   type AgentActivity,
 } from "@/lib/api";
 import styles from "./page.module.css";
+import { IntakePanel } from "@/components/intake/IntakePanel";
 
 const PIPELINE = [
   "REQUESTED",
@@ -934,66 +935,6 @@ export default function DashboardPage() {
       case "pipeline_blocked": return "🛑";
       default: return "🔔";
     }
-  }
-
-  function renderIntakeField(field: IntakeField) {
-    const value = intakeAnswers[field.id] ?? "";
-    const setValue = (v: string | string[]) =>
-      setIntakeAnswers((prev) => ({ ...prev, [field.id]: v }));
-
-    if (field.type === "textarea") {
-      return (
-        <textarea
-          value={typeof value === "string" ? value : ""}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder={field.placeholder}
-          rows={4}
-          required={field.required}
-        />
-      );
-    }
-    if (field.type === "select") {
-      return (
-        <select
-          value={typeof value === "string" ? value : field.options[0] ?? ""}
-          onChange={(e) => setValue(e.target.value)}
-          required={field.required}
-        >
-          {field.options.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
-      );
-    }
-    if (field.type === "multiselect") {
-      const selected = Array.isArray(value) ? value : value ? [value] : [];
-      return (
-        <div className={styles.multiSelect}>
-          {field.options.map((opt) => (
-            <label key={opt} className={styles.checkLabel}>
-              <input
-                type="checkbox"
-                checked={selected.includes(opt)}
-                onChange={(e) => {
-                  if (e.target.checked) setValue([...selected, opt]);
-                  else setValue(selected.filter((s) => s !== opt));
-                }}
-              />
-              {opt}
-            </label>
-          ))}
-        </div>
-      );
-    }
-    return (
-      <input
-        type="text"
-        value={typeof value === "string" ? value : ""}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder={field.placeholder}
-        required={field.required}
-      />
-    );
   }
 
   const openInputs = inputRequests.filter((r) => r.status === "open");
@@ -2193,50 +2134,16 @@ export default function DashboardPage() {
               )}
 
               {tab === "intake" && (
-                <div className={styles.intakePanel}>
-                  {detail.state === "REQUESTED" || detail.state === "DISCOVERY" || discovery?.status === "generating" ? (
-                    <div className={styles.intakeWaiting}>
-                      <h3>Discovery agent is working…</h3>
-                      <p>Analyzing your idea and preparing a loose plan with follow-up questions.</p>
-                    </div>
-                  ) : discovery ? (
-                    <>
-                      <div className={styles.loosePlan}>
-                        <h3>Loose plan</h3>
-                        <pre>{discovery.loose_plan}</pre>
-                      </div>
-                      {discovery.status === "awaiting_user" ? (
-                        <form className={styles.intakeForm} onSubmit={handleSubmitIntake}>
-                          <h3>Scope intake form</h3>
-                          <p className={styles.guidanceHint}>
-                            Help the factory understand what to build and what to skip. Required fields
-                            are marked with *.
-                          </p>
-                          {discovery.form_fields.map((field) => (
-                            <div key={field.id} className={styles.intakeField}>
-                              <label>
-                                {field.label}
-                                {field.required && <span className={styles.required}> *</span>}
-                              </label>
-                              {field.help && <span className={styles.fieldHelp}>{field.help}</span>}
-                              {renderIntakeField(field)}
-                            </div>
-                          ))}
-                          <button type="submit" className={styles.btnPrimary} disabled={loading}>
-                            Lock scope & continue
-                          </button>
-                        </form>
-                      ) : (
-                        <div className={styles.intakeDone}>
-                          <h3>Intake complete</h3>
-                          <p>Scope locked in. The build pipeline is starting automatically.</p>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <p className={styles.emptyHint}>Discovery not started yet.</p>
-                  )}
-                </div>
+                <IntakePanel
+                  discovery={discovery}
+                  detailState={detail.state}
+                  intakeAnswers={intakeAnswers}
+                  loading={loading}
+                  onChange={(fieldId, value) =>
+                    setIntakeAnswers((prev) => ({ ...prev, [fieldId]: value }))
+                  }
+                  onSubmit={handleSubmitIntake}
+                />
               )}
 
               {tab === "guidance" && (

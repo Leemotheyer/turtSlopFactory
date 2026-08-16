@@ -53,6 +53,8 @@ from app.services.product_enrichment import (
     local_enrichment_plan,
     parse_enrichment_plan,
 )
+from app.services.repo_analysis import analyze_repo
+from app.services.static_planning import draft_requirements_from_context
 from app.services.pipeline_control import (
     archive_project_cloud_agents,
     clear_live_agents,
@@ -515,8 +517,16 @@ class PipelineExecutor:
         origin = await get_preview_origin(session)
         context["preview_origin"] = origin
         repo = self.workspace.repo_dir(project.id)
-        context["incremental"] = context.get("fix_attempt", 0) > 0 or (repo / "app" / "main.py").exists()
+        context["incremental"] = (
+            context.get("fix_attempt", 0) > 0
+            or (repo / "app" / "main.py").exists()
+            or bool(project.repo_url)
+        )
+        if project.repo_url and (repo / ".git").exists():
+            analysis = analyze_repo(repo)
+            context["repo_analysis"] = analysis
         meta = self.workspace.load_metadata(project.id)
+        context["original_description"] = meta.get("original_description") or project.description
         preview_url = build_preview_url(project.id, origin=origin)
         context["preview_url"] = meta.get("preview_url") or preview_url
         context["preview_path"] = preview_path(project.id)
@@ -1196,7 +1206,11 @@ class PipelineExecutor:
 
     async def _build_work_plan(self, session, project, context: dict) -> tuple[list, dict]:
         budget = await resolve_concurrency_budget(session)
-        raw_units = plan_parallel_work(context.get("notes", []), project.description)
+        raw_units = plan_parallel_work(
+            context.get("notes", []),
+            project.description,
+            repo_analysis=context.get("repo_analysis"),
+        )
         if context.get("feedback_iteration"):
             completed = load_completed_work(self.workspace, project.id)
             repo = self.workspace.repo_dir(project.id)
@@ -1224,8 +1238,22 @@ class PipelineExecutor:
 
     async def _stage_planning(self, session, project, context) -> bool:
         await self._refresh_context(session, project, context)
+        draft = draft_requirements_from_context(
+            project.name,
+            context.get("original_description") or project.description,
+            intake=context.get("intake"),
+            repo_analysis=context.get("repo_analysis"),
+        )
+        context["requirements_draft"] = draft
+        self.workspace.write_artifact(project.id, "requirements-draft.md", draft)
+
+        vision = context.get("original_description") or project.description
         task = await self.create_task(
-            session, project.id, "Architecture planning", project.description, AgentRole.ARCHITECT
+            session,
+            project.id,
+            "Architecture planning",
+            f"Product vision:\n{vision[:2000]}",
+            AgentRole.ARCHITECT,
         )
         run = await self.runner.run(
             AgentRole.ARCHITECT, project.id, task.id, str(self.workspace.repo_dir(project.id)), context

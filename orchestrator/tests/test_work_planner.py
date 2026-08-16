@@ -38,6 +38,19 @@ def test_work_plan_serializable():
     assert plan["units"][0]["stream"] == "backend"
 
 
+def test_existing_repo_skips_generic_rebuild_streams():
+    analysis = {
+        "has_existing_app": True,
+        "has_backend": True,
+        "has_frontend": True,
+    }
+    units = plan_parallel_work([], "Extend my app", repo_analysis=analysis)
+    streams = [u.stream for u in units]
+    assert "backend" not in streams
+    assert "frontend" not in streams
+    assert any(u.feature_id == "gap-completion" for u in units)
+
+
 def test_optimize_work_units_batches_many_features():
     notes = [{"type": "feature", "content": f"Feature {i}"} for i in range(8)]
     units = plan_parallel_work(notes, "Big app")

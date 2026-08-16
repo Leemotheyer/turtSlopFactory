@@ -22,10 +22,14 @@ from app.models import (
     ProjectNoteCreate,
     ProjectState,
 )
+from app.services.git_branching import setup_project_branches
 from app.services.notifications import create_notification
 from app.services.notes import add_note
 from app.services.progress import record_progress
+from app.services.repo_analysis import analyze_repo, infer_intake_defaults
+from app.services.secrets import get_github_token
 from app.workspace.manager import WorkspaceManager
+from app.workspace.provisioner import repo_display_name
 
 logger = logging.getLogger(__name__)
 workspace = WorkspaceManager()
@@ -97,13 +101,46 @@ async def run_discovery(session: AsyncSession, project_id: UUID) -> DiscoverySes
         ),
     )
 
-    # Simulate brief thinking delay for UX
-    loose_plan, form_fields = generate_discovery(project.name, project.description)
+    # Static discovery — analyze linked repo when available for bespoke intake
+    repo_context: dict | None = None
+    suggested_responses: dict[str, str | list[str]] = {}
+    if project.repo_url:
+        try:
+            repo_path = workspace.repo_dir(project_id)
+            if not (repo_path / ".git").exists():
+                token = await get_github_token(session, project_id)
+                await setup_project_branches(workspace, project, github_token=token)
+                await session.commit()
+            analysis = analyze_repo(repo_path)
+            repo_context = {**analysis, "repo_name": repo_display_name(project.repo_url)}
+            suggested_responses = infer_intake_defaults(project.description, analysis)
+            workspace.write_artifact(
+                project_id, "repo-analysis.json", json.dumps(repo_context, indent=2, default=str)
+            )
+            workspace.append_log(
+                project_id,
+                "pipeline.log",
+                f"[discovery] Analyzed linked repo — pre-filled {len(suggested_responses)} intake hint(s)",
+            )
+        except Exception as exc:
+            logger.warning("Repo analysis during discovery failed for %s: %s", project_id, exc)
+            workspace.append_log(project_id, "pipeline.log", f"[discovery] Repo analysis skipped: {exc}")
+
+    loose_plan, form_fields = generate_discovery(
+        project.name,
+        project.description,
+        repo_context=repo_context,
+        suggested_responses=suggested_responses,
+    )
 
     row.loose_plan = loose_plan
     row.form_fields = [f.model_dump() for f in form_fields]
     row.status = DiscoveryStatus.AWAITING_USER.value
     row.expires_at = datetime.utcnow() + timedelta(hours=settings.intake_form_timeout_hours)
+    if suggested_responses:
+        row.responses = {
+            k: v for k, v in suggested_responses.items() if v is not None and v != ""
+        }
 
     project.state = ProjectState.INTAKE_PENDING.value
     project.updated_at = datetime.utcnow()
@@ -236,8 +273,10 @@ async def _apply_intake_to_project(
     # Map key fields to typed notes for agents
     mappings = {
         "must_have_features": NoteType.FEATURE,
+        "gaps_to_address": NoteType.FEATURE,
         "out_of_scope": NoteType.SCOPE_OUT,
         "success_criteria": NoteType.INSTRUCTION,
+        "existing_code_approach": NoteType.INSTRUCTION,
         "anything_else": NoteType.GENERAL,
     }
     for field_id, note_type in mappings.items():

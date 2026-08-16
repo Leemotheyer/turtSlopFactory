@@ -123,22 +123,27 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
     )
 
     try:
+        if repo_url:
+            message = await setup_project_branches(
+                workspace,
+                row,
+                github_token=await get_github_token(db, row.id),
+            )
+            await db.commit()
+            workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
+            await maybe_request_github_token(db, row.id, message)
+
         await run_discovery(db, row.id)
     except Exception as exc:
         workspace.append_log(row.id, "pipeline.log", f"[discovery] Failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Discovery failed: {exc}") from exc
 
-    if repo_url:
-        message = await setup_project_branches(
-            workspace,
-            row,
-            github_token=await get_github_token(db, row.id),
-        )
-        await db.commit()
-        workspace.append_log(row.id, "pipeline.log", f"[setup] {message}")
-        await maybe_request_github_token(db, row.id, message)
-
     await db.refresh(row)
+
+    meta = workspace.load_metadata(row.id)
+    meta["original_description"] = body.description
+    workspace.save_metadata(row.id, meta)
+
     return _project_from_row(row)
 
 

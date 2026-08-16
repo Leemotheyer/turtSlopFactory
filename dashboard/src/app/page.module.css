@@ -108,6 +108,17 @@
   margin-bottom: 0.75rem;
 }
 
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.sidebarHeader h2 {
+  margin-bottom: 0;
+}
+
 /* Projects sidebar */
 .projectList {
   list-style: none;

@@ -1,5 +1,7 @@
 """Discovery agent: turns a broad idea into a loose plan and intake form."""
 
+from typing import Any
+
 from app.models import IntakeField, IntakeFieldType
 
 
@@ -16,10 +18,19 @@ def _detect_app_type(description: str) -> str:
     return "fullstack_web"
 
 
-def generate_discovery(name: str, description: str) -> tuple[str, list[IntakeField]]:
+def generate_discovery(
+    name: str,
+    description: str,
+    *,
+    repo_context: dict[str, Any] | None = None,
+    suggested_responses: dict[str, str | list[str]] | None = None,
+) -> tuple[str, list[IntakeField]]:
     """Return (loose_plan_markdown, form_fields)."""
     app_type = _detect_app_type(description)
     desc_lower = description.lower()
+    repo_context = repo_context or {}
+    suggested_responses = suggested_responses or {}
+    has_existing = bool(repo_context.get("has_existing_app"))
 
     type_labels = {
         "fullstack_web": "Full-stack web application (API + browser UI)",
@@ -28,31 +39,81 @@ def generate_discovery(name: str, description: str) -> tuple[str, list[IntakeFie
         "cli_tool": "CLI tool",
     }
 
+    repo_section = ""
+    if has_existing:
+        stack = ", ".join(repo_context.get("stack") or []) or "see repository"
+        repo_section = f"""
+## Existing repository detected
+The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and found an existing codebase.
+
+- Stack: {stack}
+- Backend: {'yes' if repo_context.get('has_backend') else 'no'}
+- UI: {'yes' if repo_context.get('has_frontend') else 'no'}
+- Tests: {'yes' if repo_context.get('has_tests') else 'no'}
+
+**Default approach:** extend what exists — fill gaps from your description and intake answers rather than rebuilding from scratch.
+Some questions may be **pre-filled from the README** — review and adjust them.
+"""
+
     loose_plan = f"""# Discovery plan: {name}
 
 ## Your idea
 {description}
-
+{repo_section}
 ## Initial interpretation
-This looks like a **{type_labels.get(app_type, app_type)}**. The factory will scaffold a Docker-deployable app based on your answers to the intake form below.
+This looks like a **{type_labels.get(app_type, app_type)}**. The factory will {"extend your linked repository" if has_existing else "scaffold a Docker-deployable app"} based on your answers to the intake form below.
 
 ## Proposed approach (loose)
 1. **Scope** — Lock in must-haves and explicit exclusions from your form answers
-2. **Architecture** — Document requirements, API surface, and deployment model
-3. **Implementation** — Generate code, tests, and Docker configuration
+2. **Architecture** — Document requirements, API surface, and deployment model{" (building on existing code)" if has_existing else ""}
+3. **Implementation** — {"Extend the codebase" if has_existing else "Generate code"}, tests, and Docker configuration
 4. **Validation** — Unit, integration, and smoke tests against staging
 5. **Review** — Acceptance checklist before production promotion
 
 ## Open questions
-The intake form below captures specifics we need before building. Answer what you can — required fields help us avoid building the wrong thing.
+The intake form below captures specifics we need before building. Pre-filled values come from your description and README — change anything that is wrong.
 
 ## Assumptions (until you say otherwise)
 - Self-hosted Docker deployment
-- Python + FastAPI backend unless you specify otherwise
+- {"Match the existing project stack where possible" if has_existing else "Python + FastAPI backend unless you specify otherwise"}
 - MVP scope: ship working core features first, defer nice-to-haves
 """
 
-    fields: list[IntakeField] = [
+    fields: list[IntakeField] = []
+
+    if has_existing:
+        fields.append(
+            IntakeField(
+                id="existing_code_approach",
+                label="How should the factory treat the existing code?",
+                type=IntakeFieldType.SELECT,
+                options=[
+                    "Extend existing code (recommended)",
+                    "Refactor in place — improve structure but keep behavior",
+                    "Replace only specific modules (describe in notes)",
+                    "Full rewrite (only if necessary)",
+                ],
+                default=suggested_responses.get("existing_code_approach", "Extend existing code (recommended)"),
+                required=True,
+            )
+        )
+        gaps_default = suggested_responses.get("gaps_to_address") or (
+            "Fill gaps from my project description — do not rebuild working features."
+        )
+        fields.append(
+            IntakeField(
+                id="gaps_to_address",
+                label="What should the factory add or improve?",
+                type=IntakeFieldType.TEXTAREA,
+                help="Focus on missing features, bugs, or polish — not re-implementing what already works.",
+                placeholder="e.g.\n- Add settings page for API URL\n- Fix mobile layout\n- Add export to CSV",
+                default=gaps_default if isinstance(gaps_default, str) else str(gaps_default),
+                required=True,
+            )
+        )
+
+    fields.extend(
+        [
         IntakeField(
             id="primary_goal",
             label="What should this app achieve?",
@@ -60,6 +121,7 @@ The intake form below captures specifics we need before building. Answer what yo
             help="One or two sentences on the core outcome users get.",
             placeholder="e.g. Let users track invoices and export them as PDF",
             required=True,
+            default=suggested_responses.get("primary_goal") or None,
         ),
         IntakeField(
             id="target_users",
@@ -76,6 +138,7 @@ The intake form below captures specifics we need before building. Answer what yo
             help="List the features required for v1. One per line is fine.",
             placeholder="e.g.\n- User login\n- Create and list items\n- Export to CSV",
             required=True,
+            default=suggested_responses.get("must_have_features") or None,
         ),
         IntakeField(
             id="out_of_scope",
@@ -84,7 +147,7 @@ The intake form below captures specifics we need before building. Answer what yo
             help="Things we should NOT build in v1. Critical for avoiding scope creep.",
             placeholder="e.g.\n- No payment processing\n- No mobile app\n- No multi-tenant",
             required=False,
-            default="",
+            default=suggested_responses.get("out_of_scope") or "",
         ),
         IntakeField(
             id="app_surface",
@@ -96,7 +159,8 @@ The intake form below captures specifics we need before building. Answer what yo
                 "Background worker (no UI)",
                 "CLI tool",
             ],
-            default=type_labels.get(app_type, "Web browser UI + REST API"),
+            default=suggested_responses.get("app_surface")
+            or type_labels.get(app_type, "Web browser UI + REST API"),
             required=True,
         ),
         IntakeField(
@@ -109,9 +173,12 @@ The intake form below captures specifics we need before building. Answer what yo
                 "OAuth / SSO (Google, GitHub, etc.)",
                 "API keys only",
             ],
-            default="No auth (single-user / internal tool)"
-            if "auth" not in desc_lower
-            else "Simple login (username/password)",
+            default=suggested_responses.get("authentication")
+            or (
+                "No auth (single-user / internal tool)"
+                if "auth" not in desc_lower
+                else "Simple login (username/password)"
+            ),
             required=True,
         ),
         IntakeField(
@@ -127,7 +194,8 @@ The intake form below captures specifics we need before building. Answer what yo
             default="In-memory (demo / ephemeral)",
             required=True,
         ),
-    ]
+        ]
+    )
 
     # Dynamic follow-up questions based on idea keywords
     if any(w in desc_lower for w in ("rss", "feed", "poll", "scrape", "crawl")):
@@ -200,7 +268,7 @@ The intake form below captures specifics we need before building. Answer what yo
             type=IntakeFieldType.TEXTAREA,
             help="Constraints, preferences, integrations, or references.",
             required=False,
-            default="",
+            default=suggested_responses.get("anything_else") or "",
         )
     )
 

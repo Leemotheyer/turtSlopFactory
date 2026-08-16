@@ -18,31 +18,67 @@ def _slugify(text: str) -> str:
     return slug or "feature"
 
 
-def plan_parallel_work(notes: list[dict], description: str = "") -> list[WorkUnit]:
+def plan_parallel_work(
+    notes: list[dict],
+    description: str = "",
+    *,
+    repo_analysis: dict | None = None,
+) -> list[WorkUnit]:
     """Build independent work units that can run in parallel."""
-    units: list[WorkUnit] = [
-        WorkUnit(
-            stream="backend",
-            title="Backend API",
-            description=(
-                "Implement FastAPI routes, models, validation, and server logic. "
-                "Build a complete API — not a stub — with proper error handling."
-            ),
-        ),
-        WorkUnit(
-            stream="frontend",
-            title="Frontend UI",
-            description=(
-                "Implement a polished static web UI: forms, lists, loading/empty states, "
-                "and mobile-friendly layout using relative fetch URLs."
-            ),
-        ),
-    ]
+    repo_analysis = repo_analysis or {}
+    has_existing = bool(repo_analysis.get("has_existing_app"))
+    units: list[WorkUnit] = []
 
     desc_lower = description.lower()
     api_only = any(kw in desc_lower for kw in ("api only", "api-only", "no ui", "no frontend", "headless"))
 
-    if not api_only:
+    if has_existing:
+        # Existing repo: only plan work for gaps — never generic full rebuild streams
+        if not repo_analysis.get("has_backend"):
+            units.append(
+                WorkUnit(
+                    stream="backend",
+                    title="Backend gaps",
+                    description=(
+                        "Add missing API routes and server logic to the existing codebase. "
+                        "Integrate with current structure — do not replace working code."
+                    ),
+                )
+            )
+        if not api_only and not repo_analysis.get("has_frontend"):
+            units.append(
+                WorkUnit(
+                    stream="frontend",
+                    title="Frontend gaps",
+                    description=(
+                        "Add or wire up the browser UI for existing API endpoints. "
+                        "Match existing project conventions."
+                    ),
+                )
+            )
+    else:
+        units.extend(
+            [
+                WorkUnit(
+                    stream="backend",
+                    title="Backend API",
+                    description=(
+                        "Implement FastAPI routes, models, validation, and server logic. "
+                        "Build a complete API — not a stub — with proper error handling."
+                    ),
+                ),
+                WorkUnit(
+                    stream="frontend",
+                    title="Frontend UI",
+                    description=(
+                        "Implement a polished static web UI: forms, lists, loading/empty states, "
+                        "and mobile-friendly layout using relative fetch URLs."
+                    ),
+                ),
+            ]
+        )
+
+    if not api_only and not has_existing:
         units.extend(
             [
                 WorkUnit(
@@ -66,6 +102,21 @@ def plan_parallel_work(notes: list[dict], description: str = "") -> list[WorkUni
                     feature_content="Complete CRUD flows, edge cases, delete confirmations, input validation",
                 ),
             ]
+        )
+    elif has_existing:
+        units.append(
+            WorkUnit(
+                stream="feature",
+                title="Gap completion & polish",
+                description=(
+                    "Implement intake gaps and supervisor notes on top of the existing codebase. "
+                    "Do not rebuild features that already work."
+                ),
+                feature_id="gap-completion",
+                feature_content=(
+                    "Address gaps from intake and notes. Extend existing code; preserve working behavior."
+                ),
+            )
         )
 
     seen_slugs: set[str] = set()
