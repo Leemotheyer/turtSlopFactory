@@ -67,7 +67,6 @@ import {
   type DiscoverySession,
   type FactoryEvent,
   type InputRequest,
-  type IntakeField,
   type NoteType,
   type Notification,
   type ProgressDigest,
@@ -78,6 +77,11 @@ import {
   type Task,
   type AgentActivity,
 } from "@/lib/api";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { FieldError, inputInvalidClass } from "@/components/ui/FieldError";
+import { DetailSkeleton, ProjectListSkeleton } from "@/components/ui/Skeleton";
+import { Spinner } from "@/components/ui/Spinner";
+import uiStyles from "@/components/ui/ui.module.css";
 import styles from "./page.module.css";
 import { IntakePanel } from "@/components/intake/IntakePanel";
 
@@ -154,6 +158,12 @@ export default function DashboardPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [logLoading, setLogLoading] = useState(false);
+  const [secretErrors, setSecretErrors] = useState<{ key?: string; value?: string }>({});
+  const [enrichmentError, setEnrichmentError] = useState<string | null>(null);
+  const createFormRef = useRef<HTMLFormElement>(null);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -175,7 +185,6 @@ export default function DashboardPage() {
   const [editProjectDesc, setEditProjectDesc] = useState("");
   const [createFormErrors, setCreateFormErrors] = useState<{ name?: string; description?: string }>({});
   const [projectDetailsError, setProjectDetailsError] = useState<string | null>(null);
-  const [secretFormError, setSecretFormError] = useState<string | null>(null);
   const [inputResponses, setInputResponses] = useState<Record<string, string>>({});
   const [discovery, setDiscovery] = useState<DiscoverySession | null>(null);
   const [intakeAnswers, setIntakeAnswers] = useState<Record<string, string | string[]>>({});
@@ -234,6 +243,7 @@ export default function DashboardPage() {
     setArtifactView(null);
     setLogView(null);
     setMobilePanel("status");
+    setDetailLoading(true);
   }
 
   const loadSetup = useCallback(async () => {
@@ -270,32 +280,42 @@ export default function DashboardPage() {
       setUnreadCount(unread);
 
       if (selectedId) {
-        const [d, t, dep, e, prog, n, inputs, disc, sec, activity] = await Promise.all([
-          fetchProjectDetail(selectedId),
-          fetchProjectTasks(selectedId),
-          fetchDeployments(selectedId),
-          fetchEvents(100, selectedId),
-          fetchProgress(selectedId),
-          fetchNotes(selectedId),
-          fetchInputRequests(selectedId),
-          fetchDiscovery(selectedId),
-          fetchSecrets(selectedId),
-          fetchAgentActivity(selectedId),
-        ]);
-        setDetail(d);
-        setTasks(t);
-        setDeployments(dep);
-        setEvents(e);
-        setProgress(prog);
-        setAgentActivity(activity);
-        setNotes(n);
-        setInputRequests(inputs);
-        setDiscovery(disc);
-        setSecrets(sec);
+        setDetailLoading(true);
+        try {
+          const [d, t, dep, e, prog, n, inputs, disc, sec, activity] = await Promise.all([
+            fetchProjectDetail(selectedId),
+            fetchProjectTasks(selectedId),
+            fetchDeployments(selectedId),
+            fetchEvents(100, selectedId),
+            fetchProgress(selectedId),
+            fetchNotes(selectedId),
+            fetchInputRequests(selectedId),
+            fetchDiscovery(selectedId),
+            fetchSecrets(selectedId),
+            fetchAgentActivity(selectedId),
+          ]);
+          setDetail(d);
+          setTasks(t);
+          setDeployments(dep);
+          setEvents(e);
+          setProgress(prog);
+          setAgentActivity(activity);
+          setNotes(n);
+          setInputRequests(inputs);
+          setDiscovery(disc);
+          setSecrets(sec);
+        } finally {
+          setDetailLoading(false);
+        }
+      } else {
+        setDetail(null);
+        setDetailLoading(false);
       }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
+    } finally {
+      setInitialLoading(false);
     }
   }, [selectedId]);
 
@@ -533,6 +553,7 @@ export default function DashboardPage() {
       setNewBranch("main");
       setNewIsolateBranch(true);
       setSelectedId(p.id);
+      setDetailLoading(true);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
@@ -544,6 +565,14 @@ export default function DashboardPage() {
   async function handleSaveRepo(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedId) return;
+    if (editEnrichmentPasses.trim() !== "") {
+      const parsed = parseInt(editEnrichmentPasses, 10);
+      if (Number.isNaN(parsed) || parsed < 0 || parsed > 20) {
+        setEnrichmentError("Enter a whole number from 0 to 20, or leave blank for the factory default.");
+        return;
+      }
+    }
+    setEnrichmentError(null);
     setLoading(true);
     try {
       await updateProjectRepo(selectedId, {
@@ -699,8 +728,16 @@ export default function DashboardPage() {
 
   async function viewLog(name: string) {
     if (!selectedId) return;
-    const content = await fetchLog(selectedId, name);
-    setLogView(content);
+    setLogLoading(true);
+    setLogView(null);
+    try {
+      const content = await fetchLog(selectedId, name);
+      setLogView(content);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load log");
+    } finally {
+      setLogLoading(false);
+    }
   }
 
   async function handleAddNote(e: React.FormEvent) {
@@ -803,9 +840,32 @@ export default function DashboardPage() {
     }
   }
 
+  function validateIntakeForm(): Record<string, string> {
+    if (!discovery?.form_fields) return {};
+    const errors: Record<string, string> = {};
+    for (const field of discovery.form_fields) {
+      if (!field.required) continue;
+      const value = intakeAnswers[field.id];
+      if (field.type === "multiselect") {
+        const selected = Array.isArray(value) ? value : value ? [value] : [];
+        if (selected.length === 0) {
+          errors[field.id] = "Select at least one option";
+        }
+      } else if (!value || (typeof value === "string" && !value.trim())) {
+        errors[field.id] = "This field is required";
+      }
+    }
+    return errors;
+  }
+
   async function handleSubmitIntake(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedId || !discovery) return;
+    const errors = validateIntakeForm();
+    if (Object.keys(errors).length > 0) {
+      setError("Please complete all required intake fields.");
+      return;
+    }
     setLoading(true);
     try {
       await submitIntake(selectedId, intakeAnswers);
@@ -824,15 +884,20 @@ export default function DashboardPage() {
     if (!selectedId) return;
     const key = secretKey.trim();
     const value = secretValue.trim();
-    if (!key || !value) {
-      setSecretFormError("Key name and secret value are required");
+    const errors: { key?: string; value?: string } = {};
+    if (!key) {
+      errors.key = "Key name is required";
+    } else if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+      errors.key = "Use UPPER_SNAKE_CASE (letters, numbers, underscores)";
+    }
+    if (!value) {
+      errors.value = "Secret value is required";
+    }
+    if (Object.keys(errors).length > 0) {
+      setSecretErrors(errors);
       return;
     }
-    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
-      setSecretFormError("Key name must start with a letter and use A-Z, 0-9, and underscores");
-      return;
-    }
-    setSecretFormError(null);
+    setSecretErrors({});
     setLoading(true);
     try {
       await setSecret(selectedId, key, value, secretDesc);
@@ -841,7 +906,7 @@ export default function DashboardPage() {
       setSecretDesc("");
       await refresh();
     } catch (err) {
-      setSecretFormError(err instanceof Error ? err.message : "Failed to save secret");
+      setError(err instanceof Error ? err.message : "Failed to save secret");
     } finally {
       setLoading(false);
     }
@@ -1124,6 +1189,12 @@ export default function DashboardPage() {
       case "pipeline_blocked": return "🛑";
       default: return "🔔";
     }
+  }
+
+  function focusCreateForm() {
+    setMobilePanel("projects");
+    createFormRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    createFormRef.current?.querySelector("input")?.focus();
   }
 
   const openInputs = inputRequests.filter((r) => r.status === "open");
@@ -1691,8 +1762,25 @@ export default function DashboardPage() {
       )}
 
       {error && (
-        <div className={styles.error} onClick={() => setError(null)}>
-          {error} <span className={styles.dismiss}>✕</span>
+        <div className={uiStyles.errorBanner} role="alert">
+          <span className={uiStyles.errorBannerBody}>{error}</span>
+          <div className={uiStyles.errorActions}>
+            <button
+              type="button"
+              className={uiStyles.errorRetry}
+              onClick={() => refresh()}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              className={uiStyles.errorDismiss}
+              onClick={() => setError(null)}
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -1747,59 +1835,76 @@ export default function DashboardPage() {
             <h2>Projects</h2>
           </div>
           <ul className={styles.projectList}>
-            {projects.map((p) => (
-              <li key={p.id}>
-                <button
-                  className={p.id === selectedId ? styles.projectActive : styles.projectBtn}
-                  onClick={() => selectProject(p.id)}
-                >
-                  <span className={styles.projectName}>{p.name}</span>
-                  <span className={styles.projectMeta}>
-                    <span className={styles.stateTag}
-                      style={{ background: STATE_COLORS[p.state] ?? "#6b7280" }}
-                    >
-                      {p.state.replace(/_/g, " ")}
-                    </span>
-                    {p.repo_url && (
-                      <span className={styles.repoTag} title={p.repo_url}>
-                        {repoLabel(p.repo_url)}
-                      </span>
-                    )}
-                    {resolvePreviewUrl(p.preview_url) && (
-                      <a
-                        href={resolvePreviewUrl(p.preview_url)!}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={styles.previewLink}
-                        onClick={(e) => e.stopPropagation()}
-                        title="Open live preview"
+            {initialLoading ? (
+              <ProjectListSkeleton count={3} />
+            ) : (
+              projects.map((p) => (
+                <li key={p.id}>
+                  <button
+                    className={p.id === selectedId ? styles.projectActive : styles.projectBtn}
+                    onClick={() => selectProject(p.id)}
+                  >
+                    <span className={styles.projectName}>{p.name}</span>
+                    <span className={styles.projectMeta}>
+                      <span className={styles.stateTag}
+                        style={{ background: STATE_COLORS[p.state] ?? "#6b7280" }}
                       >
-                        ↗
-                      </a>
-                    )}
-                  </span>
-                </button>
-              </li>
-            ))}
-            {projects.length === 0 && (
-              <p className={styles.emptyHint}>No projects yet</p>
+                        {p.state.replace(/_/g, " ")}
+                      </span>
+                      {p.repo_url && (
+                        <span className={styles.repoTag} title={p.repo_url}>
+                          {repoLabel(p.repo_url)}
+                        </span>
+                      )}
+                      {resolvePreviewUrl(p.preview_url) && (
+                        <a
+                          href={resolvePreviewUrl(p.preview_url)!}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={styles.previewLink}
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open live preview"
+                        >
+                          ↗
+                        </a>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              ))
+            )}
+            {!initialLoading && projects.length === 0 && (
+              <EmptyState
+                compact
+                icon="📁"
+                title="No projects yet"
+                description="Describe what you want to build in the form below — discovery starts automatically."
+                action={
+                  <button type="button" className={styles.btnSecondary} onClick={focusCreateForm}>
+                    Create your first project
+                  </button>
+                }
+              />
             )}
           </ul>
 
-          <form className={styles.createForm} onSubmit={handleCreate}>
+          <form ref={createFormRef} className={styles.createForm} onSubmit={handleCreate}>
             <h3>New project</h3>
             <input
               placeholder="e.g. Invoice Manager"
               value={newName}
               onChange={(e) => {
                 setNewName(e.target.value);
-                if (createFormErrors.name) setCreateFormErrors((prev) => ({ ...prev, name: undefined }));
+                if (createFormErrors.name) {
+                  setCreateFormErrors((prev) => ({ ...prev, name: undefined }));
+                }
               }}
               required
               maxLength={PROJECT_NAME_MAX}
               aria-invalid={Boolean(createFormErrors.name)}
+              className={inputInvalidClass(!!createFormErrors.name)}
             />
-            {createFormErrors.name && <p className={styles.fieldError}>{createFormErrors.name}</p>}
+            <FieldError message={createFormErrors.name} />
             <textarea
               placeholder="Describe what to build: a Docker-deployable web app with REST API..."
               value={newDesc}
@@ -1813,10 +1918,9 @@ export default function DashboardPage() {
               required
               maxLength={PROJECT_DESC_MAX}
               aria-invalid={Boolean(createFormErrors.description)}
+              className={inputInvalidClass(!!createFormErrors.description)}
             />
-            {createFormErrors.description && (
-              <p className={styles.fieldError}>{createFormErrors.description}</p>
-            )}
+            <FieldError message={createFormErrors.description} />
             <label className={styles.repoField}>
               GitHub repo (optional)
               <select
@@ -1855,7 +1959,13 @@ export default function DashboardPage() {
               </>
             )}
             <button type="submit" className={styles.btnPrimary} disabled={loading}>
-              Create project
+              {loading ? (
+                <>
+                  <Spinner /> Creating…
+                </>
+              ) : (
+                "Create project"
+              )}
             </button>
           </form>
         </aside>
@@ -1863,7 +1973,9 @@ export default function DashboardPage() {
         <main
           className={`${styles.main} ${mobilePanel !== "status" ? styles.mobileHidden : ""}`}
         >
-          {detail ? (
+          {initialLoading || (selectedId && detailLoading && !detail) ? (
+            <DetailSkeleton />
+          ) : detail ? (
             <>
               <div className={styles.projectTop}>
                 <div>
@@ -2361,9 +2473,15 @@ export default function DashboardPage() {
                           max={20}
                           placeholder={`Factory default (${detail.factory_default_enrichment_passes ?? 3})`}
                           value={editEnrichmentPasses}
-                          onChange={(e) => setEditEnrichmentPasses(e.target.value)}
+                          onChange={(e) => {
+                            setEditEnrichmentPasses(e.target.value);
+                            setEnrichmentError(null);
+                          }}
+                          aria-invalid={!!enrichmentError}
+                          className={inputInvalidClass(!!enrichmentError)}
                         />
                       </label>
+                      <FieldError message={enrichmentError ?? undefined} />
                       <p className={styles.repoHint}>
                         How many autonomous product-improvement passes run after the first working build.
                         Leave blank to use the factory default ({detail.factory_default_enrichment_passes ?? 3}).
@@ -2494,7 +2612,14 @@ export default function DashboardPage() {
                           )}
                         </li>
                       ))}
-                      {notes.length === 0 && <p className={styles.emptyHint}>No notes yet</p>}
+                      {notes.length === 0 && (
+                        <EmptyState
+                          compact
+                          icon="📝"
+                          title="No notes yet"
+                          description="Add instructions, features, or scope boundaries — agents read these on their next step."
+                        />
+                      )}
                     </ul>
                   </section>
 
@@ -2505,7 +2630,12 @@ export default function DashboardPage() {
                       5 minutes if you don&apos;t respond. You can still override here.
                     </p>
                     {inputRequests.length === 0 ? (
-                      <p className={styles.emptyHint}>No agent questions yet</p>
+                      <EmptyState
+                        compact
+                        icon="💬"
+                        title="No agent questions"
+                        description="Agents proceed with sensible defaults. Questions appear here when they need your input."
+                      />
                     ) : (
                       <ul className={styles.inputList}>
                         {inputRequests.map((req) => (
@@ -2588,29 +2718,42 @@ export default function DashboardPage() {
                         <input
                           placeholder="KEY_NAME (e.g. OPENAI_API_KEY)"
                           value={secretKey}
-                          onChange={(e) => setSecretKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
-                          required
+                          onChange={(e) => {
+                            setSecretKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""));
+                            if (secretErrors.key) setSecretErrors((prev) => ({ ...prev, key: undefined }));
+                          }}
+                          aria-invalid={!!secretErrors.key}
+                          className={inputInvalidClass(!!secretErrors.key)}
                         />
                         <input
                           type="password"
                           placeholder="Secret value"
                           value={secretValue}
-                          onChange={(e) => setSecretValue(e.target.value)}
-                          required
+                          onChange={(e) => {
+                            setSecretValue(e.target.value);
+                            if (secretErrors.value) setSecretErrors((prev) => ({ ...prev, value: undefined }));
+                          }}
                           autoComplete="off"
+                          aria-invalid={!!secretErrors.value}
+                          className={inputInvalidClass(!!secretErrors.value)}
                         />
                       </div>
+                      <FieldError message={secretErrors.key ?? secretErrors.value} />
                       <input
                         placeholder="Description (optional)"
                         value={secretDesc}
                         onChange={(e) => setSecretDesc(e.target.value)}
                       />
                       <button type="submit" className={styles.btnPrimary} disabled={loading}>
-                        Save secret
+                        {loading ? (
+                          <>
+                            <Spinner /> Saving…
+                          </>
+                        ) : (
+                          "Save secret"
+                        )}
                       </button>
                     </form>
-                    {secretFormError && <p className={styles.fieldError}>{secretFormError}</p>}
-
                     <ul className={styles.secretsList}>
                       {(secrets?.secrets ?? []).map((s) => (
                         <li
@@ -2638,7 +2781,16 @@ export default function DashboardPage() {
                         </li>
                       ))}
                       {(secrets?.secrets.length ?? 0) === 0 && (
-                        <p className={styles.emptyHint}>No secrets configured yet</p>
+                        <EmptyState
+                          compact
+                          icon="🔐"
+                          title="No secrets configured"
+                          description={
+                            (secrets?.pending_requirements.length ?? 0) > 0
+                              ? "Agents requested environment variables above — add values here so preview testing can proceed."
+                              : "Add API keys or tokens agents need at runtime. Values are encrypted and never shown to agents."
+                          }
+                        />
                       )}
                     </ul>
                   </section>
@@ -2656,7 +2808,24 @@ export default function DashboardPage() {
                     </p>
                   )}
                   {tasks.length === 0 ? (
-                    <p className={styles.emptyHint}>No tasks yet — start the pipeline</p>
+                    <EmptyState
+                      icon="🤖"
+                      title="No agent tasks yet"
+                      description="Tasks appear once discovery completes and the build pipeline starts. The factory runs agents automatically."
+                      action={
+                        detail.pipeline_running || AUTO_START_PIPELINE_STATES.has(detail.state) ? undefined : (
+                          <button type="button" className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
+                            {loading ? (
+                              <>
+                                <Spinner /> Starting…
+                              </>
+                            ) : (
+                              "Start pipeline"
+                            )}
+                          </button>
+                        )
+                      }
+                    />
                   ) : (
                     <table>
                       <thead>
@@ -2731,7 +2900,11 @@ export default function DashboardPage() {
               {tab === "artifacts" && (
                 <div className={styles.artifactGrid}>
                   {detail.artifacts.length === 0 ? (
-                    <p className={styles.emptyHint}>No artifacts yet</p>
+                    <EmptyState
+                      icon="📄"
+                      title="No artifacts yet"
+                      description="Plans, specs, and agent outputs will show up here as the pipeline progresses."
+                    />
                   ) : (
                     detail.artifacts.map((a) => (
                       <button key={a} className={styles.artifactCard} onClick={() => viewArtifact(a)}>
@@ -2756,7 +2929,11 @@ export default function DashboardPage() {
               {tab === "deployments" && (
                 <div className={styles.table}>
                   {deployments.length === 0 ? (
-                    <p className={styles.emptyHint}>No deployments yet</p>
+                    <EmptyState
+                      icon="🚀"
+                      title="No deployments yet"
+                      description="Staging and production deploys appear here after Docker build and smoke tests pass."
+                    />
                   ) : (
                     <table>
                       <thead>
@@ -2786,10 +2963,39 @@ export default function DashboardPage() {
 
               {tab === "logs" && (
                 <div className={styles.logPanel}>
-                  <button className={styles.btnSecondary} onClick={() => viewLog("pipeline.log")}>
-                    View pipeline.log
+                  <button
+                    className={styles.btnSecondary}
+                    onClick={() => viewLog("pipeline.log")}
+                    disabled={logLoading}
+                  >
+                    {logLoading ? (
+                      <>
+                        <Spinner /> Loading log…
+                      </>
+                    ) : (
+                      "View pipeline.log"
+                    )}
                   </button>
+                  {logLoading && !logView && (
+                    <div className={uiStyles.loadingCenter}>
+                      <Spinner size="lg" />
+                      <p>Loading pipeline log…</p>
+                    </div>
+                  )}
                   {logView && <pre className={styles.logContent}>{logView}</pre>}
+                  {!logLoading && !logView && (
+                    <EmptyState
+                      compact
+                      icon="📋"
+                      title="No log loaded"
+                      description="Open pipeline.log to inspect build output and agent activity."
+                      action={
+                        <button type="button" className={styles.btnSecondary} onClick={() => viewLog("pipeline.log")}>
+                          View pipeline.log
+                        </button>
+                      }
+                    />
+                  )}
                 </div>
               )}
             </>
@@ -2803,10 +3009,13 @@ export default function DashboardPage() {
               </p>
               <ol>
                 <li>Describe your app in the sidebar</li>
-                <li>Click <strong>Start pipeline</strong></li>
+                <li>Complete the intake form when discovery finishes</li>
                 <li>Watch agents work in real time</li>
                 <li>Approve promotion when review passes</li>
               </ol>
+              <button type="button" className={styles.btnPrimary} onClick={focusCreateForm}>
+                Create a project
+              </button>
             </div>
           )}
         </main>
@@ -2825,7 +3034,25 @@ export default function DashboardPage() {
                 <time>{new Date(ev.created_at).toLocaleTimeString()}</time>
               </li>
             ))}
-            {events.length === 0 && <p className={styles.emptyHint}>Waiting for events…</p>}
+            {events.length === 0 && (
+              <EmptyState
+                compact
+                icon="⚡"
+                title={connected ? "Waiting for events" : "Reconnecting…"}
+                description={
+                  connected
+                    ? "Pipeline transitions, agent updates, and deploys stream here in real time."
+                    : "Live updates paused — check your connection or retry loading."
+                }
+                action={
+                  !connected ? (
+                    <button type="button" className={styles.btnSecondary} onClick={() => refresh()}>
+                      Retry
+                    </button>
+                  ) : undefined
+                }
+              />
+            )}
           </ul>
         </aside>
       </div>
