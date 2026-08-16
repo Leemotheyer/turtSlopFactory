@@ -169,6 +169,12 @@ async def update_project(
     prev_branch = row.branch
     prev_work = row.work_branch
 
+    if body.name is not None and body.name != row.name:
+        row.name = body.name
+
+    if body.description is not None and body.description != row.description:
+        row.description = body.description
+
     if body.clear_repo:
         row.repo_url = None
         repo_changed = True

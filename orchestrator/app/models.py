@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ProjectState(StrEnum):
@@ -41,16 +41,25 @@ class TaskStatus(StrEnum):
 
 
 class ProjectCreate(BaseModel):
-    name: str
-    description: str
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=10000)
     repo_url: str | None = None
     branch: str = "main"
     base_branch: str | None = None
     isolate_branch: bool = True
     max_enrichment_passes: int | None = None
 
+    @field_validator("name", "description", mode="before")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        if isinstance(value, str):
+            value = value.strip()
+        return value
+
 
 class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, min_length=1, max_length=10000)
     repo_url: str | None = None
     branch: str | None = None
     base_branch: str | None = None
@@ -58,6 +67,14 @@ class ProjectUpdate(BaseModel):
     isolate_branch: bool | None = None
     clear_repo: bool = False
     max_enrichment_passes: int | None = None
+
+    @field_validator("name", "description", mode="before")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None or not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        return stripped or None
 
 
 class Project(BaseModel):
@@ -108,6 +125,8 @@ class EventType(StrEnum):
     DEPLOYMENT_FINISHED = "deployment.finished"
     PROGRESS_UPDATED = "progress.updated"
     NOTE_ADDED = "note.added"
+    NOTE_UPDATED = "note.updated"
+    NOTE_DELETED = "note.deleted"
     INPUT_REQUESTED = "input.requested"
     INPUT_RESOLVED = "input.resolved"
     DISCOVERY_STARTED = "discovery.started"
@@ -217,8 +236,28 @@ class InputRequestStatus(StrEnum):
 
 
 class ProjectNoteCreate(BaseModel):
-    content: str
+    content: str = Field(min_length=1, max_length=5000)
     note_type: NoteType = NoteType.INSTRUCTION
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def strip_content(cls, value: str) -> str:
+        if isinstance(value, str):
+            value = value.strip()
+        return value
+
+
+class ProjectNoteUpdate(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=5000)
+    note_type: NoteType | None = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def strip_optional_content(cls, value: str | None) -> str | None:
+        if value is None or not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        return stripped or None
 
 
 class ProjectNote(BaseModel):
@@ -266,7 +305,14 @@ class InputRequest(BaseModel):
 
 
 class InputRequestRespond(BaseModel):
-    response: str
+    response: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("response", mode="before")
+    @classmethod
+    def strip_response(cls, value: str) -> str:
+        if isinstance(value, str):
+            value = value.strip()
+        return value
 
 
 class FactoryEvent(BaseModel):

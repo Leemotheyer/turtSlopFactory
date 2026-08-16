@@ -12,6 +12,7 @@ from app.models import (
     ProgressDigest,
     ProjectNote,
     ProjectNoteCreate,
+    ProjectNoteUpdate,
 )
 from app.pipeline.executor import pipeline_executor
 from app.services.feedback_pipeline import (
@@ -21,7 +22,7 @@ from app.services.feedback_pipeline import (
 )
 from app.services.git_branching import merge_work_branch_to_base, resolve_branch_plan
 from app.services.input_requests import list_input_requests, respond_to_input
-from app.services.notes import add_note, list_notes
+from app.services.notes import add_note, delete_note, get_note, list_notes, update_note
 from app.services.progress import get_progress_digest
 from app.services.secrets import get_github_token
 from app.workspace.manager import WorkspaceManager
@@ -59,6 +60,51 @@ async def create_note(
     if body.note_type in (NoteType.INSTRUCTION, NoteType.FEATURE, NoteType.SCOPE_OUT):
         await maybe_schedule_feedback_pipeline(db, project_id)
     return note
+
+
+@router.patch("/{project_id}/notes/{note_id}", response_model=ProjectNote)
+async def patch_note(
+    project_id: UUID,
+    note_id: UUID,
+    body: ProjectNoteUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> ProjectNote:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if body.content is None and body.note_type is None:
+        raise HTTPException(status_code=400, detail="At least one field must be provided")
+
+    note = await update_note(db, project_id, note_id, body)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    if note.note_type in (NoteType.INSTRUCTION, NoteType.FEATURE, NoteType.SCOPE_OUT):
+        await maybe_schedule_feedback_pipeline(db, project_id)
+    return note
+
+
+@router.delete("/{project_id}/notes/{note_id}")
+async def remove_note(
+    project_id: UUID,
+    note_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    row = await db.get(ProjectRow, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target = await get_note(db, project_id, note_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    deleted = await delete_note(db, project_id, note_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    if target.note_type in (NoteType.INSTRUCTION, NoteType.FEATURE, NoteType.SCOPE_OUT):
+        await maybe_schedule_feedback_pipeline(db, project_id)
+    return {"status": "deleted", "note_id": str(note_id)}
 
 
 @router.get("/{project_id}/input-requests", response_model=list[InputRequest])

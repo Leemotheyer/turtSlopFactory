@@ -40,6 +40,46 @@ async def test_add_and_list_notes(_mock_publish, db_session):
 
 
 @pytest.mark.asyncio
+@patch("app.services.notes.event_bus.publish", new_callable=AsyncMock)
+async def test_update_and_delete_note(_mock_publish, db_session):
+    from app.services.notes import delete_note, update_note
+    from app.models import ProjectNoteUpdate
+
+    session, project_id = db_session
+    note = await add_note(
+        session,
+        project_id,
+        ProjectNoteCreate(content="Add dark mode", note_type=NoteType.FEATURE),
+    )
+    updated = await update_note(
+        session,
+        project_id,
+        note.id,
+        ProjectNoteUpdate(content="Add dark mode toggle", note_type=NoteType.INSTRUCTION),
+    )
+    assert updated is not None
+    assert updated.content == "Add dark mode toggle"
+    assert updated.note_type == NoteType.INSTRUCTION
+
+    deleted = await delete_note(session, project_id, note.id)
+    assert deleted is True
+    notes = await list_notes(session, project_id)
+    assert notes == []
+
+
+def test_project_create_validation():
+    from pydantic import ValidationError
+
+    from app.models import ProjectCreate
+
+    with pytest.raises(ValidationError):
+        ProjectCreate(name="   ", description="Valid description")
+    with pytest.raises(ValidationError):
+        ProjectCreate(name="Valid", description="")
+    ProjectCreate(name="Invoice app", description="Build an invoice manager")
+
+
+@pytest.mark.asyncio
 @patch("app.services.progress.event_bus.publish", new_callable=AsyncMock)
 async def test_record_progress_digest(_mock_publish, db_session):
     session, project_id = db_session
