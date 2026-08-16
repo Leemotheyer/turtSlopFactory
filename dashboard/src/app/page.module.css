@@ -108,6 +108,13 @@
   margin-bottom: 0.75rem;
 }
 
+.sidebarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
 /* Projects sidebar */
 .projectList {
   list-style: none;
@@ -651,6 +658,11 @@
   font-size: 0.875rem;
   line-height: 2;
   padding-left: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.welcome .btnPrimary {
+  min-width: 12rem;
 }
 
 .emptyHint {
@@ -1952,10 +1964,14 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .intakeWaiting h3 {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0;
 }
 
 .loosePlan {
@@ -2029,6 +2045,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  padding: 0.35rem 0;
 }
 
 .checkLabel {
@@ -2220,15 +2237,4 @@
     width: 100%;
     text-align: center;
   }
-}
-
-@media (max-width: 900px) {
-  .guidancePanel {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 1100px) {
-  .body { grid-template-columns: 1fr; }
-  .sidebar, .events { border: none; border-bottom: 1px solid var(--border); max-height: 300px; }
 }
