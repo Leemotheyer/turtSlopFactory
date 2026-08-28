@@ -2098,6 +2098,27 @@ export default function DashboardPage() {
                 )}
               </div>
 
+              {detail.repo_analysis && (
+                <section className={styles.repoAnalysisBanner}>
+                  <div>
+                    <h3>Existing codebase detected</h3>
+                    <p className={styles.repoHint}>
+                      The factory will <strong>continue this project</strong> — extend what exists rather than
+                      scaffolding from scratch. Intake questions focus on gaps and changes.
+                    </p>
+                    <ul className={styles.repoAnalysisMeta}>
+                      {detail.repo_analysis.stack.length > 0 && (
+                        <li>Stack: {detail.repo_analysis.stack.join(", ")}</li>
+                      )}
+                      <li>{detail.repo_analysis.source_file_count} source files scanned</li>
+                      {detail.repo_analysis.has_backend && <li>Backend present</li>}
+                      {detail.repo_analysis.has_frontend && <li>UI present</li>}
+                      {detail.repo_analysis.has_tests && <li>Tests present</li>}
+                    </ul>
+                  </div>
+                </section>
+              )}
+
               <section className={styles.repoPanel}>
                 <div className={styles.repoPanelHeader}>
                   <div>

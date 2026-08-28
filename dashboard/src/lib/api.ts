@@ -37,6 +37,18 @@ export interface Project {
   updated_at: string;
 }
 
+export interface RepoAnalysisSummary {
+  continuation_mode: string;
+  stack: string[];
+  source_file_count: number;
+  has_backend: boolean;
+  has_frontend: boolean;
+  has_tests: boolean;
+  has_dockerfile: boolean;
+  detected_features: string[];
+  top_level_entries: string[];
+}
+
 export interface ProjectDetail extends Project {
   staging_url: string | null;
   production_url: string | null;
@@ -52,6 +64,7 @@ export interface ProjectDetail extends Project {
   failed_substage: string | null;
   discovery_status: string | null;
   intake_ready: boolean;
+  repo_analysis?: RepoAnalysisSummary | null;
   factory_default_enrichment_passes?: number;
   effective_enrichment_passes?: number;
   pipeline_substage?: {

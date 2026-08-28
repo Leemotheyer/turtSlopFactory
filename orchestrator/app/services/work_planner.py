@@ -107,6 +107,32 @@ def plan_parallel_work(
         units.append(
             WorkUnit(
                 stream="feature",
+                title="Continue existing project",
+                description=(
+                    "Read the existing codebase, preserve working behavior, and implement intake gaps "
+                    "and supervisor notes. Do not scaffold a new app or replace working modules."
+                ),
+                feature_id="continue-existing",
+                feature_content=(
+                    "Continue development on the linked repository. Extend existing code; "
+                    "preserve working behavior unless intake says otherwise."
+                ),
+            )
+        )
+        gaps = description.strip()
+        if gaps and len(gaps) > 20:
+            units.append(
+                WorkUnit(
+                    stream="feature",
+                    title="Intake gaps & changes",
+                    description=gaps[:2000],
+                    feature_id="intake-gaps",
+                    feature_content=gaps[:2000],
+                )
+            )
+        units.append(
+            WorkUnit(
+                stream="feature",
                 title="Gap completion & polish",
                 description=(
                     "Implement intake gaps and supervisor notes on top of the existing codebase. "

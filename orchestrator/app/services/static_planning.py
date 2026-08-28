@@ -36,14 +36,21 @@ def draft_requirements_from_context(
         lines.extend(
             [
                 "## Existing codebase constraints",
-                "- **Extend the linked repository** — do not rebuild working features.",
-                "- Preserve existing architecture unless a supervisor note explicitly requests a rewrite.",
+                "- **Continue the linked repository** — do not rebuild working features.",
+                "- Preserve existing architecture unless intake explicitly requests a rewrite.",
                 f"- Detected stack: {', '.join(repo_analysis.get('stack') or []) or 'see repo'}",
+                f"- Source files scanned: {repo_analysis.get('source_file_count', 0)}",
                 f"- Backend: {'yes' if repo_analysis.get('has_backend') else 'no'}",
                 f"- Frontend: {'yes' if repo_analysis.get('has_frontend') else 'no'}",
                 "",
             ]
         )
+        what_works = intake.get("what_works_today")
+        if what_works:
+            lines.extend(["### Already in the repo (preserve)", str(what_works), ""])
+        gaps = intake.get("gaps_to_address")
+        if gaps:
+            lines.extend(["### Gaps to address", str(gaps), ""])
         if repo_analysis.get("detected_features"):
             lines.append("### Already documented in README")
             for feat in repo_analysis["detected_features"][:10]:
@@ -52,7 +59,8 @@ def draft_requirements_from_context(
 
     must_have = intake.get("must_have_features") or intake.get("primary_goal")
     if must_have:
-        lines.extend(["## Must-have (MVP)", str(must_have), ""])
+        label = "Changes requested" if repo_analysis and repo_analysis.get("has_existing_app") else "Must-have (MVP)"
+        lines.extend([f"## {label}", str(must_have), ""])
 
     out_of_scope = intake.get("out_of_scope")
     if out_of_scope:
@@ -62,14 +70,25 @@ def draft_requirements_from_context(
     if success:
         lines.extend(["## Acceptance criteria", str(success), ""])
 
-    lines.extend(
-        [
-            "## Quality bar",
-            "- All core flows work in the factory live preview",
-            "- pytest coverage for API behavior",
-            "- Loading, empty, and error states in the UI",
-            "- `/health` returns HTTP 200",
-            "",
-        ]
-    )
+    if repo_analysis and repo_analysis.get("has_existing_app"):
+        lines.extend(
+            [
+                "## Quality bar",
+                "- Existing behavior preserved unless explicitly changed in intake",
+                "- New/changed features work in the factory live preview",
+                "- Tests pass for affected areas",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "## Quality bar",
+                "- All core flows work in the factory live preview",
+                "- pytest coverage for API behavior",
+                "- Loading, empty, and error states in the UI",
+                "- `/health` returns HTTP 200",
+                "",
+            ]
+        )
     return "\n".join(lines).strip() + "\n"

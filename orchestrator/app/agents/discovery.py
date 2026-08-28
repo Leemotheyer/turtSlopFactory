@@ -42,16 +42,18 @@ def generate_discovery(
     repo_section = ""
     if has_existing:
         stack = ", ".join(repo_context.get("stack") or []) or "see repository"
+        file_count = repo_context.get("source_file_count", 0)
         repo_section = f"""
 ## Existing repository detected
-The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and found an existing codebase.
+The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and analyzed the codebase before intake.
 
 - Stack: {stack}
+- Source files scanned: {file_count}
 - Backend: {'yes' if repo_context.get('has_backend') else 'no'}
 - UI: {'yes' if repo_context.get('has_frontend') else 'no'}
 - Tests: {'yes' if repo_context.get('has_tests') else 'no'}
 
-**Default approach:** extend what exists — fill gaps from your description and intake answers rather than rebuilding from scratch.
+**Approach:** continue from what exists — your intake answers define gaps and changes, not a greenfield rebuild.
 Some questions may be **pre-filled from the README** — review and adjust them.
 """
 
@@ -97,8 +99,19 @@ The intake form below captures specifics we need before building. Pre-filled val
                 required=True,
             )
         )
+        fields.append(
+            IntakeField(
+                id="what_works_today",
+                label="What already exists in the repo?",
+                type=IntakeFieldType.TEXTAREA,
+                help="We scanned the repository — confirm what's already built and should be preserved.",
+                default=suggested_responses.get("what_works_today")
+                or "See discovery plan for detected stack and README capabilities.",
+                required=True,
+            )
+        )
         gaps_default = suggested_responses.get("gaps_to_address") or (
-            "Fill gaps from my project description — do not rebuild working features."
+            "Continue from the existing codebase using my project description — do not rebuild working features."
         )
         fields.append(
             IntakeField(
@@ -116,9 +129,13 @@ The intake form below captures specifics we need before building. Pre-filled val
         [
         IntakeField(
             id="primary_goal",
-            label="What should this app achieve?",
+            label="What should this app achieve?" if not has_existing else "What outcome do you want next?",
             type=IntakeFieldType.TEXTAREA,
-            help="One or two sentences on the core outcome users get.",
+            help=(
+                "One or two sentences on the core outcome users get."
+                if not has_existing
+                else "Describe the next milestone for this existing project."
+            ),
             placeholder="e.g. Let users track invoices and export them as PDF",
             required=True,
             default=suggested_responses.get("primary_goal") or None,
@@ -133,10 +150,18 @@ The intake form below captures specifics we need before building. Pre-filled val
         ),
         IntakeField(
             id="must_have_features",
-            label="Must-have features (MVP)",
+            label="Must-have features (MVP)" if not has_existing else "New or changed features",
             type=IntakeFieldType.TEXTAREA,
-            help="List the features required for v1. One per line is fine.",
-            placeholder="e.g.\n- User login\n- Create and list items\n- Export to CSV",
+            help=(
+                "List the features required for v1. One per line is fine."
+                if not has_existing
+                else "Only list features to add or change — not capabilities already in the repo."
+            ),
+            placeholder=(
+                "e.g.\n- User login\n- Create and list items\n- Export to CSV"
+                if not has_existing
+                else "e.g.\n- Add CSV export\n- Fix pagination on settings page"
+            ),
             required=True,
             default=suggested_responses.get("must_have_features") or None,
         ),
@@ -255,9 +280,18 @@ The intake form below captures specifics we need before building. Pre-filled val
             id="success_criteria",
             label="How will you know v1 is done?",
             type=IntakeFieldType.TEXTAREA,
-            help="Acceptance criteria — what must work before you call it shippable?",
-            placeholder="e.g. I can deploy with docker compose, open the UI, create an item, and see it after refresh",
+            help=(
+                "Acceptance criteria — what must work before you call it shippable?"
+                if not has_existing
+                else "What must be true after this factory cycle — including preserved existing behavior?"
+            ),
+            placeholder=(
+                "e.g. I can deploy with docker compose, open the UI, create an item, and see it after refresh"
+                if not has_existing
+                else "e.g. Existing login still works; new export button downloads CSV; tests pass"
+            ),
             required=True,
+            default=suggested_responses.get("success_criteria") or None,
         )
     )
 

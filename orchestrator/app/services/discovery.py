@@ -26,7 +26,12 @@ from app.services.git_branching import setup_project_branches
 from app.services.notifications import create_notification
 from app.services.notes import add_note
 from app.services.progress import record_progress
-from app.services.repo_analysis import analyze_repo, infer_intake_defaults
+from app.services.repo_analysis import (
+    analyze_repo,
+    fetch_github_readme,
+    fetch_github_repo_meta,
+    infer_intake_defaults,
+)
 from app.services.secrets import get_github_token
 from app.workspace.manager import WorkspaceManager
 from app.workspace.provisioner import repo_display_name
@@ -49,13 +54,19 @@ def _session_from_row(row: DiscoverySessionRow) -> DiscoverySession:
     )
 
 
-async def run_discovery(session: AsyncSession, project_id: UUID) -> DiscoverySession:
+async def run_discovery(session: AsyncSession, project_id: UUID, *, force: bool = False) -> DiscoverySession:
     project = await session.get(ProjectRow, project_id)
     if not project:
         raise ValueError("Project not found")
 
     existing = await get_discovery(session, project_id)
-    if existing:
+    refreshable_states = (
+        ProjectState.REQUESTED.value,
+        ProjectState.DISCOVERY.value,
+        ProjectState.INTAKE_PENDING.value,
+    )
+
+    if existing and not force:
         if existing.status in (
             DiscoveryStatus.AWAITING_USER,
             DiscoveryStatus.SUBMITTED,
@@ -64,11 +75,11 @@ async def run_discovery(session: AsyncSession, project_id: UUID) -> DiscoverySes
             return existing
         if (
             existing.status == DiscoveryStatus.GENERATING
-            and project.state not in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value)
+            and project.state not in refreshable_states
         ):
             return existing
 
-    if project.state not in (ProjectState.REQUESTED.value, ProjectState.DISCOVERY.value):
+    if project.state not in refreshable_states and not force:
         if existing:
             return existing
         raise ValueError(f"Discovery not applicable in state {project.state}")
@@ -107,20 +118,34 @@ async def run_discovery(session: AsyncSession, project_id: UUID) -> DiscoverySes
     if project.repo_url:
         try:
             repo_path = workspace.repo_dir(project_id)
+            token = await get_github_token(session, project_id)
+            github_meta = await fetch_github_repo_meta(project.repo_url, github_token=token)
             if not (repo_path / ".git").exists():
-                token = await get_github_token(session, project_id)
                 await setup_project_branches(workspace, project, github_token=token)
                 await session.commit()
-            analysis = analyze_repo(repo_path)
+            readme_override = ""
+            if not any((repo_path / name).is_file() for name in ("README.md", "readme.md", "Readme.md")):
+                readme_override = await fetch_github_readme(project.repo_url, github_token=token)
+            analysis = analyze_repo(repo_path, readme_override=readme_override, github_meta=github_meta)
+            if not analysis.get("has_existing_app") and github_meta.get("size_kb", 0) >= 50:
+                analysis = {
+                    **analysis,
+                    "has_existing_app": True,
+                    "has_substantial_codebase": True,
+                    "continuation_mode": "extend",
+                }
             repo_context = {**analysis, "repo_name": repo_display_name(project.repo_url)}
             suggested_responses = infer_intake_defaults(project.description, analysis)
             workspace.write_artifact(
                 project_id, "repo-analysis.json", json.dumps(repo_context, indent=2, default=str)
             )
+            mode = repo_context.get("continuation_mode", "greenfield")
             workspace.append_log(
                 project_id,
                 "pipeline.log",
-                f"[discovery] Analyzed linked repo — pre-filled {len(suggested_responses)} intake hint(s)",
+                f"[discovery] Analyzed linked repo ({mode}) — "
+                f"{analysis.get('source_file_count', 0)} source files, "
+                f"pre-filled {len(suggested_responses)} intake hint(s)",
             )
         except Exception as exc:
             logger.warning("Repo analysis during discovery failed for %s: %s", project_id, exc)
@@ -274,6 +299,7 @@ async def _apply_intake_to_project(
     mappings = {
         "must_have_features": NoteType.FEATURE,
         "gaps_to_address": NoteType.FEATURE,
+        "what_works_today": NoteType.SCOPE_OUT,
         "out_of_scope": NoteType.SCOPE_OUT,
         "success_criteria": NoteType.INSTRUCTION,
         "existing_code_approach": NoteType.INSTRUCTION,
