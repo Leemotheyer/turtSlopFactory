@@ -440,6 +440,12 @@
   font-size: 0.85rem;
 }
 
+.settingsSubheading {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .substageSteps {
   display: flex;
   flex-wrap: wrap;

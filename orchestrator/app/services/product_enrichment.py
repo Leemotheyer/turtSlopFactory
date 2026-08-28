@@ -387,6 +387,9 @@ async def audit_live_preview(context: dict) -> dict:
         "issues": [],
         "has_html_ui": False,
         "health_ok": False,
+        "mobile_friendly": False,
+        "viewport_meta": False,
+        "responsive_signals": [],
     }
     if not upstream:
         audit["issues"].append("Live preview is not running")
@@ -415,6 +418,23 @@ async def audit_live_preview(context: dict) -> dict:
                     content_type = response.headers.get("content-type", "")
                     if "text/html" in content_type and entry["ok"]:
                         audit["has_html_ui"] = True
+                        body = response.text[:50_000]
+                        body_lower = body.lower()
+                        if 'name="viewport"' in body_lower or "viewport" in body_lower:
+                            audit["viewport_meta"] = True
+                        responsive_markers = (
+                            "@media",
+                            "max-width",
+                            "min-width",
+                            "mobile",
+                            "responsive",
+                            "flex-wrap",
+                            "grid-template",
+                        )
+                        found = [m for m in responsive_markers if m in body_lower]
+                        if found:
+                            audit["responsive_signals"] = found[:6]
+                        audit["mobile_friendly"] = audit["viewport_meta"] or len(found) >= 2
                     if path == health_path and entry["ok"]:
                         audit["health_ok"] = True
                 except httpx.HTTPError as exc:
@@ -426,6 +446,10 @@ async def audit_live_preview(context: dict) -> dict:
                 audit["issues"].append("Health endpoint is not returning success")
             if not audit["has_html_ui"]:
                 audit["issues"].append("No HTML UI detected at / or /index.html")
+            if audit["has_html_ui"] and not audit["mobile_friendly"]:
+                audit["issues"].append(
+                    "UI may not be mobile-friendly — add viewport meta and responsive layout"
+                )
     except Exception as exc:
         audit["issues"].append(f"Preview audit error: {exc}")
 

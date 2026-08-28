@@ -39,6 +39,7 @@ import {
   respondToInput,
   runPipeline,
   stopPipeline,
+  updateSelfPropelling,
   fetchAgentActivity,
   setSecret,
   submitIntake,
@@ -226,6 +227,11 @@ export default function DashboardPage() {
   const [editBranch, setEditBranch] = useState("main");
   const [editIsolateBranch, setEditIsolateBranch] = useState(true);
   const [editEnrichmentPasses, setEditEnrichmentPasses] = useState("");
+  const [selfPropellingEnabled, setSelfPropellingEnabled] = useState(false);
+  const [editPostProdPasses, setEditPostProdPasses] = useState("");
+  const [editCycleInterval, setEditCycleInterval] = useState("");
+  const [editTokenBudget, setEditTokenBudget] = useState("");
+  const [selfPropellingError, setSelfPropellingError] = useState<string | null>(null);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [repoNote, setRepoNote] = useState<string | null>(null);
@@ -381,6 +387,16 @@ export default function DashboardPage() {
       setEditProjectName(detail.name);
       setEditProjectDesc(detail.description);
       setProjectDetailsError(null);
+      const sp = detail.self_propelling;
+      setSelfPropellingEnabled(Boolean(sp?.enabled));
+      setEditPostProdPasses(
+        sp?.post_production_passes != null ? String(sp.post_production_passes) : ""
+      );
+      setEditCycleInterval(sp?.interval_hours != null ? String(sp.interval_hours) : "");
+      setEditTokenBudget(
+        sp?.token_budget_per_cycle != null ? String(sp.token_budget_per_cycle) : ""
+      );
+      setSelfPropellingError(null);
     }
   }, [
     detail?.id,
@@ -389,6 +405,7 @@ export default function DashboardPage() {
     detail?.base_branch,
     detail?.isolate_branch,
     detail?.max_enrichment_passes,
+    detail?.self_propelling,
   ]);
 
   useEffect(() => {
@@ -572,7 +589,22 @@ export default function DashboardPage() {
         return;
       }
     }
+    if (editPostProdPasses.trim() !== "") {
+      const parsed = parseInt(editPostProdPasses, 10);
+      if (Number.isNaN(parsed) || parsed < 0 || parsed > 10) {
+        setSelfPropellingError("Post-production passes must be 0–10, or leave blank for the default.");
+        return;
+      }
+    }
+    if (editCycleInterval.trim() !== "") {
+      const parsed = parseInt(editCycleInterval, 10);
+      if (Number.isNaN(parsed) || parsed < 1 || parsed > 168) {
+        setSelfPropellingError("Cycle interval must be 1–168 hours, or leave blank for the default.");
+        return;
+      }
+    }
     setEnrichmentError(null);
+    setSelfPropellingError(null);
     setLoading(true);
     try {
       await updateProjectRepo(selectedId, {
@@ -584,6 +616,21 @@ export default function DashboardPage() {
           editEnrichmentPasses.trim() === ""
             ? null
             : Math.max(0, Math.min(20, parseInt(editEnrichmentPasses, 10) || 0)),
+      });
+      await updateSelfPropelling(selectedId, {
+        enabled: selfPropellingEnabled,
+        post_production_passes:
+          editPostProdPasses.trim() === ""
+            ? null
+            : Math.max(0, Math.min(10, parseInt(editPostProdPasses, 10) || 0)),
+        interval_hours:
+          editCycleInterval.trim() === ""
+            ? null
+            : Math.max(1, Math.min(168, parseInt(editCycleInterval, 10) || 24)),
+        token_budget_per_cycle:
+          editTokenBudget.trim() === ""
+            ? null
+            : Math.max(0, parseInt(editTokenBudget, 10) || 0) || null,
       });
       await refresh();
     } catch (err) {
@@ -708,7 +755,20 @@ export default function DashboardPage() {
       editBranch !== (detail.base_branch ?? detail.branch ?? "main") ||
       editIsolateBranch !== (detail.isolate_branch ?? true) ||
       editEnrichmentPasses !==
-        (detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""));
+        (detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : "") ||
+      selfPropellingEnabled !== Boolean(detail.self_propelling?.enabled) ||
+      editPostProdPasses !==
+        (detail.self_propelling?.post_production_passes != null
+          ? String(detail.self_propelling.post_production_passes)
+          : "") ||
+      editCycleInterval !==
+        (detail.self_propelling?.interval_hours != null
+          ? String(detail.self_propelling.interval_hours)
+          : "") ||
+      editTokenBudget !==
+        (detail.self_propelling?.token_budget_per_cycle != null
+          ? String(detail.self_propelling.token_budget_per_cycle)
+          : ""));
 
   const effectiveEnrichmentPasses =
     detail?.effective_enrichment_passes ??
@@ -2033,6 +2093,22 @@ export default function DashboardPage() {
                           {detail.state === "REVIEW" ? "Apply feedback & rebuild" : "Re-run pipeline"}
                         </button>
                       )}
+                      {detail.state === "PRODUCTION" && detail.self_propelling?.enabled && (
+                        <button
+                          className={styles.btnPrimary}
+                          onClick={handleRun}
+                          disabled={loading || detail.pipeline_running}
+                          title="Run a self-propelling improvement cycle now"
+                        >
+                          {loading ? (
+                            <>
+                              <Spinner /> Improving…
+                            </>
+                          ) : (
+                            "Improve now"
+                          )}
+                        </button>
+                      )}
                       {detail.state === "REVIEW" && (
                         <>
                           {detail.isolate_branch && detail.merge_status !== "merged" && (
@@ -2487,6 +2563,81 @@ export default function DashboardPage() {
                         Leave blank to use the factory default ({detail.factory_default_enrichment_passes ?? 3}).
                         Set to 0 to skip enrichment.
                       </p>
+
+                      <h4 className={styles.settingsSubheading}>Self-propelling development</h4>
+                      <label className={styles.repoCheckbox}>
+                        <input
+                          type="checkbox"
+                          checked={selfPropellingEnabled}
+                          onChange={(e) => {
+                            setSelfPropellingEnabled(e.target.checked);
+                            setSelfPropellingError(null);
+                          }}
+                        />
+                        Enable automatic post-production improvement cycles
+                      </label>
+                      <p className={styles.repoHint}>
+                        After production, the factory can periodically audit, enrich, test, and redeploy
+                        without restarting the full build pipeline.
+                      </p>
+                      {detail.self_propelling && (
+                        <p className={styles.repoHint}>
+                          Cycles completed: {detail.self_propelling.cycles_completed ?? 0}
+                          {detail.self_propelling.next_cycle_at && (
+                            <>
+                              {" "}
+                              · Next scheduled:{" "}
+                              {new Date(detail.self_propelling.next_cycle_at).toLocaleString()}
+                            </>
+                          )}
+                        </p>
+                      )}
+                      <label className={styles.repoField}>
+                        Passes per cycle
+                        <input
+                          type="number"
+                          min={0}
+                          max={10}
+                          placeholder={`Default (${detail.self_propelling?.factory_defaults?.post_production_passes ?? 2})`}
+                          value={editPostProdPasses}
+                          onChange={(e) => {
+                            setEditPostProdPasses(e.target.value);
+                            setSelfPropellingError(null);
+                          }}
+                          disabled={!selfPropellingEnabled}
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Cycle interval (hours)
+                        <input
+                          type="number"
+                          min={1}
+                          max={168}
+                          placeholder={`Default (${detail.self_propelling?.factory_defaults?.interval_hours ?? 24})`}
+                          value={editCycleInterval}
+                          onChange={(e) => {
+                            setEditCycleInterval(e.target.value);
+                            setSelfPropellingError(null);
+                          }}
+                          disabled={!selfPropellingEnabled}
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Token budget per cycle
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder={`Default (${detail.self_propelling?.factory_defaults?.token_budget_per_cycle?.toLocaleString() ?? "500,000"})`}
+                          value={editTokenBudget}
+                          onChange={(e) => {
+                            setEditTokenBudget(e.target.value);
+                            setSelfPropellingError(null);
+                          }}
+                          disabled={!selfPropellingEnabled}
+                        />
+                      </label>
+                      <FieldError message={selfPropellingError ?? undefined} />
+
                       <button
                         type="submit"
                         className={styles.btnSecondary}

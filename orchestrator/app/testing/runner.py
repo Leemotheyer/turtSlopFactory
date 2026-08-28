@@ -16,3 +16,9 @@ class TestRunner:
 
     async def run_smoke(self, project_id, context: dict):
         return await self.agent._tester(project_id, {**context, "test_stage": "smoke"})
+
+    async def run_product_qa(self, project_id, context: dict):
+        return await self.agent._tester(project_id, {**context, "test_stage": "product_qa"})
+
+    async def run_mobile_check(self, project_id, context: dict):
+        return await self.agent._tester(project_id, {**context, "test_stage": "mobile_check"})

@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
@@ -32,6 +33,8 @@ from app.services.preview_manager import (
     warmup_preview_runtime,
 )
 from app.worker import pipeline_queue
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -69,6 +72,21 @@ async def _expire_input_requests_loop() -> None:
             pass
 
 
+async def _post_production_scheduler_loop() -> None:
+    """Periodically start due self-propelling post-production cycles."""
+    from app.services.self_propelling import scan_due_post_production_projects
+
+    while True:
+        await asyncio.sleep(1800)
+        try:
+            async with SessionLocal() as session:
+                scheduled = await scan_due_post_production_projects(session)
+                if scheduled:
+                    logger.info("Scheduled %s post-production cycle(s)", scheduled)
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -83,6 +101,7 @@ async def lifespan(app: FastAPI):
 
     redis_task = asyncio.create_task(_relay_redis_events())
     expire_task = asyncio.create_task(_expire_input_requests_loop())
+    post_production_task = asyncio.create_task(_post_production_scheduler_loop())
     worker_task = None
     if settings.worker_enabled:
         worker_task = asyncio.create_task(pipeline_queue.process_loop())
@@ -92,11 +111,13 @@ async def lifespan(app: FastAPI):
     finally:
         redis_task.cancel()
         expire_task.cancel()
+        post_production_task.cancel()
         if worker_task:
             worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await redis_task
             await expire_task
+            await post_production_task
             if worker_task:
                 await worker_task
         await pipeline_queue.close()
