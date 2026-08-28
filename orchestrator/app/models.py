@@ -67,6 +67,7 @@ class ProjectUpdate(BaseModel):
     isolate_branch: bool | None = None
     clear_repo: bool = False
     max_enrichment_passes: int | None = None
+    agent_rules: str | None = Field(default=None, max_length=10000)
 
     @field_validator("name", "description", mode="before")
     @classmethod
@@ -90,6 +91,7 @@ class Project(BaseModel):
     merge_status: str | None = None
     image_tag: str | None = None
     max_enrichment_passes: int | None = None
+    agent_rules: str | None = None
     preview_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

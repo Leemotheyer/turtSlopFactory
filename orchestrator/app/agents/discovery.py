@@ -24,6 +24,8 @@ def generate_discovery(
     *,
     repo_context: dict[str, Any] | None = None,
     suggested_responses: dict[str, str | list[str]] | None = None,
+    global_agent_rules: str = "",
+    project_agent_rules: str = "",
 ) -> tuple[str, list[IntakeField]]:
     """Return (loose_plan_markdown, form_fields)."""
     app_type = _detect_app_type(description)
@@ -31,6 +33,10 @@ def generate_discovery(
     repo_context = repo_context or {}
     suggested_responses = suggested_responses or {}
     has_existing = bool(repo_context.get("has_existing_app"))
+
+    from app.services.agent_rules import combined_rules_text
+
+    rules_block = combined_rules_text(global_agent_rules, project_agent_rules)
 
     type_labels = {
         "fullstack_web": "Full-stack web application (API + browser UI)",
@@ -69,6 +75,7 @@ The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and a
 ## Your idea
 {description}
 {repo_section}
+{rules_block}
 ## Initial interpretation
 This looks like a **{type_labels.get(app_type, app_type)}**. The factory will {"extend your linked repository" if has_existing else "scaffold a Docker-deployable app"} based on your answers to the intake form below.
 

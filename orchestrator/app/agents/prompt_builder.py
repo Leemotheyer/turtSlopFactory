@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.agents.rules import rules_for_role
 from app.models import AgentRole
+from app.services.agent_rules import append_agent_rules_sections
 from app.services.product_enrichment import enrichment_pass_theme_hint
 from app.services.repo_analysis import format_repo_analysis_for_prompt
 
@@ -23,8 +24,9 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
         f"You are the **{role.value}** agent for the turtSlopFactory software pipeline.",
         f"Project: **{name}**",
         rules_for_role(role),
-        f"\n## Product vision (original request)\n{original.strip()}",
     ]
+    append_agent_rules_sections(sections, context)
+    sections.append(f"\n## Product vision (original request)\n{original.strip()}")
 
     if description.strip() and description.strip() != original.strip():
         sections.append(f"\n## Refined specification (after intake)\n{description.strip()}")

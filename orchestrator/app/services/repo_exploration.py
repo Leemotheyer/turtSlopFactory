@@ -194,9 +194,15 @@ def build_repo_exploration_prompt(
     static_analysis: dict[str, Any],
     *,
     local_context: str = "",
+    global_agent_rules: str = "",
+    project_agent_rules: str = "",
 ) -> str:
+    from app.services.agent_rules import combined_rules_text
+
     readme = (static_analysis.get("readme_excerpt") or "")[:2500]
     top = ", ".join(static_analysis.get("top_level_entries") or []) or "(empty)"
+    rules_block = combined_rules_text(global_agent_rules, project_agent_rules)
+    rules_section = f"\n{rules_block}\n" if rules_block else ""
     return f"""You are the **architect** agent performing **repository exploration only** for turtSlopFactory.
 
 The factory linked an existing GitHub repository but static analysis could not confidently classify its structure.
@@ -217,7 +223,7 @@ Your job is to **read the codebase** and explain what it is and **how the factor
 {readme or "(no README found locally)"}
 
 {local_context}
-
+{rules_section}
 ## Your task
 Explore the repository. Read key source files, configs, and docs. Then reply with **only** a JSON object (optionally in a ```json fence):
 
@@ -343,8 +349,11 @@ async def explore_repo_with_agent(
     repo_path: Path,
     static_analysis: dict[str, Any],
     workspace: WorkspaceManager,
+    *,
+    rules_context: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run architect agent (or local heuristic fallback) to classify an unclear repo."""
+    rules_context = rules_context or {}
     local = explore_repo_locally(repo_path, project.description or "")
     local_context = local.pop("_prompt_context", "")
 
@@ -357,11 +366,15 @@ async def explore_repo_with_agent(
         "repo_url": project.repo_url,
         "repo_analysis": static_analysis,
         "repo_exploration": True,
+        "global_agent_rules": rules_context.get("global_agent_rules", ""),
+        "project_agent_rules": rules_context.get("project_agent_rules", ""),
         "repo_exploration_prompt": build_repo_exploration_prompt(
             project.name,
             project.description or "",
             static_analysis,
             local_context=local_context,
+            global_agent_rules=rules_context.get("global_agent_rules", ""),
+            project_agent_rules=rules_context.get("project_agent_rules", ""),
         ),
         "notes": [],
         "intake": {},

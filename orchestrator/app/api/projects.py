@@ -25,6 +25,7 @@ from app.services.discovery import run_discovery
 from app.services.git_branching import apply_isolated_branch_fields, setup_project_branches
 from app.services.project_lifecycle import delete_project as delete_project_record
 from app.services.preview import preview_from_metadata
+from app.services.agent_rules import normalize_agent_rules
 from app.services.factory_settings import get_preview_origin
 from app.services.secrets import get_github_token, maybe_request_github_token
 from app.workspace.provisioner import normalize_repo_url
@@ -50,6 +51,7 @@ def _project_from_row(row: ProjectRow, preview_url: str | None = None) -> Projec
         merge_status=row.merge_status,
         image_tag=row.image_tag,
         max_enrichment_passes=row.max_enrichment_passes,
+        agent_rules=row.agent_rules,
         preview_url=preview_url,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -224,6 +226,9 @@ async def update_project(
         if passes < 0 or passes > 20:
             raise HTTPException(status_code=400, detail="max_enrichment_passes must be between 0 and 20")
         row.max_enrichment_passes = passes
+
+    if body.agent_rules is not None:
+        row.agent_rules = normalize_agent_rules(body.agent_rules) or None
 
     if (
         repo_changed

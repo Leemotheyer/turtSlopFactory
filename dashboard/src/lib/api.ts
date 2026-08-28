@@ -32,6 +32,7 @@ export interface Project {
   merge_status: string | null;
   image_tag: string | null;
   max_enrichment_passes: number | null;
+  agent_rules?: string | null;
   preview_url: string | null;
   created_at: string;
   updated_at: string;
@@ -584,6 +585,7 @@ export async function updateProjectRepo(
     isolate_branch?: boolean;
     clear_repo?: boolean;
     max_enrichment_passes?: number | null;
+    agent_rules?: string | null;
   }
 ): Promise<Project> {
   const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}`, {
@@ -1135,6 +1137,30 @@ export async function updateAgentModels(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Failed to update agent models");
+  }
+  return res.json();
+}
+
+export async function fetchGlobalAgentRules(): Promise<{ global_agent_rules: string }> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/factory/agent-rules`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error("Failed to fetch global agent rules");
+  return res.json();
+}
+
+export async function updateGlobalAgentRules(
+  globalAgentRules: string | null
+): Promise<{ global_agent_rules: string; message?: string }> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/settings/factory/agent-rules`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({ global_agent_rules: globalAgentRules }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to save global agent rules");
   }
   return res.json();
 }
