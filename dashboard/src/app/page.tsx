@@ -85,54 +85,25 @@ import { Spinner } from "@/components/ui/Spinner";
 import uiStyles from "@/components/ui/ui.module.css";
 import styles from "./page.module.css";
 import { IntakePanel } from "@/components/intake/IntakePanel";
+import { CollapsibleSection } from "@/components/project/CollapsibleSection";
+import { PipelineTimeline } from "@/components/project/PipelineTimeline";
+import { ProjectNav } from "@/components/project/ProjectNav";
+import { StepFocusCard } from "@/components/project/StepFocusCard";
+import {
+  AUTO_START_PIPELINE_STATES,
+  NOTE_CONTENT_MAX,
+  PROJECT_DESC_MAX,
+  PROJECT_NAME_MAX,
+  STATE_COLORS,
+  type DeepTab,
+  type ProjectTab,
+} from "@/lib/constants";
+import { formatEvent } from "@/lib/formatEvent";
+import { getStepFocus } from "@/lib/stepFocus";
 
-const PIPELINE = [
-  "REQUESTED",
-  "DISCOVERY",
-  "INTAKE_PENDING",
-  "PLANNING",
-  "IMPLEMENTING",
-  "UNIT_TESTING",
-  "INTEGRATION_TESTING",
-  "DOCKER_BUILD",
-  "STAGING_DEPLOY",
-  "SMOKE_TESTING",
-  "REVIEW",
-  "PRODUCTION",
-] as const;
-
-const AUTO_START_PIPELINE_STATES = new Set([
-  "PLANNING",
-  "DIAGNOSING",
-  "FIXING",
-  "IMPLEMENTING",
-  "UNIT_TESTING",
-  "INTEGRATION_TESTING",
-  "DOCKER_BUILD",
-  "STAGING_DEPLOY",
-  "SMOKE_TESTING",
-]);
-
-const STATE_COLORS: Record<string, string> = {
-  REQUESTED: "#6b7280",
-  DISCOVERY: "#5b8def",
-  INTAKE_PENDING: "#f5a623",
-  PLANNING: "#5b8def",
-  IMPLEMENTING: "#5b8def",
-  UNIT_TESTING: "#f5a623",
-  INTEGRATION_TESTING: "#f5a623",
-  DOCKER_BUILD: "#f5a623",
-  STAGING_DEPLOY: "#f5a623",
-  SMOKE_TESTING: "#f5a623",
-  REVIEW: "#a78bfa",
-  PRODUCTION: "#3dd68c",
-  DIAGNOSING: "#f56565",
-  FIXING: "#f5a623",
-  AUTONOMOUSLY_BLOCKED: "#f56565",
-};
-
-type Tab = "overview" | "intake" | "guidance" | "secrets" | "tasks" | "artifacts" | "deployments" | "logs";
-type MobilePanel = "projects" | "status" | "activity";
+function confirmAction(message: string): boolean {
+  return window.confirm(message);
+}
 
 const NOTE_TYPES: { value: NoteType; label: string }[] = [
   { value: "instruction", label: "Instruction" },
@@ -141,13 +112,7 @@ const NOTE_TYPES: { value: NoteType; label: string }[] = [
   { value: "general", label: "General" },
 ];
 
-const PROJECT_NAME_MAX = 200;
-const PROJECT_DESC_MAX = 10000;
-const NOTE_CONTENT_MAX = 5000;
-
-function confirmAction(message: string): boolean {
-  return window.confirm(message);
-}
+type MobilePanel = "projects" | "status" | "activity";
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -156,7 +121,8 @@ export default function DashboardPage() {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [events, setEvents] = useState<FactoryEvent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<ProjectTab>("journey");
+  const [deepTab, setDeepTab] = useState<DeepTab>("tasks");
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -245,7 +211,7 @@ export default function DashboardPage() {
 
   function selectProject(id: string) {
     setSelectedId(id);
-    setTab("overview");
+    setTab("journey");
     setArtifactView(null);
     setLogView(null);
     setMobilePanel("status");
@@ -931,7 +897,7 @@ export default function DashboardPage() {
       await submitIntake(selectedId, intakeAnswers);
       pipelineKickoff.current = selectedId;
       await refresh();
-      setTab("overview");
+      setTab("journey");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit intake");
     } finally {
@@ -1006,10 +972,10 @@ export default function DashboardPage() {
       setMobilePanel("status");
     }
     if (notif.action === "secrets") setTab("secrets");
-    else if (notif.action === "guidance") setTab("guidance");
+    else if (notif.action === "guidance") setTab("notes");
     else if (notif.action === "intake") setTab("intake");
-    else if (notif.action === "preview") setTab("overview");
-    else setTab("overview");
+    else if (notif.action === "preview") setTab("journey");
+    else setTab("journey");
   }
 
   async function handleMarkAllRead() {
@@ -1261,7 +1227,20 @@ export default function DashboardPage() {
   const runningTasks = tasks.filter((t) => t.status === "RUNNING");
   const pendingSecrets = secrets?.pending_requirements.length ?? 0;
   const livePreviewUrl = resolvePreviewUrl(detail?.preview_url ?? detail?.staging_url);
-  const currentIdx = detail ? PIPELINE.indexOf(detail.state as (typeof PIPELINE)[number]) : -1;
+  const stepFocus = detail
+    ? getStepFocus(detail, {
+        openInputs: openInputs.length,
+        pendingSecrets,
+        progress,
+        agentActivity,
+        livePreviewUrl,
+      })
+    : null;
+
+  async function handleStepFocusAction(action: "run" | "promote") {
+    if (action === "run") await handleRun();
+    else if (action === "promote") await handlePromote();
+  }
 
   const defaultAgentModel =
     cursorStatus?.default_agent_model ?? cursorStatus?.cursor_model ?? "composer-2";
@@ -2038,8 +2017,16 @@ export default function DashboardPage() {
           ) : detail ? (
             <>
               <div className={styles.projectTop}>
-                <div>
-                  <h2>{detail.name}</h2>
+                <div className={styles.projectIntro}>
+                  <div className={styles.projectTitleRow}>
+                    <h2>{detail.name}</h2>
+                    <span
+                      className={styles.stateTag}
+                      style={{ background: STATE_COLORS[detail.state] ?? "#6b7280" }}
+                    >
+                      {detail.state.replace(/_/g, " ")}
+                    </span>
+                  </div>
                   <p>{detail.description}</p>
                 </div>
                 <div className={styles.actions}>
@@ -2058,76 +2045,55 @@ export default function DashboardPage() {
                         {stoppingPipeline || agentActivity?.stop_requested ? "Stopping…" : "Stop pipeline"}
                       </button>
                     </>
-                  ) : detail.state === "REQUESTED" ? (
-                    <span className={styles.running}>Starting discovery…</span>
-                  ) : detail.state === "DISCOVERY" ? (
-                    <span className={styles.running}>Discovery agent thinking…</span>
-                  ) : detail.state === "INTAKE_PENDING" ? (
-                    <button className={styles.btnPrimary} onClick={() => setTab("intake")}>
-                      Complete intake form
-                    </button>
+                  ) : detail.state === "REQUESTED" || detail.state === "DISCOVERY" ? (
+                    <span className={styles.running}>
+                      {detail.state === "REQUESTED" ? "Starting discovery…" : "Discovery in progress…"}
+                    </span>
                   ) : detail.pipeline_paused ? (
+                    <span className={styles.running}>Pipeline paused</span>
+                  ) : AUTO_START_PIPELINE_STATES.has(detail.state) ? (
+                    <span className={styles.running}>Build pipeline starting…</span>
+                  ) : null}
+                  {detail.state === "REVIEW" && !detail.pipeline_running && (
                     <>
-                      <span className={styles.running}>Pipeline paused</span>
+                      {detail.isolate_branch && detail.merge_status !== "merged" && (
+                        <button
+                          className={styles.btnSecondary}
+                          onClick={handleMergeToMain}
+                          disabled={loading}
+                          title="Merge factory work branch into production"
+                        >
+                          Merge to main
+                        </button>
+                      )}
                       <button
-                        type="button"
+                        className={styles.btnSecondary}
+                        onClick={handleRun}
+                        disabled={loading}
+                        title="Rebuild from implementation using your latest notes"
+                      >
+                        Apply feedback &amp; rebuild
+                      </button>
+                    </>
+                  )}
+                  {detail.state === "PRODUCTION" &&
+                    !detail.pipeline_running &&
+                    detail.self_propelling?.enabled && (
+                      <button
                         className={styles.btnPrimary}
                         onClick={handleRun}
                         disabled={loading}
-                        title="Clear pause and continue the build pipeline"
+                        title="Run a self-propelling improvement cycle now"
                       >
-                        Resume pipeline
+                        {loading ? (
+                          <>
+                            <Spinner /> Improving…
+                          </>
+                        ) : (
+                          "Improve now"
+                        )}
                       </button>
-                    </>
-                  ) : AUTO_START_PIPELINE_STATES.has(detail.state) ? (
-                    <span className={styles.running}>Build pipeline starting…</span>
-                  ) : (
-                    <>
-                      {detail.state === "AUTONOMOUSLY_BLOCKED" && (
-                        <button className={styles.btnPrimary} onClick={handleRun} disabled={loading}>
-                          Resume pipeline
-                        </button>
-                      )}
-                      {detail.state !== "PRODUCTION" && detail.state !== "AUTONOMOUSLY_BLOCKED" && (
-                        <button className={styles.btnPrimary} onClick={handleRun} disabled={loading || detail.pipeline_running}>
-                          {detail.state === "REVIEW" ? "Apply feedback & rebuild" : "Re-run pipeline"}
-                        </button>
-                      )}
-                      {detail.state === "PRODUCTION" && detail.self_propelling?.enabled && (
-                        <button
-                          className={styles.btnPrimary}
-                          onClick={handleRun}
-                          disabled={loading || detail.pipeline_running}
-                          title="Run a self-propelling improvement cycle now"
-                        >
-                          {loading ? (
-                            <>
-                              <Spinner /> Improving…
-                            </>
-                          ) : (
-                            "Improve now"
-                          )}
-                        </button>
-                      )}
-                      {detail.state === "REVIEW" && (
-                        <>
-                          {detail.isolate_branch && detail.merge_status !== "merged" && (
-                            <button
-                              className={styles.btnSecondary}
-                              onClick={handleMergeToMain}
-                              disabled={loading}
-                              title="Merge factory work branch into production"
-                            >
-                              Merge to main
-                            </button>
-                          )}
-                          <button className={styles.btnSuccess} onClick={handlePromote} disabled={loading}>
-                            Promote to production
-                          </button>
-                        </>
-                      )}
-                    </>
-                  )}
+                    )}
                   <button
                     type="button"
                     className={styles.btnDanger}
@@ -2144,37 +2110,186 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {detail.state === "AUTONOMOUSLY_BLOCKED" && (
-                <p className={styles.repoHint}>
-                  The build stopped after repeated failures
-                  {detail.failed_gate ? ` at ${detail.failed_gate.replace(/_/g, " ").toLowerCase()}` : ""}.
-                  Review the pipeline log, then click Resume pipeline to try again with a fresh fix budget.
-                </p>
-              )}
+              <ProjectNav
+                tab={tab}
+                deepTab={deepTab}
+                onTabChange={setTab}
+                onDeepTabChange={setDeepTab}
+                badges={{
+                  intakePending: detail.state === "INTAKE_PENDING",
+                  openInputs: openInputs.length,
+                  pendingSecrets,
+                  runningTasks: runningTasks.length,
+                }}
+              />
 
-              {detail.state === "REVIEW" && !detail.pipeline_running && (
-                <p className={styles.repoHint}>
-                  Build passed review. Add notes or answer agent questions to request changes — the factory will
-                  automatically rebuild from implementation. When you are happy with the preview, promote to production
-                  or merge to main.
-                </p>
-              )}
+              {tab === "journey" && (
+                <div className={styles.journeyStack}>
+                  {stepFocus && (
+                    <StepFocusCard
+                      focus={stepFocus}
+                      previewUrl={livePreviewUrl}
+                      onNavigate={setTab}
+                      onAction={handleStepFocusAction}
+                    />
+                  )}
 
-              <div className={styles.meta}>
-                {detail.image_tag && <span>Image: <code>{detail.image_tag}</code></span>}
-                {detail.production_url && resolvePreviewUrl(detail.production_url) && (
-                  <a
-                    href={resolvePreviewUrl(detail.production_url)!}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={styles.prodLink}
+                  <PipelineTimeline currentState={detail.state} failedGate={detail.failed_gate} />
+
+                  {livePreviewUrl && (
+                    <div className={styles.livePreview}>
+                      <div className={styles.livePreviewInfo}>
+                        <span className={styles.livePreviewBadge}>
+                          {detail.preview_status === "running" ? "● Live" : detail.preview_status ?? "Preview"}
+                        </span>
+                        <div>
+                          <h3>Live preview</h3>
+                          <p>
+                            {previewTypeLabel(detail.preview_type)}
+                            {detail.pipeline_running ? " — updating as agents work" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className={styles.livePreviewActions}>
+                        <a
+                          href={livePreviewUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={styles.btnPrimary}
+                        >
+                          Open web app ↗
+                        </a>
+                        {detail.preview_port && detail.preview_type !== "docker" && (
+                          <span className={styles.previewPort} title="Internal process port (proxied via gateway)">
+                            Internal {detail.preview_port}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {agentActivity &&
+                    (agentActivity.pipeline_running ||
+                      agentActivity.active_agents.length > 0 ||
+                      agentActivity.activity_feed.length > 0) && (
+                    <CollapsibleSection
+                      title="Agent activity"
+                      summary={
+                        agentActivity.pipeline_running
+                          ? "Live — agents working now"
+                          : `${agentActivity.active_agents.length} active · ${agentActivity.activity_feed.length} events`
+                      }
+                      defaultOpen={agentActivity.pipeline_running || agentActivity.active_agents.length > 0}
+                    >
+                      <div className={styles.agentActivityPanel}>
+                        {agentActivity.active_agents.length > 0 ? (
+                          <ul className={styles.agentActiveList}>
+                            {agentActivity.active_agents.map((agent) => (
+                              <li key={agent.task_id} className={styles.agentActiveItem}>
+                                <div className={styles.agentActiveHeader}>
+                                  <span className={styles.roleBadge}>{agent.role}</span>
+                                  <strong>{agent.title}</strong>
+                                  {agent.cursor_url && (
+                                    <a href={agent.cursor_url} target="_blank" rel="noreferrer">
+                                      Open in Cursor ↗
+                                    </a>
+                                  )}
+                                </div>
+                                <p className={styles.agentActiveStatus}>
+                                  {agent.live_status
+                                    ? `${agent.live_status}${agent.live_detail ? ` — ${agent.live_detail}` : ""}`
+                                    : "Working…"}
+                                </p>
+                                {agent.description && (
+                                  <p className={styles.agentActiveDesc}>{agent.description}</p>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className={styles.emptyHint}>
+                            {detail.pipeline_running
+                              ? "Agents are starting — activity will appear here shortly."
+                              : "No active agents."}
+                          </p>
+                        )}
+
+                        {agentActivity.activity_feed.length > 0 && (
+                          <details className={styles.agentFeedDetails}>
+                            <summary>Recent agent events ({agentActivity.activity_feed.length})</summary>
+                            <ul className={styles.agentFeedList}>
+                              {[...agentActivity.activity_feed].reverse().slice(0, 15).map((item) => (
+                                <li key={item.id} className={styles.agentFeedItem}>
+                                  <time>{new Date(item.created_at).toLocaleTimeString()}</time>
+                                  <span>{item.summary}</span>
+                                  {item.detail && (
+                                    <pre className={styles.agentFeedDetail}>{item.detail}</pre>
+                                  )}
+                                  {item.cursor_url && (
+                                    <a href={item.cursor_url} target="_blank" rel="noreferrer">
+                                      View agent ↗
+                                    </a>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </div>
+                    </CollapsibleSection>
+                  )}
+
+                  {progress && (
+                    <CollapsibleSection
+                      title="Progress summary"
+                      summary={
+                        progress.summary_lines.length > 0
+                          ? progress.summary_lines[progress.summary_lines.length - 1]
+                          : "Waiting for agents"
+                      }
+                      defaultOpen={detail.pipeline_running}
+                    >
+                      <div className={styles.progressDigest}>
+                        {progress.summary_lines.length === 0 ? (
+                          <p className={styles.emptyHint}>
+                            {detail.state === "PLANNING" && !detail.pipeline_running
+                              ? "Start planning to generate architecture and tasks."
+                              : detail.pipeline_running
+                                ? "Pipeline running — progress will appear here as agents work."
+                                : "Progress will appear here once the pipeline runs."}
+                          </p>
+                        ) : (
+                          <ul className={styles.progressList}>
+                            {progress.summary_lines.map((line, i) => (
+                              <li key={i}>{line}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </CollapsibleSection>
+                  )}
+
+                  {(detail.image_tag || (detail.production_url && resolvePreviewUrl(detail.production_url))) && (
+                    <div className={styles.meta}>
+                      {detail.image_tag && <span>Image: <code>{detail.image_tag}</code></span>}
+                      {detail.production_url && resolvePreviewUrl(detail.production_url) && (
+                        <a
+                          href={resolvePreviewUrl(detail.production_url)!}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={styles.prodLink}
+                        >
+                          Production ↗
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  <CollapsibleSection
+                    title="GitHub repository"
+                    summary={detail.repo_url ? repoLabel(detail.repo_url) : "Optional link"}
+                    defaultOpen={!detail.repo_url}
                   >
-                    Production ↗
-                  </a>
-                )}
-              </div>
-
-              <section className={styles.repoPanel}>
+                    <section className={styles.repoPanel}>
                 <div className={styles.repoPanelHeader}>
                   <div>
                     <h3>GitHub repository</h3>
@@ -2264,181 +2379,17 @@ export default function DashboardPage() {
                 {repoNote && cursorStatus?.connected && (
                   <p className={styles.repoHint}>{repoNote}</p>
                 )}
-              </section>
-
-              {livePreviewUrl && (
-                <div className={styles.livePreview}>
-                  <div className={styles.livePreviewInfo}>
-                    <span className={styles.livePreviewBadge}>
-                      {detail.preview_status === "running" ? "● Live" : detail.preview_status ?? "Preview"}
-                    </span>
-                    <div>
-                      <h3>Live preview</h3>
-                      <p>
-                        {previewTypeLabel(detail.preview_type)}
-                        {detail.pipeline_running ? " — updating as agents work" : ""}
-                      </p>
-                    </div>
-                  </div>
-                  <div className={styles.livePreviewActions}>
-                    <a
-                      href={livePreviewUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={styles.btnPrimary}
-                    >
-                      Open web app ↗
-                    </a>
-                    {detail.preview_port && detail.preview_type !== "docker" && (
-                      <span className={styles.previewPort} title="Internal process port (proxied via gateway)">
-                        Internal {detail.preview_port}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {progress && (
-                <div className={styles.progressDigest}>
-                  <div className={styles.progressHeader}>
-                    <h3>What&apos;s done</h3>
-                    {detail.pipeline_running && (
-                      <span className={styles.running}>Building…</span>
-                    )}
-                  </div>
-                  {progress.summary_lines.length === 0 ? (
-                    <p className={styles.emptyHint}>
-                      {detail.state === "PLANNING" && !detail.pipeline_running
-                        ? "Build pipeline is starting — architect agent will plan the project first."
-                        : detail.state === "PLANNING" || detail.pipeline_running
-                          ? "Pipeline running — progress will appear here as agents work."
-                          : "Pipeline not started yet — progress will appear here as agents work."}
-                    </p>
-                  ) : (
-                    <ul className={styles.progressList}>
-                      {progress.summary_lines.map((line, i) => (
-                        <li key={i}>{line}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-
-              {agentActivity &&
-                (agentActivity.pipeline_running ||
-                  agentActivity.active_agents.length > 0 ||
-                  agentActivity.activity_feed.length > 0) && (
-                <div className={styles.agentActivityPanel}>
-                  <div className={styles.progressHeader}>
-                    <h3>Agent activity</h3>
-                    {agentActivity.pipeline_running && (
-                      <span className={styles.running}>Live</span>
-                    )}
-                  </div>
-
-                  {agentActivity.active_agents.length > 0 ? (
-                    <ul className={styles.agentActiveList}>
-                      {agentActivity.active_agents.map((agent) => (
-                        <li key={agent.task_id} className={styles.agentActiveItem}>
-                          <div className={styles.agentActiveHeader}>
-                            <span className={styles.roleBadge}>{agent.role}</span>
-                            <strong>{agent.title}</strong>
-                            {agent.cursor_url && (
-                              <a href={agent.cursor_url} target="_blank" rel="noreferrer">
-                                Open in Cursor ↗
-                              </a>
-                            )}
-                          </div>
-                          <p className={styles.agentActiveStatus}>
-                            {agent.live_status
-                              ? `${agent.live_status}${agent.live_detail ? ` — ${agent.live_detail}` : ""}`
-                              : "Working…"}
-                          </p>
-                          {agent.description && (
-                            <p className={styles.agentActiveDesc}>{agent.description}</p>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className={styles.emptyHint}>
-                      {detail.pipeline_running
-                        ? "Agents are starting — activity will appear here shortly."
-                        : "No active agents."}
-                    </p>
-                  )}
-
-                  {agentActivity.activity_feed.length > 0 && (
-                    <details className={styles.agentFeedDetails}>
-                      <summary>Recent agent events ({agentActivity.activity_feed.length})</summary>
-                      <ul className={styles.agentFeedList}>
-                        {[...agentActivity.activity_feed].reverse().slice(0, 15).map((item) => (
-                          <li key={item.id} className={styles.agentFeedItem}>
-                            <time>{new Date(item.created_at).toLocaleTimeString()}</time>
-                            <span>{item.summary}</span>
-                            {item.detail && (
-                              <pre className={styles.agentFeedDetail}>{item.detail}</pre>
-                            )}
-                            {item.cursor_url && (
-                              <a href={item.cursor_url} target="_blank" rel="noreferrer">
-                                View agent ↗
-                              </a>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </div>
-              )}
-
-              <div className={styles.tabs}>
-                {(["overview", "intake", "guidance", "secrets", "tasks", "artifacts", "deployments", "logs"] as Tab[]).map((t) => (
-                  <button
-                    key={t}
-                    className={tab === t ? styles.tabActive : styles.tab}
-                    onClick={() => setTab(t)}
-                  >
-                    {t === "intake"
-                      ? `Intake${detail.state === "INTAKE_PENDING" ? " •" : ""}`
-                      : t === "guidance"
-                        ? `Notes & Input${openInputs.length ? ` (${openInputs.length})` : ""}`
-                        : t === "secrets"
-                          ? `Secrets${pendingSecrets ? ` (${pendingSecrets})` : ""}`
-                          : t === "tasks"
-                            ? `Tasks${runningTasks.length ? ` (${runningTasks.length} active)` : ""}`
-                          : t.charAt(0).toUpperCase() + t.slice(1)}
-                  </button>
-                ))}
-              </div>
-
-              {tab === "overview" && (
-                <>
-                  <div className={styles.pipeline}>
-                    {PIPELINE.map((state, i) => {
-                      const done = currentIdx > i;
-                      const active = detail.state === state;
-                      const failed = ["DIAGNOSING", "FIXING", "AUTONOMOUSLY_BLOCKED"].includes(detail.state) && i === currentIdx;
-                      return (
-                        <div
-                          key={state}
-                          className={`${styles.step} ${done ? styles.stepDone : ""} ${active ? styles.stepActive : ""} ${failed ? styles.stepFailed : ""}`}
-                        >
-                          <div className={styles.stepDot} />
-                          <span>{state.replace(/_/g, " ")}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                    </section>
+                  </CollapsibleSection>
 
                   {(detail.state === "IMPLEMENTING" || pipelineSubstage?.step === "enrichment") && (
                     <div className={styles.substageTrack}>
-                      <h4>Implementation substages</h4>
+                      <h4>Build substages</h4>
                       <div className={styles.substageSteps}>
                         {[
                           { id: "implement", label: "Build" },
                           { id: "unit_test", label: "Unit tests" },
-                          { id: "enrichment", label: "Product enrichment" },
+                          { id: "enrichment", label: "Enrichment" },
                         ].map((step) => {
                           const isEnrichment = step.id === "enrichment";
                           const active =
@@ -2457,7 +2408,7 @@ export default function DashboardPage() {
                                 <span className={styles.substageMeta}>
                                   {detail.max_enrichment_passes != null
                                     ? `${detail.max_enrichment_passes} max`
-                                    : `${effectiveEnrichmentPasses} max (factory default)`}
+                                    : `${effectiveEnrichmentPasses} max`}
                                 </span>
                               )}
                             </div>
@@ -2469,7 +2420,7 @@ export default function DashboardPage() {
 
                   {(enrichmentProgress || enrichmentProgressLines.length > 0) && (
                     <div className={styles.enrichmentPanel}>
-                      <h4>Enrichment iterations</h4>
+                      <h4>Enrichment progress</h4>
                       {enrichmentProgress && (
                         <p className={styles.enrichmentStatus}>
                           {enrichmentProgress.phase === "pre-review" ? "Pre-review polish" : "Autonomous enrichment"}
@@ -2490,8 +2441,7 @@ export default function DashboardPage() {
                     </div>
                   )}
 
-                  <section className={styles.projectDetailsPanel}>
-                    <h4>Project details</h4>
+                  <CollapsibleSection title="Project details" summary="Name and description">
                     <form className={styles.projectDetailsForm} onSubmit={handleSaveProjectDetails}>
                       <label className={styles.repoField}>
                         Name
@@ -2530,10 +2480,9 @@ export default function DashboardPage() {
                         Save project details
                       </button>
                     </form>
-                  </section>
+                  </CollapsibleSection>
 
-                  <section className={styles.pipelineSettings}>
-                    <h4>Pipeline settings</h4>
+                  <CollapsibleSection title="Configure pipeline" summary="Enrichment passes and factory settings">
                     <form
                       className={styles.pipelineSettingsForm}
                       onSubmit={async (e) => {
@@ -2547,7 +2496,7 @@ export default function DashboardPage() {
                           type="number"
                           min={0}
                           max={20}
-                          placeholder={`Factory default (${detail.factory_default_enrichment_passes ?? 3})`}
+                          placeholder={`Default (${detail.factory_default_enrichment_passes ?? 3})`}
                           value={editEnrichmentPasses}
                           onChange={(e) => {
                             setEditEnrichmentPasses(e.target.value);
@@ -2559,9 +2508,7 @@ export default function DashboardPage() {
                       </label>
                       <FieldError message={enrichmentError ?? undefined} />
                       <p className={styles.repoHint}>
-                        How many autonomous product-improvement passes run after the first working build.
-                        Leave blank to use the factory default ({detail.factory_default_enrichment_passes ?? 3}).
-                        Set to 0 to skip enrichment.
+                        Autonomous product-improvement passes after the first working build. Leave blank for factory default.
                       </p>
 
                       <h4 className={styles.settingsSubheading}>Self-propelling development</h4>
@@ -2643,11 +2590,11 @@ export default function DashboardPage() {
                         className={styles.btnSecondary}
                         disabled={loading || !repoSettingsDirty}
                       >
-                        Save pipeline settings
+                        Save configuration
                       </button>
                     </form>
-                  </section>
-                </>
+                  </CollapsibleSection>
+                </div>
               )}
 
               {tab === "intake" && (
@@ -2663,7 +2610,7 @@ export default function DashboardPage() {
                 />
               )}
 
-              {tab === "guidance" && (
+              {tab === "notes" && (
                 <div className={styles.guidancePanel}>
                   <section className={styles.guidanceSection}>
                     <h3>Your notes</h3>
@@ -2948,7 +2895,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {tab === "tasks" && (
+              {tab === "deep" && deepTab === "tasks" && (
                 <div className={styles.table}>
                   {runningTasks.length > 0 && (
                     <p className={styles.parallelHint}>
@@ -3032,7 +2979,7 @@ export default function DashboardPage() {
                                       )}
                                       {!activityTask?.output_preview && t.status === "RUNNING" && (
                                         <p className={styles.emptyHint}>
-                                          Agent is working — check Agent activity on the overview tab for live updates.
+                                          Agent is working — check Agent activity on the Journey tab for live updates.
                                         </p>
                                       )}
                                     </div>
@@ -3048,7 +2995,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {tab === "artifacts" && (
+              {tab === "deep" && deepTab === "artifacts" && (
                 <div className={styles.artifactGrid}>
                   {detail.artifacts.length === 0 ? (
                     <EmptyState
@@ -3077,7 +3024,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {tab === "deployments" && (
+              {tab === "deep" && deepTab === "deployments" && (
                 <div className={styles.table}>
                   {deployments.length === 0 ? (
                     <EmptyState
@@ -3112,7 +3059,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {tab === "logs" && (
+              {tab === "deep" && deepTab === "logs" && (
                 <div className={styles.logPanel}>
                   <button
                     className={styles.btnSecondary}
@@ -3152,17 +3099,16 @@ export default function DashboardPage() {
             </>
           ) : (
             <div className={styles.welcome}>
-              <h2>Welcome to turtSlopFactory</h2>
+              <h2>Your agentic software factory</h2>
               <p>
-                Create a project with a natural-language spec. The factory will plan, implement,
-                test, build a Docker image, deploy to staging, and promote to production —
-                autonomously.
+                Describe what you want to build. The factory discovers scope, runs a tailored intake,
+                then plans, builds, tests, and ships — with depth available at every step when you need it.
               </p>
               <ol>
-                <li>Describe your app in the sidebar</li>
-                <li>Complete the intake form when discovery finishes</li>
-                <li>Watch agents work in real time</li>
-                <li>Approve promotion when review passes</li>
+                <li><strong>Journey</strong> — see where you are and what to do next</li>
+                <li><strong>Intake</strong> — answer bespoke questions shaped to your project</li>
+                <li><strong>Notes &amp; Secrets</strong> — guide agents or supply credentials</li>
+                <li><strong>Deep dive</strong> — tasks, artifacts, logs, and deployments</li>
               </ol>
               <button type="button" className={styles.btnPrimary} onClick={focusCreateForm}>
                 Create a project
@@ -3245,41 +3191,4 @@ export default function DashboardPage() {
       </nav>
     </div>
   );
-}
-
-function formatEvent(ev: FactoryEvent): string {
-  const p = ev.payload;
-  if (ev.type === "state.transition") return `${p.from ?? "—"} → ${p.to}`;
-  if (ev.type === "task.status.changed") return String(p.title ?? p.status);
-  if (ev.type === "test.completed") return `${p.stage}: ${p.passed ? "PASS" : "FAIL"}`;
-  if (ev.type === "deployment.finished") {
-    const env = String(p.environment ?? "");
-    const url = String(p.url ?? "");
-    return url ? `${env} preview: ${url}` : `${env} deploy`;
-  }
-  if (ev.type === "agent.command.started") {
-    const role = String(p.role ?? "agent");
-    const title = String(p.title ?? p.command ?? "task");
-    return `${role} started: ${title}`;
-  }
-  if (ev.type === "agent.command.output") {
-    const role = String(p.role ?? "agent");
-    const status = String(p.status ?? "working");
-    const detail = p.detail ? ` — ${String(p.detail).slice(0, 60)}` : "";
-    return `${role} ${status}${detail}`;
-  }
-  if (ev.type === "agent.command.finished") return String(p.output ?? p.command ?? "").slice(0, 80);
-  if (ev.type === "pipeline.stopped") return "Pipeline stopped by user";
-  if (ev.type === "progress.updated") return `${p.title}: ${p.summary}`;
-  if (ev.type === "note.added") return String(p.content ?? "").slice(0, 80);
-  if (ev.type === "note.updated") return `Updated: ${String(p.content ?? "").slice(0, 72)}`;
-  if (ev.type === "note.deleted") return `Deleted note: ${String(p.content ?? "").slice(0, 64)}`;
-  if (ev.type === "input.requested") return String(p.question ?? "").slice(0, 80);
-  if (ev.type === "input.resolved") return `${p.status}: ${p.decision ?? ""}`.slice(0, 80);
-  if (ev.type === "discovery.started") return "Discovery agent started";
-  if (ev.type === "discovery.completed") return `Intake form ready (${p.field_count} questions)`;
-  if (ev.type === "intake.submitted") return "Scope locked in";
-  if (ev.type === "notification.created") return String(p.title ?? "");
-  if (ev.type === "env.required") return `Secret needed: ${p.key_name ?? ""}`;
-  return JSON.stringify(p).slice(0, 80);
 }
