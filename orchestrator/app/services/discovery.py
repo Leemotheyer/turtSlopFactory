@@ -271,24 +271,37 @@ async def _apply_intake_to_project(
     project.description = enriched
 
     # Map key fields to typed notes for agents
-    mappings = {
+    legacy_mappings = {
         "must_have_features": NoteType.FEATURE,
         "gaps_to_address": NoteType.FEATURE,
         "out_of_scope": NoteType.SCOPE_OUT,
         "success_criteria": NoteType.INSTRUCTION,
         "existing_code_approach": NoteType.INSTRUCTION,
         "anything_else": NoteType.GENERAL,
+        "confirm_interpretation": NoteType.INSTRUCTION,
+        "main_entities": NoteType.FEATURE,
+        "key_metrics": NoteType.FEATURE,
+        "external_integrations": NoteType.INSTRUCTION,
+        "catalog_scope": NoteType.FEATURE,
+        "content_types": NoteType.FEATURE,
+        "preserve_existing": NoteType.SCOPE_OUT,
     }
-    for field_id, note_type in mappings.items():
-        val = responses.get(field_id)
+    mapped_ids: set[str] = set()
+    for field in fields:
+        note_type = field.note_type or legacy_mappings.get(field.id)
+        if not note_type:
+            continue
+        val = responses.get(field.id)
         if val and (not isinstance(val, str) or val.strip()):
             content = val if isinstance(val, str) else ", ".join(val)
             await add_note(session, project_id, ProjectNoteCreate(content=content, note_type=note_type))
+            mapped_ids.add(field.id)
 
-    # Instruction note with full intake summary
+    # Instruction note with remaining intake summary
     summary_parts = []
+    skip_in_summary = mapped_ids | {"must_have_features", "out_of_scope", "anything_else"}
     for field in fields:
-        if field.id in ("must_have_features", "out_of_scope", "anything_else"):
+        if field.id in skip_in_summary:
             continue
         val = responses.get(field.id, "")
         if isinstance(val, list):

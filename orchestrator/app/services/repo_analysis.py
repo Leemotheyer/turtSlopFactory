@@ -100,31 +100,73 @@ def _infer_auth_from_readme(readme: str) -> str | None:
 
 
 def infer_intake_defaults(description: str, analysis: dict[str, Any]) -> dict[str, str | list[str]]:
-    """Pre-fill intake answers from README + repo structure (static heuristics)."""
+    """Pre-fill intake answers from description, README, and repo structure."""
+    from app.services.intake_analysis import analyze_project_description
+
     readme = analysis.get("readme_excerpt") or ""
     defaults: dict[str, str | list[str]] = {}
 
+    project_analysis = analyze_project_description(
+        "project",
+        description,
+        repo_context=analysis,
+    )
+
     if description.strip():
         defaults["primary_goal"] = description.strip()
+        defaults["confirm_interpretation"] = project_analysis.interpretation
 
     features = analysis.get("detected_features") or []
-    if features:
-        defaults["must_have_features"] = "\n".join(f"- {f}" for f in features[:8])
+    desc_features = project_analysis.mentioned_features
+    combined_features = desc_features or features
+    if combined_features:
+        defaults["must_have_features"] = "\n".join(f"- {f}" for f in combined_features[:8])
+
+    if project_analysis.user_hint:
+        defaults["target_users"] = project_analysis.user_hint
 
     auth = _infer_auth_from_readme(readme)
     if auth:
         defaults["authentication"] = auth
+    elif project_analysis.auth_signal != "unclear":
+        from app.agents.discovery import AUTH_DEFAULTS
+
+        defaults["authentication"] = AUTH_DEFAULTS.get(
+            project_analysis.auth_signal, AUTH_DEFAULTS["unclear"]
+        )
 
     if analysis.get("has_frontend"):
         defaults["app_surface"] = "Web browser UI + REST API"
     elif analysis.get("has_backend"):
         defaults["app_surface"] = "REST API only (no UI)"
+    elif project_analysis.app_type in ("api_service", "background_worker", "cli_tool"):
+        from app.agents.discovery import APP_SURFACE_OPTIONS
+
+        defaults["app_surface"] = APP_SURFACE_OPTIONS.get(project_analysis.app_type, "")
+
+    if project_analysis.persistence_signal != "unclear":
+        from app.agents.discovery import PERSISTENCE_DEFAULTS
+
+        defaults["data_persistence"] = PERSISTENCE_DEFAULTS.get(
+            project_analysis.persistence_signal, PERSISTENCE_DEFAULTS["unclear"]
+        )
+
+    if project_analysis.suggested_out_of_scope:
+        defaults["out_of_scope"] = "\n".join(
+            f"- {s}" for s in project_analysis.suggested_out_of_scope[:5]
+        )
 
     if analysis.get("has_existing_app"):
         defaults["anything_else"] = (
             "Existing codebase detected — extend and integrate with current implementation; "
             "do not rebuild working features unless explicitly requested."
         )
+        readme_features = analysis.get("detected_features") or []
+        if readme_features and description.strip():
+            defaults["gaps_to_address"] = (
+                f"From project description: {description.strip()[:500]}\n\n"
+                "Do not rebuild README-listed capabilities unless asked."
+            )
 
     return defaults
 

@@ -12,9 +12,63 @@ type Props = {
   onSubmit: (e: React.FormEvent) => void;
 };
 
+const CATEGORY_ORDER = [
+  "existing",
+  "vision",
+  "users",
+  "features",
+  "technical",
+  "domain",
+  "general",
+  "wrapup",
+] as const;
+
+const CATEGORY_LABELS: Record<string, string> = {
+  existing: "Existing codebase",
+  vision: "Your vision",
+  users: "Users & access",
+  features: "Features & scope",
+  technical: "Technical choices",
+  domain: "Project-specific details",
+  general: "Additional details",
+  wrapup: "Wrap-up",
+};
+
 function isPrefilled(field: IntakeField, discovery: DiscoverySession): boolean {
   const saved = discovery.responses?.[field.id];
   return saved !== undefined && saved !== "" && saved !== null;
+}
+
+function prefillLabel(field: IntakeField, discovery: DiscoverySession): string | null {
+  if (field.prefill_source === "description") return "From your description";
+  if (field.prefill_source === "readme") return "From README / repo";
+  if (field.prefill_source === "inferred") return "Factory suggestion";
+  if (isPrefilled(field, discovery)) return "From README / repo";
+  return null;
+}
+
+function fieldVisible(field: IntakeField, answers: Record<string, string | string[]>): boolean {
+  if (!field.show_when) return true;
+  for (const [key, expected] of Object.entries(field.show_when)) {
+    const val = answers[key];
+    const normalized = Array.isArray(val) ? val.join(", ") : String(val ?? "");
+    if (Array.isArray(expected)) {
+      if (!expected.some((e) => normalized.includes(e))) return false;
+    } else if (normalized !== expected) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function groupFields(fields: IntakeField[]): Map<string, IntakeField[]> {
+  const groups = new Map<string, IntakeField[]>();
+  for (const field of fields) {
+    const cat = field.category || "general";
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(field);
+  }
+  return groups;
 }
 
 function renderField(
@@ -98,7 +152,7 @@ export function IntakePanel({
     return (
       <div className={styles.waiting}>
         <div className={styles.spinner} aria-hidden />
-        <p>Discovery agent is preparing a bespoke intake form for your project…</p>
+        <p>Analyzing your project description and preparing tailored intake questions…</p>
       </div>
     );
   }
@@ -107,10 +161,19 @@ export function IntakePanel({
     return <p className={styles.muted}>No discovery session yet.</p>;
   }
 
-  const answeredCount = discovery.form_fields.filter((f) => {
+  const visibleFields = discovery.form_fields.filter((f) => fieldVisible(f, intakeAnswers));
+  const answeredCount = visibleFields.filter((f) => {
     const v = intakeAnswers[f.id];
     return v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0);
   }).length;
+
+  const grouped = groupFields(visibleFields);
+  const orderedCategories = [
+    ...CATEGORY_ORDER.filter((c) => grouped.has(c)),
+    ...[...grouped.keys()].filter((c) => !CATEGORY_ORDER.includes(c as (typeof CATEGORY_ORDER)[number])),
+  ];
+
+  let questionIndex = 0;
 
   return (
     <div className={styles.panel}>
@@ -123,40 +186,50 @@ export function IntakePanel({
         <form className={styles.form} onSubmit={onSubmit}>
           <header className={styles.formHeader}>
             <div>
-              <h3>Scope intake</h3>
+              <h3>Tailored scope intake</h3>
               <p className={styles.hint}>
-                Questions are tailored to your project
+                Questions are generated from your project description
                 {Object.keys(discovery.responses || {}).length > 0
-                  ? " — review auto-filled answers from your README and description"
+                  ? " — review auto-filled answers and adjust anything that is wrong"
                   : ""}
                 .
               </p>
             </div>
             <span className={styles.progress}>
-              {answeredCount} / {discovery.form_fields.length} answered
+              {answeredCount} / {visibleFields.length} answered
             </span>
           </header>
 
-          {discovery.form_fields.map((field, index) => {
-            const prefilled = isPrefilled(field, discovery);
+          {orderedCategories.map((category) => {
+            const fields = grouped.get(category) ?? [];
+            if (!fields.length) return null;
             return (
-              <div key={field.id} className={styles.field}>
-                <label className={styles.label}>
-                  <span>
-                    {index + 1}. {field.label}
-                    {field.required ? " *" : ""}
-                  </span>
-                  {prefilled && (
-                    <span className={styles.prefillBadge}>From README / repo</span>
-                  )}
-                </label>
-                {field.help && <p className={styles.help}>{field.help}</p>}
-                {renderField(
-                  field,
-                  intakeAnswers[field.id] ?? "",
-                  (v) => onChange(field.id, v)
-                )}
-              </div>
+              <section key={category} className={styles.section}>
+                <h4 className={styles.sectionTitle}>
+                  {CATEGORY_LABELS[category] ?? category.replace(/_/g, " ")}
+                </h4>
+                {fields.map((field) => {
+                  questionIndex += 1;
+                  const badge = prefillLabel(field, discovery);
+                  return (
+                    <div key={field.id} className={styles.field}>
+                      <label className={styles.label}>
+                        <span>
+                          {questionIndex}. {field.label}
+                          {field.required ? " *" : ""}
+                        </span>
+                        {badge && <span className={styles.prefillBadge}>{badge}</span>}
+                      </label>
+                      {field.help && <p className={styles.help}>{field.help}</p>}
+                      {renderField(
+                        field,
+                        intakeAnswers[field.id] ?? field.default ?? "",
+                        (v) => onChange(field.id, v)
+                      )}
+                    </div>
+                  );
+                })}
+              </section>
             );
           })}
 

@@ -201,6 +201,13 @@ class IntakeFieldType(StrEnum):
     MULTISELECT = "multiselect"
 
 
+class NoteType(StrEnum):
+    INSTRUCTION = "instruction"
+    FEATURE = "feature"
+    SCOPE_OUT = "scope_out"
+    GENERAL = "general"
+
+
 class IntakeField(BaseModel):
     id: str
     label: str
@@ -210,6 +217,10 @@ class IntakeField(BaseModel):
     options: list[str] = Field(default_factory=list)
     required: bool = True
     default: str | None = None
+    category: str = "general"
+    note_type: NoteType | None = None
+    show_when: dict[str, str | list[str]] | None = None
+    prefill_source: str | None = None
 
 
 class DiscoverySession(BaseModel):
@@ -226,13 +237,6 @@ class DiscoverySession(BaseModel):
 
 class IntakeSubmit(BaseModel):
     responses: dict[str, str | list[str]]
-
-
-class NoteType(StrEnum):
-    INSTRUCTION = "instruction"
-    FEATURE = "feature"
-    SCOPE_OUT = "scope_out"
-    GENERAL = "general"
 
 
 class InputRequestStatus(StrEnum):

@@ -82,6 +82,10 @@ export interface IntakeField {
   options: string[];
   required: boolean;
   default: string | null;
+  category?: string;
+  note_type?: string | null;
+  show_when?: Record<string, string | string[]> | null;
+  prefill_source?: string | null;
 }
 
 export interface DiscoverySession {
