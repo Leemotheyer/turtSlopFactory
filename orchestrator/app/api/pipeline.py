@@ -46,6 +46,10 @@ def _load_repo_analysis_summary(project_id: UUID) -> dict | None:
         "has_dockerfile": bool(data.get("has_dockerfile")),
         "detected_features": (data.get("detected_features") or [])[:8],
         "top_level_entries": (data.get("top_level_entries") or [])[:12],
+        "exploration_method": data.get("exploration_method"),
+        "exploration_confidence": data.get("exploration_confidence"),
+        "agent_summary": data.get("agent_summary") or "",
+        "how_to_progress": data.get("how_to_progress") or "",
     }
 
 

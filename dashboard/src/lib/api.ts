@@ -47,6 +47,10 @@ export interface RepoAnalysisSummary {
   has_dockerfile: boolean;
   detected_features: string[];
   top_level_entries: string[];
+  exploration_method?: string | null;
+  exploration_confidence?: string | null;
+  agent_summary?: string;
+  how_to_progress?: string;
 }
 
 export interface ProjectDetail extends Project {

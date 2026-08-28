@@ -43,18 +43,25 @@ def generate_discovery(
     if has_existing:
         stack = ", ".join(repo_context.get("stack") or []) or "see repository"
         file_count = repo_context.get("source_file_count", 0)
+        explored = repo_context.get("exploration_method")
+        explore_line = ""
+        if explored and explored != "static":
+            explore_line = f"\n- Exploration: {explored} (confidence: {repo_context.get('exploration_confidence', 'medium')})"
+        agent_summary = repo_context.get("agent_summary") or repo_context.get("how_to_progress")
+        agent_section = ""
+        if agent_summary:
+            agent_section = f"\n\n**Agent assessment:** {agent_summary[:600]}"
         repo_section = f"""
 ## Existing repository detected
 The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and analyzed the codebase before intake.
 
 - Stack: {stack}
-- Source files scanned: {file_count}
+- Source files scanned: {file_count}{explore_line}
 - Backend: {'yes' if repo_context.get('has_backend') else 'no'}
 - UI: {'yes' if repo_context.get('has_frontend') else 'no'}
 - Tests: {'yes' if repo_context.get('has_tests') else 'no'}
 
-**Approach:** continue from what exists — your intake answers define gaps and changes, not a greenfield rebuild.
-Some questions may be **pre-filled from the README** — review and adjust them.
+**Approach:** continue from what exists — your intake answers define gaps and changes, not a greenfield rebuild.{agent_section}
 """
 
     loose_plan = f"""# Discovery plan: {name}

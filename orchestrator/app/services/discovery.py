@@ -32,6 +32,12 @@ from app.services.repo_analysis import (
     fetch_github_repo_meta,
     infer_intake_defaults,
 )
+from app.services.repo_exploration import (
+    apply_exploration_to_analysis,
+    enrich_intake_from_exploration,
+    explore_repo_with_agent,
+    needs_agent_repo_exploration,
+)
 from app.services.secrets import get_github_token
 from app.workspace.manager import WorkspaceManager
 from app.workspace.provisioner import repo_display_name
@@ -134,16 +140,28 @@ async def run_discovery(session: AsyncSession, project_id: UUID, *, force: bool 
                     "has_substantial_codebase": True,
                     "continuation_mode": "extend",
                 }
+            if needs_agent_repo_exploration(repo_path, analysis, github_meta):
+                exploration = await explore_repo_with_agent(
+                    session, project, repo_path, analysis, workspace
+                )
+                analysis = apply_exploration_to_analysis(analysis, exploration)
+                suggested_responses = enrich_intake_from_exploration(
+                    infer_intake_defaults(project.description, analysis),
+                    exploration,
+                    project.description,
+                )
+            else:
+                suggested_responses = infer_intake_defaults(project.description, analysis)
             repo_context = {**analysis, "repo_name": repo_display_name(project.repo_url)}
-            suggested_responses = infer_intake_defaults(project.description, analysis)
             workspace.write_artifact(
                 project_id, "repo-analysis.json", json.dumps(repo_context, indent=2, default=str)
             )
             mode = repo_context.get("continuation_mode", "greenfield")
+            method = repo_context.get("exploration_method", "static")
             workspace.append_log(
                 project_id,
                 "pipeline.log",
-                f"[discovery] Analyzed linked repo ({mode}) — "
+                f"[discovery] Analyzed linked repo ({mode}, via {method}) — "
                 f"{analysis.get('source_file_count', 0)} source files, "
                 f"pre-filled {len(suggested_responses)} intake hint(s)",
             )

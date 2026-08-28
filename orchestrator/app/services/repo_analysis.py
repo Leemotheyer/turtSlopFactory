@@ -468,4 +468,8 @@ def format_repo_analysis_for_prompt(analysis: dict[str, Any] | None) -> str:
     if readme:
         excerpt = readme[:1500] + ("…" if len(readme) > 1500 else "")
         lines.extend(["", "### README excerpt", excerpt])
+    if analysis.get("agent_summary"):
+        lines.extend(["", "### Agent exploration summary", analysis["agent_summary"]])
+    if analysis.get("how_to_progress"):
+        lines.extend(["", "### Recommended next steps", analysis["how_to_progress"]])
     return "\n".join(lines)

@@ -2106,6 +2106,17 @@ export default function DashboardPage() {
                       The factory will <strong>continue this project</strong> — extend what exists rather than
                       scaffolding from scratch. Intake questions focus on gaps and changes.
                     </p>
+                    {detail.repo_analysis.agent_summary && (
+                      <p className={styles.repoAnalysisSummary}>{detail.repo_analysis.agent_summary}</p>
+                    )}
+                    {detail.repo_analysis.exploration_method && detail.repo_analysis.exploration_method !== "static" && (
+                      <p className={styles.repoHint}>
+                        Classified via {detail.repo_analysis.exploration_method.replace(/_/g, " ")}
+                        {detail.repo_analysis.exploration_confidence
+                          ? ` (${detail.repo_analysis.exploration_confidence} confidence)`
+                          : ""}
+                      </p>
+                    )}
                     <ul className={styles.repoAnalysisMeta}>
                       {detail.repo_analysis.stack.length > 0 && (
                         <li>Stack: {detail.repo_analysis.stack.join(", ")}</li>

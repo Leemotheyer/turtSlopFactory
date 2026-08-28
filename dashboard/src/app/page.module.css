@@ -296,6 +296,13 @@
   margin-bottom: 0.35rem;
 }
 
+.repoAnalysisSummary {
+  font-size: 0.875rem;
+  color: var(--text);
+  margin-top: 0.5rem;
+  line-height: 1.5;
+}
+
 .repoAnalysisMeta {
   list-style: none;
   display: flex;
