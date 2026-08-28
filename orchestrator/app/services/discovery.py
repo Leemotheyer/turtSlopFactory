@@ -22,7 +22,7 @@ from app.models import (
     ProjectNoteCreate,
     ProjectState,
 )
-from app.services.git_branching import setup_project_branches
+from app.services.agent_rules import combined_rules_text, load_rules_context
 from app.services.notifications import create_notification
 from app.services.notes import add_note
 from app.services.progress import record_progress
@@ -119,6 +119,7 @@ async def run_discovery(session: AsyncSession, project_id: UUID, *, force: bool 
     )
 
     # Static discovery — analyze linked repo when available for bespoke intake
+    rules_ctx = await load_rules_context(session, project)
     repo_context: dict | None = None
     suggested_responses: dict[str, str | list[str]] = {}
     if project.repo_url:
@@ -142,7 +143,7 @@ async def run_discovery(session: AsyncSession, project_id: UUID, *, force: bool 
                 }
             if needs_agent_repo_exploration(repo_path, analysis, github_meta):
                 exploration = await explore_repo_with_agent(
-                    session, project, repo_path, analysis, workspace
+                    session, project, repo_path, analysis, workspace, rules_context=rules_ctx
                 )
                 analysis = apply_exploration_to_analysis(analysis, exploration)
                 suggested_responses = enrich_intake_from_exploration(
@@ -174,6 +175,8 @@ async def run_discovery(session: AsyncSession, project_id: UUID, *, force: bool 
         project.description,
         repo_context=repo_context,
         suggested_responses=suggested_responses,
+        global_agent_rules=rules_ctx.get("global_agent_rules", ""),
+        project_agent_rules=rules_ctx.get("project_agent_rules", ""),
     )
 
     row.loose_plan = loose_plan

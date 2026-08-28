@@ -18,6 +18,13 @@ from app.services.deployment_urls import (
 
 VALID_AGENT_BACKENDS = frozenset({"cursor_cloud", "cursor_local", "local"})
 CURSOR_MODEL_ROLES = ("architect", "developer", "reviewer")
+AGENT_RULES_MAX = 10000
+
+
+def _normalize_rules_text(text: str | None) -> str:
+    if not text:
+        return ""
+    return text.strip()[:AGENT_RULES_MAX]
 
 
 async def get_or_create_settings_row(session: AsyncSession) -> FactorySettingsRow:
@@ -217,6 +224,7 @@ async def get_setup_status(session: AsyncSession, request: Request | None = None
 
 async def get_factory_settings(session: AsyncSession, request: Request | None = None) -> dict:
     status = await get_setup_status(session, request)
+    row = await get_or_create_settings_row(session)
     return {
         "agent_backend": status["agent_backend"],
         "default_agent_backend": settings.agent_backend,
@@ -231,6 +239,7 @@ async def get_factory_settings(session: AsyncSession, request: Request | None = 
         "cursor_model": (await get_agent_models(session))["developer"],
         "preview_host": status["preview_host"],
         "setup_complete": status["setup_complete"],
+        "global_agent_rules": _normalize_rules_text(getattr(row, "global_agent_rules", None)),
     }
 
 

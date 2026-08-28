@@ -15,6 +15,7 @@ from app.services.factory_settings import (
     set_instance_api_key,
     set_preview_host,
 )
+from app.services.agent_rules import get_global_agent_rules, set_global_agent_rules
 from app.services.instance_auth import refresh_api_key_cache
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -45,6 +46,23 @@ class ApiKeyRequest(BaseModel):
 class SetupRequest(BaseModel):
     preview_host: str | None = None
     api_key: str | None = None
+
+
+class AgentRulesRequest(BaseModel):
+    global_agent_rules: str | None = None
+
+
+@router.get("/factory/agent-rules")
+async def read_global_agent_rules(db: AsyncSession = Depends(get_db)) -> dict:
+    return {"global_agent_rules": await get_global_agent_rules(db)}
+
+
+@router.put("/factory/agent-rules")
+async def update_global_agent_rules(
+    body: AgentRulesRequest, db: AsyncSession = Depends(get_db)
+) -> dict:
+    saved = await set_global_agent_rules(db, body.global_agent_rules)
+    return {"global_agent_rules": saved, "message": "Global agent rules saved."}
 
 
 @router.get("/public")

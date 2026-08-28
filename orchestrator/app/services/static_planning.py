@@ -4,22 +4,35 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.agent_rules import combined_rules_text
+
 
 def draft_requirements_from_context(
     name: str,
     description: str,
     intake: dict[str, Any] | None = None,
     repo_analysis: dict[str, Any] | None = None,
+    *,
+    global_agent_rules: str = "",
+    project_agent_rules: str = "",
 ) -> str:
     """Generate a requirements.md draft without an LLM."""
     intake = intake or {}
     lines = [
         f"# Requirements — {name}",
         "",
-        "## Product vision",
-        description.strip() or "(See intake answers below)",
-        "",
     ]
+    rules_md = combined_rules_text(global_agent_rules, project_agent_rules)
+    if rules_md:
+        lines.append(rules_md)
+
+    lines.extend(
+        [
+            "## Product vision",
+            description.strip() or "(See intake answers below)",
+            "",
+        ]
+    )
 
     if intake:
         lines.append("## Intake specification")

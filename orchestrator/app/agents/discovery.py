@@ -60,6 +60,8 @@ def _build_loose_plan(
     analysis: DescriptionAnalysis,
     *,
     repo_context: dict[str, Any] | None = None,
+    global_agent_rules: str = "",
+    project_agent_rules: str = "",
 ) -> str:
     repo_context = repo_context or {}
     has_existing = bool(repo_context.get("has_existing_app"))
@@ -114,11 +116,16 @@ The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and a
             "not a generic template."
         )
 
+    from app.services.agent_rules import combined_rules_text
+
+    rules_block = combined_rules_text(global_agent_rules, project_agent_rules)
+    rules_section = f"\n{rules_block}\n" if rules_block else ""
+
     return f"""# Discovery plan: {name}
 
 ## Your idea
 {description.strip()}
-{repo_section}
+{repo_section}{rules_section}
 ## Our interpretation
 {analysis.interpretation}
 {themes_line}
@@ -365,13 +372,22 @@ def generate_discovery(
     *,
     repo_context: dict[str, Any] | None = None,
     suggested_responses: dict[str, str | list[str]] | None = None,
+    global_agent_rules: str = "",
+    project_agent_rules: str = "",
 ) -> tuple[str, list[IntakeField]]:
     """Return (loose_plan_markdown, form_fields) tailored to the project description."""
     repo_context = repo_context or {}
     suggested_responses = suggested_responses or {}
 
     analysis = analyze_project_description(name, description, repo_context=repo_context)
-    loose_plan = _build_loose_plan(name, description, analysis, repo_context=repo_context)
+    loose_plan = _build_loose_plan(
+        name,
+        description,
+        analysis,
+        repo_context=repo_context,
+        global_agent_rules=global_agent_rules,
+        project_agent_rules=project_agent_rules,
+    )
 
     fields = _core_fields(
         analysis,

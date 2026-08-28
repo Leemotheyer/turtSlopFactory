@@ -23,6 +23,7 @@ class ProjectRow(Base):
     merge_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     image_tag: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_enrichment_passes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agent_rules: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -107,6 +108,7 @@ class FactorySettingsRow(Base):
     encrypted_github_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     github_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
     setup_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    global_agent_rules: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

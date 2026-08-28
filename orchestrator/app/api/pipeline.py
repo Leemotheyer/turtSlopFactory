@@ -105,6 +105,7 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "repo_analysis": _load_repo_analysis_summary(project_id),
+        "agent_rules": row.agent_rules or "",
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }

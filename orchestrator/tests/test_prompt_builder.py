@@ -31,10 +31,12 @@ def test_architect_prompt_includes_original_description():
             "description": "Refined spec after intake",
             "original_description": "Original user idea about RSS feeds",
             "repo_url": "https://github.com/o/r",
+            "global_agent_rules": "- No dummy data in production",
         },
     )
     assert "Original user idea about RSS feeds" in prompt
     assert "Architect rules" in prompt
+    assert "Global user rules" in prompt
 
 
 def test_planning_architect_prompt_includes_requirements():

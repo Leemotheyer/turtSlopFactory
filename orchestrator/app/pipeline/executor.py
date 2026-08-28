@@ -38,6 +38,7 @@ from app.services.agent_concurrency import (
     resolve_concurrency_budget,
     wait_for_cursor_capacity,
 )
+from app.services.agent_rules import load_rules_context
 from app.services.factory_settings import get_agent_backend, get_preview_origin
 from app.services.work_planner import (
     _slugify,
@@ -543,6 +544,7 @@ class PipelineExecutor:
 
     async def _refresh_context(self, session: AsyncSession, project: ProjectRow, context: dict) -> None:
         context["notes"] = await get_notes_for_agents(session, project.id)
+        context.update(await load_rules_context(session, project))
         context["input_responses"] = await get_input_responses_for_agents(session, project.id)
         context["project_state"] = project.state
         context["env_status"] = await get_env_status_for_agents(session, project.id)
@@ -586,6 +588,8 @@ class PipelineExecutor:
         self, session: AsyncSession, project: ProjectRow, context: dict
     ) -> None:
         texts = [project.description or ""]
+        texts.append(context.get("global_agent_rules") or "")
+        texts.append(context.get("project_agent_rules") or "")
         for note in context.get("notes") or []:
             texts.append(str(note.get("content") or ""))
         for artifact in ("requirements.md", "architecture.md"):
@@ -1323,6 +1327,8 @@ class PipelineExecutor:
             context.get("original_description") or project.description,
             intake=context.get("intake"),
             repo_analysis=context.get("repo_analysis"),
+            global_agent_rules=context.get("global_agent_rules", ""),
+            project_agent_rules=context.get("project_agent_rules", ""),
         )
         context["requirements_draft"] = draft
         self.workspace.write_artifact(project.id, "requirements-draft.md", draft)

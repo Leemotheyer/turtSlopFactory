@@ -47,6 +47,8 @@ import {
   updateAgentModel,
   updateAgentModels,
   fetchCursorModels,
+  fetchGlobalAgentRules,
+  updateGlobalAgentRules,
   agentBackendLabel,
   ensurePublicConfig,
   resolvePreviewUrl,
@@ -114,6 +116,13 @@ const NOTE_TYPES: { value: NoteType; label: string }[] = [
 
 type MobilePanel = "projects" | "status" | "activity";
 
+const AGENT_RULES_MAX = 10000;
+
+const GLOBAL_RULES_PLACEHOLDER = `- Do not add rate limiting unless explicitly requested
+- Production deployments must use real data sources; dummy/sample data is fine for dev and tests only
+- If the app needs external data to function, wiring up that data is part of the project scope`;
+
+
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
@@ -176,6 +185,12 @@ export default function DashboardPage() {
     type: "success" | "error" | "info";
     message: string;
   } | null>(null);
+  const [rulesFeedback, setRulesFeedback] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+  const [globalAgentRules, setGlobalAgentRules] = useState("");
+  const [editProjectRules, setEditProjectRules] = useState("");
   const [githubFeedback, setGithubFeedback] = useState<{
     type: "success" | "error" | "info";
     message: string;
@@ -352,6 +367,7 @@ export default function DashboardPage() {
       );
       setEditProjectName(detail.name);
       setEditProjectDesc(detail.description);
+      setEditProjectRules(detail.agent_rules ?? "");
       setProjectDetailsError(null);
       const sp = detail.self_propelling;
       setSelfPropellingEnabled(Boolean(sp?.enabled));
@@ -372,7 +388,59 @@ export default function DashboardPage() {
     detail?.isolate_branch,
     detail?.max_enrichment_passes,
     detail?.self_propelling,
+    detail?.agent_rules,
   ]);
+
+  const loadGlobalRules = useCallback(async () => {
+    try {
+      const data = await fetchGlobalAgentRules();
+      setGlobalAgentRules(data.global_agent_rules ?? "");
+    } catch {
+      setGlobalAgentRules("");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showCursor) loadGlobalRules();
+  }, [showCursor, loadGlobalRules]);
+
+  const projectRulesDirty = detail ? editProjectRules !== (detail.agent_rules ?? "") : false;
+
+  async function handleSaveGlobalRules(e: React.FormEvent) {
+    e.preventDefault();
+    setRulesFeedback(null);
+    setLoading(true);
+    try {
+      const result = await updateGlobalAgentRules(globalAgentRules.trim() || null);
+      setGlobalAgentRules(result.global_agent_rules ?? "");
+      setRulesFeedback({ type: "success", message: result.message ?? "Global rules saved." });
+    } catch (err) {
+      setRulesFeedback({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to save global rules",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveProjectRules(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedId || !detail) return;
+    setLoading(true);
+    try {
+      await updateProjectRepo(selectedId, {
+        agent_rules: editProjectRules.trim() || null,
+      });
+      const d = await fetchProjectDetail(selectedId);
+      setDetail(d);
+      setEditProjectRules(d.agent_rules ?? "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save project rules");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (showCursor) loadCursor();
@@ -1438,6 +1506,42 @@ export default function DashboardPage() {
                           ? " Loading models…"
                           : ""}
                   </p>
+                </div>
+                <div className={styles.cursorBackend}>
+                  <h4>Global agent rules</h4>
+                  <p className={styles.cursorBackendHint}>
+                    Persistent instructions for every project. Agents, discovery, and intake all follow these
+                    unless a project note explicitly overrides. One rule per line.
+                  </p>
+                  <form onSubmit={handleSaveGlobalRules}>
+                    <textarea
+                      className={styles.rulesTextarea}
+                      value={globalAgentRules}
+                      onChange={(e) => {
+                        setGlobalAgentRules(e.target.value);
+                        if (rulesFeedback) setRulesFeedback(null);
+                      }}
+                      rows={6}
+                      maxLength={AGENT_RULES_MAX}
+                      placeholder={GLOBAL_RULES_PLACEHOLDER}
+                    />
+                    <button type="submit" className={styles.btnSecondary} disabled={loading}>
+                      Save global rules
+                    </button>
+                  </form>
+                  {rulesFeedback && (
+                    <div
+                      className={`${styles.feedbackBanner} ${
+                        rulesFeedback.type === "success"
+                          ? styles.feedbackSuccess
+                          : rulesFeedback.type === "error"
+                            ? styles.feedbackError
+                            : styles.feedbackInfo
+                      }`}
+                    >
+                      {rulesFeedback.message}
+                    </div>
+                  )}
                 </div>
                 {cursorStatus?.concurrency && (
                   <div className={styles.cursorBackend}>
@@ -2643,6 +2747,30 @@ export default function DashboardPage() {
 
               {tab === "notes" && (
                 <div className={styles.guidancePanel}>
+                  <section className={styles.guidanceSection}>
+                    <h3>Project rules</h3>
+                    <p className={styles.guidanceHint}>
+                      Persistent instructions for this project only. Applied on every agent step alongside
+                      global factory rules. Use notes below for one-off feedback during a build.
+                    </p>
+                    <form className={styles.rulesForm} onSubmit={handleSaveProjectRules}>
+                      <textarea
+                        className={styles.rulesTextarea}
+                        value={editProjectRules}
+                        onChange={(e) => setEditProjectRules(e.target.value)}
+                        rows={5}
+                        maxLength={AGENT_RULES_MAX}
+                        placeholder="e.g. Use PostgreSQL only — no SQLite in production&#10;e.g. Match existing ESLint config in the repo"
+                      />
+                      <button
+                        type="submit"
+                        className={styles.btnSecondary}
+                        disabled={loading || !projectRulesDirty}
+                      >
+                        Save project rules
+                      </button>
+                    </form>
+                  </section>
                   <section className={styles.guidanceSection}>
                     <h3>Your notes</h3>
                     <p className={styles.guidanceHint}>
