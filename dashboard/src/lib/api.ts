@@ -69,6 +69,20 @@ export interface ProjectDetail extends Project {
     passes_completed?: number;
     status?: string;
   } | null;
+  self_propelling?: {
+    enabled: boolean;
+    post_production_passes?: number | null;
+    interval_hours?: number | null;
+    token_budget_per_cycle?: number | null;
+    cycles_completed?: number;
+    last_cycle_at?: string | null;
+    next_cycle_at?: string | null;
+    factory_defaults?: {
+      post_production_passes?: number;
+      interval_hours?: number;
+      token_budget_per_cycle?: number | null;
+    };
+  };
 }
 
 export type IntakeFieldType = "text" | "textarea" | "select" | "multiselect";
@@ -665,6 +679,27 @@ export async function runPipeline(projectId: string): Promise<{ status: string; 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail ?? "Failed to start pipeline");
+  }
+  return res.json();
+}
+
+export async function updateSelfPropelling(
+  projectId: string,
+  params: {
+    enabled?: boolean;
+    post_production_passes?: number | null;
+    interval_hours?: number | null;
+    token_budget_per_cycle?: number | null;
+  }
+): Promise<NonNullable<ProjectDetail["self_propelling"]>> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/self-propelling`, {
+    method: "PATCH",
+    headers: headers(),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail ?? "Failed to update self-propelling settings");
   }
   return res.json();
 }

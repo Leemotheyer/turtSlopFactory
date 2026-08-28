@@ -54,7 +54,16 @@ from app.services.product_enrichment import (
     parse_enrichment_plan,
 )
 from app.services.repo_analysis import analyze_repo
+from app.services.self_propelling import (
+    check_token_budget,
+    mark_cycle_completed,
+    mark_cycle_started,
+    record_audit_fingerprint,
+    resolve_post_production_passes,
+    should_skip_architect,
+)
 from app.services.static_planning import draft_requirements_from_context
+from app.testing.runner import TestRunner
 from app.services.pipeline_control import (
     archive_project_cloud_agents,
     clear_live_agents,
@@ -103,6 +112,7 @@ class PipelineExecutor:
     def __init__(self) -> None:
         self.workspace = WorkspaceManager()
         self.runner = create_agent_runner(self.workspace)
+        self.test_runner = TestRunner()
         self._running: set[UUID] = set()
         self._stop_requested: set[UUID] = set()
         self._pipeline_tasks: dict[UUID, asyncio.Task] = {}
@@ -195,6 +205,21 @@ class PipelineExecutor:
         context: dict,
     ) -> bool:
         if self._should_skip_stage(gate=expected_gate, substage=substage, context=context):
+            return False
+
+        if context.get("post_production") and expected_gate == ProjectState.PRODUCTION:
+            if current_gate != ProjectState.PRODUCTION:
+                return False
+            if substage == _STAGE_ENRICHMENT:
+                return not context.get("post_production_enrichment_complete", False)
+            if substage == _STAGE_UNIT_TESTING:
+                return context.get("post_production_enrichment_complete", False) and not context.get(
+                    "post_production_tests_complete", False
+                )
+            if substage is None:
+                return context.get("post_production_tests_complete", False) and not context.get(
+                    "post_production_redeploy_complete", False
+                )
             return False
 
         current_idx = pipeline_gate_index(current_gate)
@@ -927,6 +952,38 @@ class PipelineExecutor:
                         "Re-running implementation with your latest notes and answers",
                     )
 
+                meta = self.workspace.load_metadata(project_id)
+                if ProjectState(project.state) == ProjectState.PRODUCTION and meta.get(
+                    "post_production_pending"
+                ):
+                    context["post_production"] = True
+                    context.pop("post_production_enrichment_complete", None)
+                    context.pop("post_production_tests_complete", None)
+                    context.pop("post_production_redeploy_complete", None)
+                    context.pop("post_production_passes_completed", None)
+                    cycle_tokens = None
+                    try:
+                        from app.services.cursor_connection import fetch_usage
+
+                        usage = await fetch_usage(session)
+                        if usage.get("connected"):
+                            cycle_tokens = (usage.get("tokens") or {}).get("total_tokens")
+                    except Exception:
+                        pass
+                    mark_cycle_started(project_id, self.workspace, cycle_start_tokens=cycle_tokens)
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        "[post-production] Starting self-propelling improvement cycle",
+                    )
+                    await self._log_progress(
+                        session,
+                        project_id,
+                        "post_production",
+                        "Self-propelling cycle started",
+                        "Auditing production preview and planning improvements",
+                    )
+
                 async def request_input(**kwargs):
                     return await create_input_request(session, project_id, **kwargs)
 
@@ -941,18 +998,25 @@ class PipelineExecutor:
                 meta.pop("stop_cleanup_done", None)
                 self.workspace.save_metadata(project_id, meta)
 
-                stages: list[tuple[ProjectState, str | None, object]] = [
-                    (ProjectState.PLANNING, None, self._stage_planning),
-                    (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
-                    (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
-                    (ProjectState.IMPLEMENTING, _STAGE_ENRICHMENT, self._stage_autonomous_enrichment),
-                    (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
-                    (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
-                    (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
-                    (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
-                    (ProjectState.SMOKE_TESTING, _STAGE_ENRICHMENT, self._stage_post_smoke_enrichment),
-                    (ProjectState.SMOKE_TESTING, _STAGE_REVIEW_SUBSTAGE, self._stage_review),
-                ]
+                if context.get("post_production"):
+                    stages: list[tuple[ProjectState, str | None, object]] = [
+                        (ProjectState.PRODUCTION, _STAGE_ENRICHMENT, self._stage_post_production_enrichment),
+                        (ProjectState.PRODUCTION, _STAGE_UNIT_TESTING, self._stage_post_production_testing),
+                        (ProjectState.PRODUCTION, None, self._stage_post_production_redeploy),
+                    ]
+                else:
+                    stages = [
+                        (ProjectState.PLANNING, None, self._stage_planning),
+                        (ProjectState.IMPLEMENTING, _STAGE_IMPLEMENTING, self._stage_implementing),
+                        (ProjectState.IMPLEMENTING, _STAGE_UNIT_TESTING, self._stage_unit_testing),
+                        (ProjectState.IMPLEMENTING, _STAGE_ENRICHMENT, self._stage_autonomous_enrichment),
+                        (ProjectState.UNIT_TESTING, None, self._stage_integration_testing),
+                        (ProjectState.INTEGRATION_TESTING, None, self._stage_docker_build),
+                        (ProjectState.DOCKER_BUILD, None, self._stage_staging_deploy),
+                        (ProjectState.STAGING_DEPLOY, None, self._stage_smoke_testing),
+                        (ProjectState.SMOKE_TESTING, _STAGE_ENRICHMENT, self._stage_post_smoke_enrichment),
+                        (ProjectState.SMOKE_TESTING, _STAGE_REVIEW_SUBSTAGE, self._stage_review),
+                    ]
 
                 for expected_gate, substage, stage_fn in stages:
                     self._check_stop(project_id)
@@ -961,18 +1025,21 @@ class PipelineExecutor:
 
                     if current == ProjectState.AUTONOMOUSLY_BLOCKED:
                         break
-                    if current == ProjectState.PRODUCTION:
+                    if current == ProjectState.PRODUCTION and not context.get("post_production"):
                         break
 
                     failed = self._load_failed_gate(project_id, context)
-                    current_gate = normalize_pipeline_gate(current, failed)
-                    if current_gate is None:
-                        logger.warning(
-                            "Pipeline stopped for %s: state %s is not runnable",
-                            project_id,
-                            current.value,
-                        )
-                        break
+                    if context.get("post_production") and current == ProjectState.PRODUCTION:
+                        current_gate = ProjectState.PRODUCTION
+                    else:
+                        current_gate = normalize_pipeline_gate(current, failed)
+                        if current_gate is None:
+                            logger.warning(
+                                "Pipeline stopped for %s: state %s is not runnable",
+                                project_id,
+                                current.value,
+                            )
+                            break
 
                     if not self._stage_is_due(
                         current_gate=current_gate,
@@ -1475,6 +1542,10 @@ class PipelineExecutor:
         max_passes: int,
         completion_key: str,
         log_prefix: str,
+        completed_slugs_key: str = "enrichment_completed",
+        passes_completed_key: str = "enrichment_passes_completed",
+        token_budget: bool = False,
+        skip_unchanged_audit: bool = False,
     ) -> bool:
         if context.get(completion_key):
             return True
@@ -1482,10 +1553,13 @@ class PipelineExecutor:
         await self._refresh_context(session, project, context)
         await self._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
 
-        passes_done = int(context.get("enrichment_passes_completed") or 0)
-        completed_slugs: set[str] = set(context.get("enrichment_completed") or [])
+        passes_done = int(context.get(passes_completed_key) or 0)
+        completed_slugs: set[str] = set(context.get(completed_slugs_key) or [])
         context["max_enrichment_passes"] = max_passes
-        context["max_features_per_pass"] = settings.max_features_per_enrichment_pass
+        if log_prefix == "post-production":
+            context["max_features_per_pass"] = settings.post_production_features_per_pass
+        else:
+            context["max_features_per_pass"] = settings.max_features_per_enrichment_pass
 
         if max_passes <= 0:
             context[completion_key] = True
@@ -1494,6 +1568,23 @@ class PipelineExecutor:
 
         while passes_done < max_passes:
             pass_number = passes_done + 1
+            if token_budget:
+                budget_ok, budget_msg = await check_token_budget(session, project.id, self.workspace)
+                if not budget_ok:
+                    self.workspace.append_log(
+                        project.id,
+                        "pipeline.log",
+                        f"[{log_prefix}] Stopping enrichment — {budget_msg}",
+                    )
+                    await self._log_progress(
+                        session,
+                        project.id,
+                        "enrichment",
+                        "Token budget reached",
+                        budget_msg,
+                    )
+                    break
+
             context["enrichment_pass"] = pass_number
             self._save_pipeline_substage(
                 project.id,
@@ -1524,6 +1615,8 @@ class PipelineExecutor:
 
             audit = await audit_live_preview(context)
             context["preview_audit"] = audit
+            if skip_unchanged_audit:
+                record_audit_fingerprint(project.id, audit, self.workspace)
             await self._scan_env_placeholders(session, project, context)
             self.workspace.write_artifact(
                 project.id,
@@ -1543,22 +1636,9 @@ class PipelineExecutor:
                 "enrichment_pass": pass_number,
                 "incremental": True,
             }
-            run = await self.runner.run(
-                AgentRole.ARCHITECT,
-                project.id,
-                task.id,
-                str(self.workspace.repo_dir(project.id)),
-                ideation_context,
-            )
             plan_raw = None
-            repo_plan = self.workspace.repo_dir(project.id) / "enrichment-plan.json"
-            if repo_plan.is_file():
-                plan_raw = repo_plan.read_text(encoding="utf-8")
-            elif "enrichment-plan.json" in self.workspace.list_artifacts(project.id):
-                plan_raw = self.workspace.read_artifact(project.id, "enrichment-plan.json")
-            plan = parse_enrichment_plan(plan_raw or run.output)
             used_fallback = False
-            if not plan.get("features"):
+            if skip_unchanged_audit and should_skip_architect(project.id, audit, self.workspace):
                 plan = local_enrichment_plan(
                     audit,
                     pass_number,
@@ -1572,28 +1652,64 @@ class PipelineExecutor:
                     json.dumps(plan, indent=2),
                 )
                 used_fallback = True
-
-            ideation_success = run.success or used_fallback
-            ideation_output = run.output
-            if used_fallback and not run.success:
+                ideation_success = True
                 ideation_output = (
-                    f"{run.output}\n\n[factory] Applied local enrichment plan from preview audit "
-                    f"({len(plan.get('features') or [])} feature(s))."
-                ).strip()
-            elif used_fallback:
-                ideation_output = (
-                    f"{run.output}\n\n[factory] Cloud reply had no parseable plan — used audit fallback "
-                    f"({len(plan.get('features') or [])} feature(s))."
-                ).strip()
+                    f"[factory] Skipped architect — preview audit unchanged; "
+                    f"using local plan ({len(plan.get('features') or [])} feature(s))."
+                )
+                await self.complete_task(session, task, ideation_success, ideation_output)
+            else:
+                run = await self.runner.run(
+                    AgentRole.ARCHITECT,
+                    project.id,
+                    task.id,
+                    str(self.workspace.repo_dir(project.id)),
+                    ideation_context,
+                )
+                repo_plan = self.workspace.repo_dir(project.id) / "enrichment-plan.json"
+                if repo_plan.is_file():
+                    plan_raw = repo_plan.read_text(encoding="utf-8")
+                elif "enrichment-plan.json" in self.workspace.list_artifacts(project.id):
+                    plan_raw = self.workspace.read_artifact(project.id, "enrichment-plan.json")
+                plan = parse_enrichment_plan(plan_raw or run.output)
+                if not plan.get("features"):
+                    plan = local_enrichment_plan(
+                        audit,
+                        pass_number,
+                        context.get("notes", []),
+                        max_passes=max_passes,
+                        completed_slugs=completed_slugs,
+                    )
+                    self.workspace.write_artifact(
+                        project.id,
+                        "enrichment-plan.json",
+                        json.dumps(plan, indent=2),
+                    )
+                    used_fallback = True
 
-            await self.complete_task(
-                session,
-                task,
-                ideation_success,
-                ideation_output,
-                agent_id=run.agent_id or None,
-                cursor_url=run.cursor_url,
-            )
+                ideation_success = run.success or used_fallback
+                ideation_output = run.output
+                if used_fallback and not run.success:
+                    ideation_output = (
+                        f"{run.output}\n\n[factory] Applied local enrichment plan from preview audit "
+                        f"({len(plan.get('features') or [])} feature(s))."
+                    ).strip()
+                elif used_fallback:
+                    ideation_output = (
+                        f"{run.output}\n\n[factory] Cloud reply had no parseable plan — used audit fallback "
+                        f"({len(plan.get('features') or [])} feature(s))."
+                    ).strip()
+
+                await self.complete_task(
+                    session,
+                    task,
+                    ideation_success,
+                    ideation_output,
+                    agent_id=run.agent_id or None,
+                    cursor_url=run.cursor_url,
+                )
+                if skip_unchanged_audit:
+                    record_audit_fingerprint(project.id, audit, self.workspace)
 
             request_input = context.get("request_input")
             if request_input:
@@ -1717,7 +1833,7 @@ class PipelineExecutor:
             context["product_qa"] = qa_output
 
             passes_done += 1
-            context["enrichment_passes_completed"] = passes_done
+            context[passes_completed_key] = passes_done
             for feat in plan.get("features") or []:
                 if isinstance(feat, dict):
                     slug = _slugify(str(feat.get("id") or feat.get("title") or ""))
@@ -1726,7 +1842,7 @@ class PipelineExecutor:
             for unit in units:
                 if unit.feature_id:
                     completed_slugs.add(unit.feature_id)
-            context["enrichment_completed"] = sorted(completed_slugs)
+            context[completed_slugs_key] = sorted(completed_slugs)
             self._save_enrichment_progress(
                 project.id,
                 {
@@ -1788,6 +1904,134 @@ class PipelineExecutor:
         if ok:
             context["post_smoke_enrichment_complete"] = True
         return ok
+
+    async def _stage_post_production_enrichment(self, session, project, context) -> bool:
+        max_passes = resolve_post_production_passes(project.id, self.workspace)
+        ok = await self._run_enrichment_passes(
+            session,
+            project,
+            context,
+            max_passes=max_passes,
+            completion_key="post_production_enrichment_complete",
+            log_prefix="post-production",
+            completed_slugs_key="post_production_completed",
+            passes_completed_key="post_production_passes_completed",
+            token_budget=True,
+            skip_unchanged_audit=True,
+        )
+        if ok:
+            context["post_production_enrichment_complete"] = True
+        return ok
+
+    async def _stage_post_production_testing(self, session, project, context) -> bool:
+        int_task = await self.create_task(
+            session,
+            project.id,
+            "Post-production integration tests",
+            "Validate API workflows after improvements",
+            AgentRole.TESTER,
+        )
+        int_ok, int_output = await self.test_runner.run_integration(project.id, context)
+        await self.complete_task(session, int_task, int_ok, int_output)
+        if not int_ok:
+            context["last_failure"] = int_output
+            return False
+
+        mobile_task = await self.create_task(
+            session,
+            project.id,
+            "Post-production mobile check",
+            "Verify mobile-friendly layout",
+            AgentRole.TESTER,
+        )
+        mobile_ok, mobile_output = await self.test_runner.run_mobile_check(project.id, context)
+        await self.complete_task(session, mobile_task, mobile_ok, mobile_output)
+        if not mobile_ok:
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[post-production] Mobile check noted issues: {mobile_output[:200]}",
+            )
+
+        qa_task = await self.create_task(
+            session,
+            project.id,
+            "Post-production product QA",
+            "Evaluate live preview quality",
+            AgentRole.TESTER,
+        )
+        qa_ok, qa_output = await self.test_runner.run_product_qa(project.id, context)
+        await self.complete_task(session, qa_task, qa_ok, qa_output)
+
+        context["post_production_tests_complete"] = True
+        await self._log_progress(
+            session,
+            project.id,
+            "test",
+            "Post-production tests complete",
+            f"Integration {'passed' if int_ok else 'failed'}; mobile {'ok' if mobile_ok else 'issues noted'}",
+        )
+        return int_ok
+
+    async def _stage_post_production_redeploy(self, session, project, context) -> bool:
+        production_state = project.state
+        build_ok = await self._build_project_image(session, project, context)
+        if not build_ok:
+            return False
+
+        deploy_ok = await self._deploy_live_preview(
+            session,
+            project,
+            context,
+            preview_type="docker",
+            image_tag=context.get("image_tag", project.image_tag),
+        )
+        if not deploy_ok:
+            return False
+
+        smoke_task = await self.create_task(
+            session,
+            project.id,
+            "Post-production smoke test",
+            "Health check after redeploy",
+            AgentRole.TESTER,
+        )
+        smoke_ok, smoke_output = await self.test_runner.run_smoke(project.id, context)
+        await self.complete_task(session, smoke_task, smoke_ok, smoke_output)
+        if not smoke_ok:
+            context["last_failure"] = smoke_output
+            return False
+
+        project.state = production_state
+        await session.commit()
+
+        meta = self.workspace.load_metadata(project.id)
+        meta["production_url"] = True
+        meta.pop("post_production_pending", None)
+        self.workspace.save_metadata(project.id, meta)
+        mark_cycle_completed(project.id, self.workspace)
+        context["post_production_redeploy_complete"] = True
+
+        origin = context.get("preview_origin") or await get_preview_origin(session)
+        preview = preview_from_metadata(meta, origin=origin, project_id=project.id)
+        prod_url = preview.get("preview_url") or ""
+
+        await self._log_progress(
+            session,
+            project.id,
+            "post_production",
+            "Self-propelling cycle complete",
+            f"Production preview updated{f' at {prod_url}' if prod_url else ''}",
+        )
+        await create_notification(
+            session,
+            project.id,
+            NotificationType.PROJECT_FINISHED,
+            "Self-propelling cycle complete",
+            f"{project.name} was improved and redeployed. Next cycle scheduled automatically.",
+            action="overview",
+        )
+        return True
 
     async def _stage_implementing(self, session, project, context) -> bool:
         await self._refresh_context(session, project, context)
@@ -1890,7 +2134,7 @@ class PipelineExecutor:
             context["last_failure"] = output
         return success
 
-    async def _stage_docker_build(self, session, project, context) -> bool:
+    async def _build_project_image(self, session, project, context) -> bool:
         build_id = f"build-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
         tag = f"factory/{project.name.lower().replace(' ', '-')}:{build_id}"
         context["image_tag"] = tag
@@ -1899,7 +2143,6 @@ class PipelineExecutor:
         if self.runner.docker_available():
             success, output = await self.runner.docker_build(project.id, tag)
         else:
-            # Simulate build when Docker unavailable (dev without socket)
             success = True
             output = "Docker not available — simulated build success"
             self.workspace.append_log(project.id, "pipeline.log", f"[build] simulated {tag}")
@@ -1914,6 +2157,15 @@ class PipelineExecutor:
         if success:
             project.image_tag = tag
             await session.commit()
+        else:
+            context["last_failure"] = output
+        return success
+
+    async def _stage_docker_build(self, session, project, context) -> bool:
+        success = await self._build_project_image(session, project, context)
+        tag = context.get("image_tag", project.image_tag or "none")
+
+        if success:
             await self._log_progress(
                 session,
                 project.id,
@@ -1922,8 +2174,6 @@ class PipelineExecutor:
                 f"Tagged as {tag}",
             )
             await self.transition(session, project, advance_project(ProjectState.INTEGRATION_TESTING))
-        else:
-            context["last_failure"] = output
         return success
 
     async def _stage_staging_deploy(self, session, project, context) -> bool:
@@ -2071,6 +2321,15 @@ class PipelineExecutor:
 
         meta["production_url"] = prod_url
         meta["preview_type"] = "production"
+        from app.services.self_propelling import get_self_propelling_settings, save_self_propelling_settings
+
+        if not get_self_propelling_settings(project.id, self.workspace).get("enabled"):
+            save_self_propelling_settings(project.id, enabled=True, workspace=self.workspace)
+            self.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[post-production] Self-propelling development enabled — automatic improvement cycles will run",
+            )
         self.workspace.save_metadata(project.id, meta)
 
         await self.emit(
