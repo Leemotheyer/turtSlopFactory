@@ -68,16 +68,26 @@ def _build_loose_plan(
     repo_section = ""
     if has_existing:
         stack = ", ".join(repo_context.get("stack") or []) or "see repository"
+        file_count = repo_context.get("source_file_count", 0)
+        explored = repo_context.get("exploration_method")
+        explore_line = ""
+        if explored and explored != "static":
+            explore_line = f"\n- Exploration: {explored} (confidence: {repo_context.get('exploration_confidence', 'medium')})"
+        agent_summary = repo_context.get("agent_summary") or repo_context.get("how_to_progress")
+        agent_section = ""
+        if agent_summary:
+            agent_section = f"\n\n**Agent assessment:** {agent_summary[:600]}"
         repo_section = f"""
 ## Existing repository detected
-The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and found an existing codebase.
+The factory cloned **{repo_context.get('repo_name', 'your linked repo')}** and analyzed the codebase before intake.
 
 - Stack: {stack}
+- Source files scanned: {file_count}{explore_line}
 - Backend: {'yes' if repo_context.get('has_backend') else 'no'}
 - UI: {'yes' if repo_context.get('has_frontend') else 'no'}
 - Tests: {'yes' if repo_context.get('has_tests') else 'no'}
 
-**Approach:** extend what exists — fill gaps from your description and intake answers rather than rebuilding from scratch.
+**Approach:** continue from what exists — your intake answers define gaps and changes, not a greenfield rebuild.{agent_section}
 """
 
     themes_line = ""
@@ -173,6 +183,18 @@ def _core_fields(
                     note_type=NoteType.FEATURE,
                     prefill_source="readme" if suggested_responses.get("gaps_to_address") else None,
                 ),
+                IntakeField(
+                    id="what_works_today",
+                    label="What already exists in the repo?",
+                    type=IntakeFieldType.TEXTAREA,
+                    help="We scanned the repository — confirm what's already built and should be preserved.",
+                    default=suggested_responses.get("what_works_today")
+                    or "See discovery plan for detected stack and README capabilities.",
+                    required=True,
+                    category="existing",
+                    note_type=NoteType.INSTRUCTION,
+                    prefill_source="readme" if suggested_responses.get("what_works_today") else None,
+                ),
             ]
         )
 
@@ -195,9 +217,13 @@ def _core_fields(
         [
             IntakeField(
                 id="primary_goal",
-                label="What should this app achieve?",
+                label="What should this app achieve?" if not has_existing else "What outcome do you want next?",
                 type=IntakeFieldType.TEXTAREA,
-                help="One or two sentences on the core outcome users get.",
+                help=(
+                    "One or two sentences on the core outcome users get."
+                    if not has_existing
+                    else "Describe the next milestone for this existing project."
+                ),
                 placeholder="e.g. Let users track invoices and export them as PDF",
                 required=True,
                 category="vision",
@@ -217,10 +243,18 @@ def _core_fields(
             ),
             IntakeField(
                 id="must_have_features",
-                label="Must-have features (MVP)",
+                label="Must-have features (MVP)" if not has_existing else "New or changed features",
                 type=IntakeFieldType.TEXTAREA,
-                help="List features required for v1. We pre-filled any we found in your description — add or remove.",
-                placeholder="e.g.\n- User login\n- Create and list items\n- Export to CSV",
+                help=(
+                    "List features required for v1. We pre-filled any we found in your description — add or remove."
+                    if not has_existing
+                    else "Only list features to add or change — not capabilities already in the repo."
+                ),
+                placeholder=(
+                    "e.g.\n- User login\n- Create and list items\n- Export to CSV"
+                    if not has_existing
+                    else "e.g.\n- Add CSV export\n- Fix pagination on settings page"
+                ),
                 required=True,
                 category="features",
                 default=suggested_responses.get("must_have_features")
@@ -294,11 +328,20 @@ def _core_fields(
                 id="success_criteria",
                 label="How will you know v1 is done?",
                 type=IntakeFieldType.TEXTAREA,
-                help="Acceptance criteria — what must work before you call it shippable?",
-                placeholder="e.g. I can deploy with docker compose, open the UI, create an item, and see it after refresh",
+                help=(
+                    "Acceptance criteria — what must work before you call it shippable?"
+                    if not has_existing
+                    else "What must be true after this factory cycle — including preserved existing behavior?"
+                ),
+                placeholder=(
+                    "e.g. I can deploy with docker compose, open the UI, create an item, and see it after refresh"
+                    if not has_existing
+                    else "e.g. Existing login still works; new export button downloads CSV; tests pass"
+                ),
                 required=True,
                 category="wrapup",
                 note_type=NoteType.INSTRUCTION,
+                default=suggested_responses.get("success_criteria") or None,
             ),
             IntakeField(
                 id="anything_else",

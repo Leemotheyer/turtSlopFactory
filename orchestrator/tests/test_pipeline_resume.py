@@ -5,6 +5,7 @@ import pytest
 from app.db_models import ProjectRow
 from app.pipeline.executor import PipelineExecutor, _STAGE_UNIT_TESTING
 from app.models import ProjectState
+from app.services.repo_analysis import analyze_repo
 
 
 def test_load_failed_gate_does_not_skip_implementation_on_unit_test_failure():
@@ -35,6 +36,29 @@ def test_persist_last_failure_roundtrip():
     meta = executor.workspace.load_metadata(project_id)
 
     assert "pytest FAILED" in meta["last_failure"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_runnable_app_skips_existing_non_fastapi_repo(workspace):
+    executor = PipelineExecutor()
+    executor.workspace = workspace
+    project_id = uuid4()
+    project = ProjectRow(
+        id=project_id,
+        name="Existing App",
+        description="Continue my Next app",
+        repo_url="https://github.com/acme/existing-app",
+    )
+    repo = workspace.repo_dir(project_id)
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / "package.json").write_text('{"dependencies":{"next":"14"}}')
+    for i in range(10):
+        (repo / f"page{i}.tsx").write_text("export default function P() {}\n")
+
+    context = {"repo_analysis": analyze_repo(repo)}
+    await executor._ensure_runnable_app(project, context)
+
+    assert not (repo / "app" / "main.py").exists()
 
 
 @pytest.mark.asyncio

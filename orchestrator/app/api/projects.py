@@ -255,6 +255,22 @@ async def update_project(
     elif repo_changed and not row.repo_url:
         workspace.append_log(row.id, "pipeline.log", "[setup] GitHub repository unlinked")
 
+    if repo_changed and row.repo_url and row.state in (
+        ProjectState.REQUESTED.value,
+        ProjectState.DISCOVERY.value,
+        ProjectState.INTAKE_PENDING.value,
+    ):
+        try:
+            await run_discovery(db, row.id, force=True)
+            await db.refresh(row)
+            workspace.append_log(
+                row.id,
+                "pipeline.log",
+                "[discovery] Re-ran discovery after repository link/update",
+            )
+        except Exception as exc:
+            workspace.append_log(row.id, "pipeline.log", f"[discovery] Re-run failed: {exc}")
+
     origin = await get_preview_origin(db, request)
     meta = workspace.load_metadata(project_id)
     preview_url = preview_from_metadata(meta, origin=origin, project_id=project_id)["preview_url"]

@@ -329,6 +329,43 @@
 
 .prodLink { color: var(--success) !important; }
 
+.repoAnalysisBanner {
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.25rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border));
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+}
+
+.repoAnalysisBanner h3 {
+  font-size: 0.95rem;
+  margin-bottom: 0.35rem;
+}
+
+.repoAnalysisSummary {
+  font-size: 0.875rem;
+  color: var(--text);
+  margin-top: 0.5rem;
+  line-height: 1.5;
+}
+
+.repoAnalysisMeta {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.65rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.repoAnalysisMeta li {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+}
+
 .livePreview {
   display: flex;
   justify-content: space-between;

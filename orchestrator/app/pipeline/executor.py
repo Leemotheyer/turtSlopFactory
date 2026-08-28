@@ -258,16 +258,29 @@ class PipelineExecutor:
 
     async def _ensure_repo_scaffold(self, project: ProjectRow, context: dict) -> None:
         repo = self.workspace.repo_dir(project.id)
-        if context.get("incremental") or (repo / "requirements.txt").exists():
+        analysis = context.get("repo_analysis") or {}
+        if context.get("incremental") or analysis.get("has_existing_app") or (repo / "requirements.txt").exists():
             return
         lock = context.setdefault("_scaffold_lock", asyncio.Lock())
         async with lock:
             if not (repo / "requirements.txt").exists():
                 scaffold_base(repo, project.name, project.description)
 
-    async def _ensure_runnable_app(self, project: ProjectRow) -> None:
+    async def _ensure_runnable_app(self, project: ProjectRow, context: dict | None = None) -> None:
         """Guarantee app/main.py and tests exist with valid syntax before preview or pytest."""
         repo = self.workspace.repo_dir(project.id)
+        analysis = (context or {}).get("repo_analysis")
+        if not analysis and project.repo_url and (repo / ".git").exists():
+            analysis = analyze_repo(repo)
+        if analysis and analysis.get("has_existing_app"):
+            if ensure_dockerfile(repo):
+                self.workspace.append_log(
+                    project.id,
+                    "pipeline.log",
+                    "[scaffold] Added missing Dockerfile for existing repo (layout preserved)",
+                )
+            return
+
         repaired = False
 
         if not self._app_source_valid(repo):
@@ -326,7 +339,7 @@ class PipelineExecutor:
         if not failure:
             return True
 
-        await self._ensure_runnable_app(project)
+        await self._ensure_runnable_app(project, context)
         task = await self.create_task(
             session,
             project.id,
@@ -684,7 +697,7 @@ class PipelineExecutor:
         """Start or replace the factory-owned preview container. Agents never launch this."""
         meta = self.workspace.load_metadata(project.id)
         if preview_type == "dev":
-            await self._ensure_runnable_app(project)
+            await self._ensure_runnable_app(project, context)
 
         origin = context.get("preview_origin") or await get_preview_origin(session)
         preview_url = build_preview_url(project.id, origin=origin)
@@ -906,7 +919,7 @@ class PipelineExecutor:
                     context.pop("implementation_complete", None)
                     failed_substage = context.get("failed_substage") or meta.get("failed_substage")
                     if failed_substage == _STAGE_UNIT_TESTING:
-                        await self._ensure_runnable_app(project)
+                        await self._ensure_runnable_app(project, context)
                         await self._stage_fix_from_failure(session, project, context)
                         await self._deploy_live_preview(
                             session,
@@ -2083,7 +2096,7 @@ class PipelineExecutor:
         return preview_ok or not context.get("last_failure")
 
     async def _stage_unit_testing(self, session, project, context) -> bool:
-        await self._ensure_runnable_app(project)
+        await self._ensure_runnable_app(project, context)
         task = await self.create_task(
             session, project.id, "Unit tests", "Run pytest unit tests", AgentRole.TESTER
         )

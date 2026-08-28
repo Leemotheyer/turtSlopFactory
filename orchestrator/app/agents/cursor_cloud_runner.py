@@ -185,6 +185,15 @@ class CursorCloudRunner:
                 else:
                     return False, f"Cursor cloud run {status}: {err}", agent_id
 
+            if role == AgentRole.ARCHITECT and context.get("repo_exploration"):
+                if _extract_json_block(text) or self.workspace.read_artifact(project_id, "repo-exploration.json"):
+                    agent_url = agent.get("url") or f"https://cursor.com/agents/{agent_id}"
+                    return True, text or f"Repo exploration complete ({agent_url})", agent_id
+                if text.strip():
+                    self.workspace.write_artifact(project_id, "repo-exploration.json", text)
+                    return True, text, agent_id
+                return False, "Cursor cloud architect finished without repo exploration JSON.", agent_id
+
             if role == AgentRole.ARCHITECT and not repos and not has_docs:
                 if context.get("enrichment_pass"):
                     self.workspace.append_log(
@@ -220,6 +229,18 @@ class CursorCloudRunner:
             repo_plan = Path(self.workspace.repo_dir(project_id)) / "enrichment-plan.json"
             if repo_plan.is_file():
                 return
+            return
+        if role == AgentRole.ARCHITECT and context.get("repo_exploration"):
+            from app.services.repo_exploration import normalize_exploration_payload
+
+            plan_json = _extract_json_block(text)
+            if plan_json:
+                payload = normalize_exploration_payload(plan_json, method="agent")
+                self.workspace.write_artifact(
+                    project_id,
+                    "repo-exploration.json",
+                    json.dumps(payload, indent=2),
+                )
             return
         if role == AgentRole.ARCHITECT:
             req, arch = _split_requirements_architecture(text)

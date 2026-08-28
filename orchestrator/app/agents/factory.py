@@ -90,6 +90,13 @@ class FactoryAgentRunner(LocalAgentRunner):
             )
             return await super().run(role, project_id, task_id, workspace, context)
 
+        if role == AgentRole.ARCHITECT and context.get("repo_exploration"):
+            self.workspace.append_log(
+                project_id,
+                "pipeline.log",
+                "[architect] Repository exploration — classifying linked codebase",
+            )
+
         if backend == "cursor_cloud" and not context.get("repo_url"):
             if role == AgentRole.REVIEWER:
                 self.workspace.append_log(

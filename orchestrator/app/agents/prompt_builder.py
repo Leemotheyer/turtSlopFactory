@@ -9,6 +9,9 @@ from app.services.repo_analysis import format_repo_analysis_for_prompt
 
 
 def build_role_prompt(role: AgentRole, context: dict) -> str:
+    if role == AgentRole.ARCHITECT and context.get("repo_exploration"):
+        return context.get("repo_exploration_prompt") or "Explore the linked repository and return repo exploration JSON."
+
     name = context.get("name", "app")
     description = context.get("description", "")
     original = context.get("original_description") or description

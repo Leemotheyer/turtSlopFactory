@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,35 @@ from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
 workspace = WorkspaceManager()
+
+
+def _load_repo_analysis_summary(project_id: UUID) -> dict | None:
+    if "repo-analysis.json" not in workspace.list_artifacts(project_id):
+        return None
+    try:
+        raw = workspace.read_artifact(project_id, "repo-analysis.json")
+        if not raw:
+            return None
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not data.get("has_existing_app"):
+        return None
+    return {
+        "continuation_mode": data.get("continuation_mode", "extend"),
+        "stack": data.get("stack") or [],
+        "source_file_count": data.get("source_file_count", 0),
+        "has_backend": bool(data.get("has_backend")),
+        "has_frontend": bool(data.get("has_frontend")),
+        "has_tests": bool(data.get("has_tests")),
+        "has_dockerfile": bool(data.get("has_dockerfile")),
+        "detected_features": (data.get("detected_features") or [])[:8],
+        "top_level_entries": (data.get("top_level_entries") or [])[:12],
+        "exploration_method": data.get("exploration_method"),
+        "exploration_confidence": data.get("exploration_confidence"),
+        "agent_summary": data.get("agent_summary") or "",
+        "how_to_progress": data.get("how_to_progress") or "",
+    }
 
 
 @router.get("/{project_id}/detail")
@@ -73,6 +104,7 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         "self_propelling": get_self_propelling_settings(project_id, workspace),
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
+        "repo_analysis": _load_repo_analysis_summary(project_id),
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }

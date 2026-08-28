@@ -63,7 +63,9 @@ class LocalAgentRunner(AgentRunner):
         description = context.get("description", "")
 
         if role == AgentRole.ARCHITECT:
-            if context.get("enrichment_pass"):
+            if context.get("repo_exploration"):
+                run.output = await self._architect_repo_exploration(project_id, context)
+            elif context.get("enrichment_pass"):
                 run.output = await self._architect_enrichment(project_id, context)
             else:
                 run.output = await self._architect(project_id, name, description, context)
@@ -101,6 +103,21 @@ class LocalAgentRunner(AgentRunner):
             label = n.get("type", "note").replace("_", " ").title()
             lines.append(f"- **[{label}]** {n.get('content', '')}")
         return "\n".join(lines) + "\n"
+
+    async def _architect_repo_exploration(self, project_id: UUID, context: dict) -> str:
+        from app.services.repo_exploration import explore_repo_locally, normalize_exploration_payload
+
+        repo = self.workspace.repo_dir(project_id)
+        local = explore_repo_locally(repo, context.get("description") or "")
+        payload = normalize_exploration_payload(local, method="local_heuristic")
+        text = json.dumps(payload, indent=2)
+        self.workspace.write_artifact(project_id, "repo-exploration.json", text)
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            "[architect] Local heuristic repo exploration (no Cursor API for deep read)",
+        )
+        return text
 
     async def _architect(self, project_id: UUID, name: str, description: str, context: dict) -> str:
         notes_section = self._format_notes_section(context.get("notes", []))
