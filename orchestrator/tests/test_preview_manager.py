@@ -32,7 +32,9 @@ def test_runtime_image_constant_matches_spec():
 @pytest.mark.asyncio
 async def test_stop_preview_never_removes_runtime_image():
     project_id = uuid4()
-    with patch("app.services.preview_manager._remove_container", new_callable=AsyncMock) as rm_c, patch(
+    with patch("app.services.preview_manager.docker_available", return_value=True), patch(
+        "app.services.preview_manager._remove_container", new_callable=AsyncMock
+    ) as rm_c, patch(
         "app.services.preview_manager._remove_image", new_callable=AsyncMock
     ) as rm_i:
         await stop_preview(project_id, ephemeral_image=PREVIEW_RUNTIME_IMAGE)

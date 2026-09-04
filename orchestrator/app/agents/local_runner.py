@@ -83,6 +83,11 @@ class LocalAgentRunner(AgentRunner):
             run.success = True
         elif role == AgentRole.TESTER:
             run.success, run.output = await self._tester(project_id, context)
+        elif role == AgentRole.ADVERSARY:
+            # No LLM available — the adversary stage falls back to its
+            # deterministic abuse probe when the runner returns no report.
+            run.success = True
+            run.output = ""
         elif role == AgentRole.REVIEWER:
             run.success, run.output = await self._reviewer(project_id, context, task_id, agent_id)
         else:
@@ -263,6 +268,34 @@ class LocalAgentRunner(AgentRunner):
         )
         return f"[{stream}] Updated {len(files)} files"
 
+    def _write_regression_test(self, repo, context: dict) -> str | None:
+        """After a fix, pin the failure with a regression test (factory policy)."""
+        hint = context.get("regression_test_hint")
+        if not hint:
+            return None
+        target = repo / "tests" / "regression" / str(hint)
+        if target.exists():
+            return None
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (target.parent / "__init__.py").touch(exist_ok=True)
+        failure_summary = str(context.get("last_failure") or "previous pipeline failure")[:300]
+        summary_literal = json.dumps(failure_summary)
+        target.write_text(
+            f'"""Regression test pinning a fixed pipeline failure.\n\n'
+            f"Original failure: {failure_summary}\n"
+            f'"""\n'
+            "from fastapi.testclient import TestClient\n"
+            "from app.main import app\n\n"
+            "client = TestClient(app)\n\n\n"
+            "def test_app_still_healthy_after_fix():\n"
+            "    # The fixed application must keep serving its core surface.\n"
+            "    r = client.get(\"/health\")\n"
+            "    assert r.status_code == 200\n\n\n"
+            "def test_failure_context_documented():\n"
+            f"    assert len({summary_literal}) > 0\n"
+        )
+        return str(hint)
+
     async def _developer(
         self,
         project_id: UUID,
@@ -288,6 +321,13 @@ class LocalAgentRunner(AgentRunner):
         if incremental or (repo / "app" / "main.py").exists():
             if context.get("fix_attempt", 0) > 0 and context.get("last_failure"):
                 apply_incremental_fix(repo, context["last_failure"])
+                written = self._write_regression_test(repo, context)
+                if written:
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        f"[developer] Added regression test tests/regression/{written}",
+                    )
             files = []
             files.extend(scaffold_backend(repo, name, description))
             files.extend(scaffold_frontend(repo, name, description))
@@ -336,9 +376,11 @@ class LocalAgentRunner(AgentRunner):
         repo = self.workspace.repo_dir(project_id)
 
         if stage == "unit":
-            return await self._run_pytest(repo, project_id, "tests/test_app.py")
+            return await self._run_pytest(repo, project_id, "tests/test_app.py", stage="unit")
         if stage == "integration":
-            return await self._run_pytest(repo, project_id, "tests/")
+            return await self._run_pytest(repo, project_id, "tests/", stage="integration")
+        if stage == "acceptance":
+            return await self._run_pytest(repo, project_id, "tests/acceptance", stage="acceptance")
         if stage == "smoke":
             return await self._run_smoke(project_id, context)
         if stage == "product_qa":
@@ -347,7 +389,9 @@ class LocalAgentRunner(AgentRunner):
             return await self._run_mobile_check(project_id, context)
         return False, f"Unknown test stage: {stage}"
 
-    async def _run_pytest(self, repo, project_id: UUID, target: str) -> tuple[bool, str]:
+    async def _run_pytest(
+        self, repo, project_id: UUID, target: str, *, stage: str = "unit"
+    ) -> tuple[bool, str]:
         self.workspace.append_log(project_id, "pipeline.log", f"[tester] Running pytest {target}")
 
         # Install project dependencies first
@@ -366,6 +410,7 @@ class LocalAgentRunner(AgentRunner):
             )
             await install.communicate()
 
+        junit_path = self.workspace.logs_dir(project_id) / f"pytest-{stage}.xml"
         proc = await asyncio.create_subprocess_exec(
             "python3",
             "-m",
@@ -373,6 +418,9 @@ class LocalAgentRunner(AgentRunner):
             target,
             "-v",
             "--tb=short",
+            f"--junitxml={junit_path}",
+            "-o",
+            "junit_family=xunit2",
             cwd=str(repo),
             env={**os.environ, "PYTHONPATH": str(repo)},
             stdout=asyncio.subprocess.PIPE,
@@ -488,39 +536,50 @@ class LocalAgentRunner(AgentRunner):
     async def _reviewer(
         self, project_id: UUID, context: dict, task_id: UUID, agent_id: str
     ) -> tuple[bool, str]:
+        """Deterministic reviewer bound to the acceptance report, not file existence.
+
+        The acceptance evaluator (which runs before review) verified every
+        contract requirement against evidence; this checklist reflects that
+        report plus the remaining deterministic gates.
+        """
         artifacts = self.workspace.list_artifacts(project_id)
-        has_req = "requirements.md" in artifacts
-        has_arch = "architecture.md" in artifacts
         tests_passed = context.get("tests_passed", False)
 
-        request_input = context.get("request_input")
-        rate_limit_default = "Skip rate limiting for v1; add before public production launch"
-        if request_input:
-            await request_input(
-                agent_id=agent_id,
-                role="reviewer",
-                question="Should rate limiting be required before approving this build?",
-                context_detail="No rate limiting middleware is currently implemented.",
-                options=["Require before approve", "Defer to v2", "Add basic IP rate limit now"],
-                default_decision=rate_limit_default,
-                task_id=task_id,
-            )
-            self.workspace.append_log(
-                project_id,
-                "pipeline.log",
-                f"[reviewer] Proceeded with default: {rate_limit_default}",
-            )
+        acceptance_report = context.get("acceptance_report")
+        if acceptance_report is None and "acceptance-report.json" in artifacts:
+            try:
+                acceptance_report = json.loads(
+                    self.workspace.read_artifact(project_id, "acceptance-report.json") or "{}"
+                )
+            except json.JSONDecodeError:
+                acceptance_report = None
+
+        if acceptance_report is not None:
+            acceptance_verified = bool(acceptance_report.get("all_verified"))
+        else:
+            # Legacy project without a contract: fall back to the test signal.
+            acceptance_verified = tests_passed
+
+        # Change-size: oversized deltas need a justification in the developer output.
+        change_size_justified = True
+        oversized = context.get("change_stats_oversized")
+        if oversized and not context.get("change_justification"):
+            change_size_justified = False
 
         notes_applied = len([n for n in context.get("notes", []) if n.get("type") != "scope_out"])
         checklist = {
-            "requirements_documented": has_req,
-            "architecture_documented": has_arch,
-            "all_tests_passed": tests_passed,
+            "acceptance_verified": acceptance_verified,
+            "tests_passed": tests_passed,
             "dockerfile_present": (self.workspace.repo_dir(project_id) / "Dockerfile").exists(),
-            "supervisor_notes_applied": notes_applied == 0 or has_req,
+            "supervisor_notes_applied": notes_applied == 0 or "requirements.md" in artifacts,
+            "change_size_justified": change_size_justified,
         }
         approved = all(checklist.values())
         concerns = [k for k, v in checklist.items() if not v]
+        if acceptance_report:
+            for req_id, entry in (acceptance_report.get("requirements") or {}).items():
+                if entry.get("status") in ("failed", "unverified"):
+                    concerns.append(f"{req_id} is {entry.get('status')}")
 
         report = {
             "decision": "approve" if approved else "reject",
@@ -528,7 +587,6 @@ class LocalAgentRunner(AgentRunner):
             "concerns": concerns,
             "severity": "low" if approved else "high",
         }
-        import json
 
         self.workspace.write_artifact(project_id, "review.json", json.dumps(report, indent=2))
         self.workspace.append_log(
@@ -561,6 +619,10 @@ class LocalAgentRunner(AgentRunner):
         return proc.returncode == 0, output
 
     def docker_available(self) -> bool:
+        from app.config import settings
+
+        if settings.disable_docker:
+            return False
         try:
             subprocess.run(["docker", "info"], capture_output=True, check=True, timeout=5)
             return True

@@ -135,33 +135,20 @@ def classify_scope(title: str, description: str, notes: list[dict] | None = None
 
 
 def parse_enrichment_plan(raw: str | None) -> dict[str, Any]:
+    """Schema-validated parse of an enrichment plan (see app/artifacts/schemas.py)."""
+    from app.artifacts.parsing import parse_agent_json
+    from app.artifacts.schemas import EnrichmentPlan
+
     if not raw:
         return {"features": [], "quality_issues": [], "stop_reason": "empty plan"}
-    text = raw.strip()
-    if text.startswith("{"):
-        try:
-            data = json.loads(text)
-            if isinstance(data, dict):
-                return {
-                    "features": data.get("features") or [],
-                    "quality_issues": data.get("quality_issues") or [],
-                    "stop_reason": data.get("stop_reason"),
-                }
-        except json.JSONDecodeError:
-            pass
-    match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
-    if match:
-        try:
-            data = json.loads(match.group(1))
-            if isinstance(data, dict):
-                return {
-                    "features": data.get("features") or [],
-                    "quality_issues": data.get("quality_issues") or [],
-                    "stop_reason": data.get("stop_reason"),
-                }
-        except json.JSONDecodeError:
-            pass
-    return {"features": [], "quality_issues": [text[:500]], "stop_reason": None}
+    plan = parse_agent_json(EnrichmentPlan, raw)
+    if plan is not None:
+        return {
+            "features": [f.model_dump() for f in plan.features],
+            "quality_issues": plan.quality_issues,
+            "stop_reason": plan.stop_reason,
+        }
+    return {"features": [], "quality_issues": [raw.strip()[:500]], "stop_reason": None}
 
 
 def _human_approved_uncertain(title: str, input_responses: list[dict] | None) -> bool:

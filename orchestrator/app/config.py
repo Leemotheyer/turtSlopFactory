@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     max_parallel_agents: int = 4
     cursor_concurrent_agent_limit: int = 8  # Typical Pro plan; override via dashboard or env
     cursor_agent_headroom: int = 2  # Reserve slots for agents you start outside the factory
+    # Verification & measurement
+    adversary_enabled: bool = True  # Adversarial verification stage before acceptance
+    agent_tester_enabled: bool = True  # LLM tester writes tests/acceptance/ when a backend is available
+    deploy_observation_seconds: int = 30  # Post-deploy health observation window
+    deploy_observation_polls: int = 3  # Health checks spread across the window
+    change_budget_files: int = 8  # Soft threshold — oversized changes need justification
+    change_budget_lines: int = 500
+    disable_docker: bool = False  # Force simulated docker paths (benchmarks / CI)
     # Deployment — optional overrides; most settings are auto or configured in the dashboard
     public_host: str | None = None  # Hostname for preview links and public API URLs
     api_port: int = 8000

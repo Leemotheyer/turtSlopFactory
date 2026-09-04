@@ -1,14 +1,16 @@
 from app.models import (
     FAILURE_TRANSITIONS,
     FORWARD_TRANSITIONS,
+    LEGACY_STATE_ALIASES,
     ProjectState,
 )
 
-# Ordered gates for the build pipeline (happy path only).
+# Ordered gates for the build pipeline (happy path only). Each gate is named
+# for the stage that runs at that state; unit testing is a substage of
+# IMPLEMENTING and REVIEW is the terminal gate awaiting human promotion.
 PIPELINE_GATES: tuple[ProjectState, ...] = (
     ProjectState.PLANNING,
     ProjectState.IMPLEMENTING,
-    ProjectState.UNIT_TESTING,
     ProjectState.INTEGRATION_TESTING,
     ProjectState.DOCKER_BUILD,
     ProjectState.STAGING_DEPLOY,
@@ -26,6 +28,17 @@ class StateMachineError(Exception):
 def pipeline_gate_index(state: ProjectState) -> int | None:
     """Index of a pipeline gate, or None if not part of the build sequence."""
     return _PIPELINE_GATE_INDEX.get(state)
+
+
+def parse_project_state(raw: str) -> ProjectState:
+    """Parse a persisted state string, mapping legacy pre-realignment names."""
+    try:
+        return ProjectState(raw)
+    except ValueError:
+        legacy = LEGACY_STATE_ALIASES.get(raw)
+        if legacy is not None:
+            return legacy
+        raise
 
 
 def normalize_pipeline_gate(

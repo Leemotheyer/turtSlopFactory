@@ -119,6 +119,8 @@ if static_dir.exists():
         "",
     )
 
+    # Test names follow the factory convention: test_<req_id>_* maps a test to
+    # a contract requirement so results become verification evidence.
     write(
         "tests/test_app.py",
         f'''from fastapi.testclient import TestClient
@@ -127,7 +129,7 @@ from app.main import app
 client = TestClient(app)
 
 
-def test_health():
+def test_r1_health():
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
@@ -140,7 +142,7 @@ def test_info():
     assert r.json()["name"] == "{name}"
 
 
-def test_create_and_list_items():
+def test_r2_create_and_list_items():
     r = client.post("/api/items", json={{"title": "Test item", "body": "hello"}})
     assert r.status_code == 201
     item = r.json()
@@ -151,7 +153,7 @@ def test_create_and_list_items():
     assert len(r.json()) >= 1
 
 
-def test_get_item_not_found():
+def test_r2_get_item_not_found():
     r = client.get("/api/items/99999")
     assert r.status_code == 404
 ''',
@@ -166,7 +168,7 @@ from app.main import app
 client = TestClient(app)
 
 
-def test_full_crud_flow():
+def test_r2_full_crud_flow():
     r = client.post("/api/items", json={"title": "A", "body": "first"})
     assert r.status_code == 201
     item_id = r.json()["id"]
@@ -179,6 +181,49 @@ def test_full_crud_flow():
     assert any(i["id"] == item_id for i in r.json())
 ''',
     )
+
+    write("tests/acceptance/__init__.py", "")
+    write(
+        "tests/acceptance/test_r1_acceptance.py",
+        '''"""Acceptance tests derived from the project contract (R1: health)."""
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
+
+def test_r1_health_returns_ok_status():
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json().get("status") == "ok"
+''',
+    )
+    write(
+        "tests/acceptance/test_r2_acceptance.py",
+        '''"""Acceptance tests derived from the project contract (R2: items API)."""
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
+
+def test_r2_create_returns_201():
+    r = client.post("/api/items", json={"title": "Acceptance", "body": "check"})
+    assert r.status_code == 201
+
+
+def test_r2_created_item_appears_in_list():
+    created = client.post("/api/items", json={"title": "Listed", "body": ""}).json()
+    listed = client.get("/api/items").json()
+    assert any(item["id"] == created["id"] for item in listed)
+
+
+def test_r2_unknown_id_returns_404():
+    r = client.get("/api/items/424242424")
+    assert r.status_code == 404
+''',
+    )
+    write("tests/regression/__init__.py", "")
 
     write(
         "Dockerfile",
@@ -200,37 +245,35 @@ def test_full_crud_flow():
 """,
     )
 
-    write(
-        "project.contract.yaml",
-        f"""application:
-  name: {slug}
-  type: api
-
+    # The pipeline writes the authoritative contract from the DB during
+    # planning — only seed a default when none exists yet.
+    if not (repo / "project.contract.yaml").is_file():
+        write(
+            "project.contract.yaml",
+            f"""goal: {slug}
 requirements:
   - id: R1
-    description: Expose /health endpoint
+    description: Service exposes a working health endpoint
+    acceptance:
+      - GET /health returns HTTP 200
   - id: R2
-    description: REST API for items CRUD
+    description: REST API supports creating, listing, and fetching items
+    acceptance:
+      - POST /api/items creates an item and returns 201
+      - GET /api/items lists created items
+      - GET /api/items/{{id}} returns 404 for unknown ids
   - id: R3
-    description: Web UI accessible in browser
+    description: Web UI is served and usable in a browser
+    acceptance:
+      - GET / returns an HTML page
 
 deployment:
   healthcheck:
     type: http
     path: /health
     port: 8080
-
-tests:
-  unit: true
-  integration: true
-  smoke: true
-
-gates:
-  max_fix_attempts: 5
-  require_reviewer: true
-  require_human_for_production: false
 """,
-    )
+        )
 
     write(
         ".env.example",
@@ -362,6 +405,26 @@ def scaffold_frontend(repo: Path, name: str, description: str) -> list[str]:
 </html>
 """,
     )
+
+    acceptance = repo / "tests" / "acceptance"
+    acceptance.mkdir(parents=True, exist_ok=True)
+    ui_test = acceptance / "test_r3_acceptance.py"
+    if not ui_test.exists():
+        ui_test.write_text(
+            '''"""Acceptance tests derived from the project contract (R3: web UI)."""
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
+
+def test_r3_root_serves_html_page():
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "html" in r.headers.get("content-type", "")
+'''
+        )
+        created.append("tests/acceptance/test_r3_acceptance.py")
 
     return created
 

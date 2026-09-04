@@ -154,6 +154,7 @@ class TaskRow(Base):
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="QUEUED")
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -183,6 +184,8 @@ class DeploymentRow(Base):
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     container_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending")
+    previous_tag: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    verification_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -227,8 +230,138 @@ class InputRequestRow(Base):
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="open")
     human_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolved_decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     project: Mapped[ProjectRow] = relationship(back_populates="input_requests")
+
+
+class ProjectContractRow(Base):
+    """Versioned project contract: requirements with acceptance criteria."""
+
+    __tablename__ = "project_contracts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="architect")
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RequirementRow(Base):
+    """A contract requirement tracked through the evidence graph."""
+
+    __tablename__ = "requirements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    req_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    acceptance: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    contract_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class EvidenceRow(Base):
+    """A single piece of evidence linking work to a requirement (or the project)."""
+
+    __tablename__ = "evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("requirements.id"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # test_run | probe | build | review | adversary | change_stats
+    reference: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ArchitectureDecisionRow(Base):
+    """Why-did-we-do-this memory: significant decisions with reasoning."""
+
+    __tablename__ = "architecture_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    alternatives: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    tradeoffs: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    agent_role: Mapped[str] = mapped_column(String(32), nullable=False, default="architect")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class FailureRecordRow(Base):
+    """Failure memory: what went wrong, how often, and how it was resolved."""
+
+    __tablename__ = "failure_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    gate: Mapped[str] = mapped_column(String(64), nullable=False)
+    substage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_class: Mapped[str] = mapped_column(String(32), nullable=False, default="app")
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    regression_test: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class KnownIssueRow(Base):
+    """Open bugs / tech debt discovered by testers, adversary, or humans."""
+
+    __tablename__ = "known_issues"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="tester")
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PipelineRunRow(Base):
+    """Outcome metrics for one pipeline run (iterations, interventions, result)."""
+
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="build")
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fix_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    infra_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    human_interventions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    auto_resolved_inputs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    gates_failed: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    prompt_versions: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

@@ -10,7 +10,7 @@ def test_advance_happy_path():
 
 
 def test_fail_from_testing():
-    assert fail_project(ProjectState.UNIT_TESTING) == ProjectState.DIAGNOSING
+    assert fail_project(ProjectState.INTEGRATION_TESTING) == ProjectState.DIAGNOSING
 
 
 def test_no_forward_from_production():

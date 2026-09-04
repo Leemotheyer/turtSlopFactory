@@ -19,7 +19,7 @@ from app.workspace.manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
-_CURSOR_ROLES = {AgentRole.ARCHITECT, AgentRole.DEVELOPER, AgentRole.REVIEWER}
+_CURSOR_ROLES = {AgentRole.ARCHITECT, AgentRole.DEVELOPER, AgentRole.REVIEWER, AgentRole.ADVERSARY}
 # Architect can run on Cursor Cloud without a repo (text artifacts only).
 # Reviewer uses the local checklist so it can read factory planning artifacts.
 _CLOUD_TEXT_ROLES = {AgentRole.ARCHITECT}
@@ -57,6 +57,15 @@ class FactoryAgentRunner(LocalAgentRunner):
         self._cached_backend = None
         self._cached_models = None
 
+    def _cursor_eligible(self, role: AgentRole, context: dict) -> bool:
+        if role in _CURSOR_ROLES:
+            return True
+        # The tester runs deterministically except when asked to author
+        # acceptance tests from the contract (needs an LLM + repo).
+        if role == AgentRole.TESTER and context.get("test_stage") == "write_acceptance":
+            return True
+        return False
+
     async def run(
         self,
         role: AgentRole,
@@ -65,7 +74,7 @@ class FactoryAgentRunner(LocalAgentRunner):
         workspace: str,
         context: dict,
     ) -> AgentRun:
-        if role not in _CURSOR_ROLES:
+        if not self._cursor_eligible(role, context):
             return await super().run(role, project_id, task_id, workspace, context)
 
         backend = await self._resolve_backend()
@@ -214,34 +223,30 @@ class FactoryAgentRunner(LocalAgentRunner):
     async def _finalize_reviewer(
         self, project_id: UUID, context: dict, cursor_output: str
     ) -> tuple[bool, str]:
+        """Use the Cursor reviewer's verdict when parseable; local checklist otherwise.
+
+        A Cursor rejection stands — the factory never overrides an LLM
+        reviewer's rejection with its own checklist (the checklist is the
+        floor, not the ceiling).
+        """
         import json
 
-        from app.agents.cursor_cloud_runner import _extract_json_block
+        from app.artifacts.parsing import parse_agent_json
+        from app.artifacts.schemas import ReviewReport
 
-        local_success, local_output = await super()._reviewer(
-            project_id, context, UUID(int=0), "cursor-reviewer"
-        )
+        report = parse_agent_json(ReviewReport, cursor_output)
+        if report is not None:
+            payload = json.dumps(report.model_dump(), indent=2)
+            self.workspace.write_artifact(project_id, "review.json", payload)
+            if not report.approved:
+                self.workspace.append_log(
+                    project_id,
+                    "pipeline.log",
+                    f"[reviewer] Cursor rejected: {', '.join(report.concerns[:5]) or report.severity}",
+                )
+            return report.approved, payload
 
-        fresh = _extract_json_block(cursor_output)
-        if fresh:
-            try:
-                report = json.loads(fresh)
-                if report.get("decision") == "approve":
-                    self.workspace.write_artifact(project_id, "review.json", json.dumps(report, indent=2))
-                    return True, json.dumps(report, indent=2)
-                if local_success:
-                    self.workspace.append_log(
-                        project_id,
-                        "pipeline.log",
-                        "[reviewer] Cursor rejected but factory checklist passed — approving",
-                    )
-                    return True, local_output
-                self.workspace.write_artifact(project_id, "review.json", json.dumps(report, indent=2))
-                return False, json.dumps(report, indent=2)
-            except json.JSONDecodeError:
-                pass
-
-        return local_success, local_output
+        return await super()._reviewer(project_id, context, UUID(int=0), "cursor-reviewer")
 
     async def stream_events(self, run_id: UUID) -> AsyncIterator[AgentEvent]:
         return

@@ -1,12 +1,70 @@
-"""Build Cursor agent prompts from factory pipeline context."""
+"""Assemble Cursor agent prompts from versioned template files + pipeline context.
+
+Templates live in ``app/agents/prompts/<role>/`` (``rules.md``, ``VERSION``,
+``tasks/*.md``) and are versioned like code: bump ``VERSION`` when a prompt
+changes so runs record which prompt produced which result.
+"""
 
 from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from string import Template
 
 from app.agents.rules import rules_for_role
 from app.models import AgentRole
 from app.services.agent_rules import append_agent_rules_sections
+from app.services.memory import format_memory_for_prompt
 from app.services.product_enrichment import enrichment_pass_theme_hint
 from app.services.repo_analysis import format_repo_analysis_for_prompt
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+@lru_cache(maxsize=64)
+def _load_task_template(role: str, name: str) -> Template:
+    path = PROMPTS_DIR / role / "tasks" / f"{name}.md"
+    return Template(path.read_text(encoding="utf-8"))
+
+
+def _render(role: AgentRole, name: str, **values) -> str:
+    return _load_task_template(role.value, name).safe_substitute(**values).strip()
+
+
+@lru_cache(maxsize=16)
+def prompt_version_for_role(role: AgentRole) -> str:
+    path = PROMPTS_DIR / role.value / "VERSION"
+    try:
+        version = path.read_text(encoding="utf-8").strip() or "0"
+    except OSError:
+        version = "0"
+    return f"{role.value}-v{version}"
+
+
+def prompt_versions() -> dict[str, str]:
+    return {role.value: prompt_version_for_role(role) for role in AgentRole}
+
+
+def _contract_section(context: dict) -> str:
+    contract = context.get("contract")
+    if not contract:
+        return ""
+    lines = ["\n## Project contract (the definition of done)"]
+    goal = getattr(contract, "goal", "") or ""
+    if goal:
+        lines.append(f"Goal: {goal[:500]}")
+    for req in getattr(contract, "requirements", [])[:12]:
+        lines.append(f"- **{req.id}** ({req.priority}): {req.description}")
+        for criterion in req.acceptance[:4]:
+            lines.append(f"  - accept: {criterion}")
+    non_goals = getattr(contract, "non_goals", None) or []
+    if non_goals:
+        lines.append("Non-goals: " + "; ".join(str(n) for n in non_goals[:6]))
+    lines.append(
+        "Verification: name pytest tests `test_<req_id_lowercase>_*` so the factory "
+        "records them as evidence for the matching requirement."
+    )
+    return "\n".join(lines)
 
 
 def build_role_prompt(role: AgentRole, context: dict) -> str:
@@ -31,9 +89,25 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
     if description.strip() and description.strip() != original.strip():
         sections.append(f"\n## Refined specification (after intake)\n{description.strip()}")
 
+    contract_block = _contract_section(context)
+    if contract_block:
+        sections.append(contract_block)
+
     repo_block = format_repo_analysis_for_prompt(context.get("repo_analysis"))
     if repo_block:
         sections.append(f"\n{repo_block}")
+
+    memory_block = format_memory_for_prompt(context.get("project_memory"))
+    if memory_block:
+        sections.append(memory_block)
+
+    git_history = context.get("git_history")
+    if git_history and context.get("repo_url"):
+        sections.append(
+            "\n## Recent git history (the why behind the code)\n```\n"
+            + str(git_history)[:1200]
+            + "\n```"
+        )
 
     if notes:
         sections.append("\n## Supervisor notes (must follow)")
@@ -98,47 +172,18 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
         max_features = context.get("max_features_per_pass", 8)
         theme_hint = enrichment_pass_theme_hint(int(enrichment_pass))
         sections.append(
-            f"""
-## Autonomous enrichment pass {enrichment_pass}/{context.get('max_enrichment_passes', 4)}
-The app has a **working live preview**. Each pass must deliver **substantial, user-visible progress** — not tiny tweaks.
-Think in terms of complete flows, screens, or capabilities a user would notice in the preview.
-
-{theme_hint}
-
-Preview audit:
-- Health OK: {audit.get('health_ok', False)}
-- HTML UI detected: {audit.get('has_html_ui', False)}
-- Issues found: {', '.join(audit.get('issues') or []) or 'none recorded'}
-
-Write `enrichment-plan.json` in the workspace AND include the same JSON in your reply:
-```json
-{{
-  "features": [
-    {{
-      "id": "slug",
-      "title": "Short title",
-      "description": "Detailed scope: backend routes, frontend screens, validation, tests, and what the user will see",
-      "scope": "in_scope | uncertain | out_of_scope",
-      "priority": "high | medium | low"
-    }}
-  ],
-  "quality_issues": ["list of UX or reliability problems observed"],
-  "stop_reason": null
-}}
-```
-
-Rules:
-- Propose **{max_features}** or fewer **high-impact** features. Each feature should touch backend + frontend where applicable.
-- Every description must list concrete deliverables (routes, UI screens, states, tests) — not vague "improve UX".
-- Prefer **fewer, larger features** over many one-line nits (e.g. "full CRUD with forms" not "add a button color").
-- Mark `uncertain` when a feature may be out of scope (payments, OAuth, email/SMS, multi-tenant admin, ML, etc.).
-- Mark `out_of_scope` when it clearly contradicts supervisor notes or intake exclusions.
-- Set `stop_reason` only when the app is genuinely production-ready and no worthwhile improvements remain.
-- Do NOT replan from scratch — iterate on the running product.
-- You **cannot** reach the private preview URL from Cursor Cloud. Use the audit summary above and existing code/docs only.
-- Do **NOT** write requirements.md, architecture.md, or a greenfield project plan. Do **NOT** use plan mode.
-- Your entire reply must be the JSON object (optionally wrapped in a ```json fence). No markdown architecture documents.
-"""
+            "\n"
+            + _render(
+                AgentRole.ARCHITECT,
+                "enrichment",
+                enrichment_pass=enrichment_pass,
+                max_passes=context.get("max_enrichment_passes", 4),
+                theme_hint=theme_hint,
+                audit_health_ok=audit.get("health_ok", False),
+                audit_has_html_ui=audit.get("has_html_ui", False),
+                audit_issues=", ".join(audit.get("issues") or []) or "none recorded",
+                max_features=max_features,
+            )
         )
         if role == AgentRole.ARCHITECT:
             sections.append(
@@ -162,43 +207,9 @@ The factory prepared this draft from intake and repo analysis. **Update and comp
 """
             )
         if context.get("repo_url"):
-            sections.append(
-                """
-## Your task
-Create or **refine** project requirements and architecture for a **complete, polished application**.
-
-**Ground everything in the Product vision and intake answers above.** Do not produce generic boilerplate that ignores the project's stated goal.
-
-When an existing repository is linked, document how to **extend** the current codebase — not replace it.
-
-Write two markdown files in the workspace AND repeat both documents in your final reply:
-1. `requirements.md` — functional/non-functional requirements, user flows, exclusions, quality bar
-2. `architecture.md` — stack, API design, UI structure, testing strategy (respect existing layout)
-
-Start the reply with `# Requirements` then `# Architecture` so the factory can copy them.
-
-Ensure `/health` and deployment on port 8080. The factory live preview runs the app — do not document manual docker-compose demos.
-"""
-            )
+            sections.append("\n" + _render(AgentRole.ARCHITECT, "plan_repo"))
         else:
-            sections.append(
-                """
-## Your task
-You are a no-repo Cloud Agent. There is no GitHub repository and nothing you write to disk will be synced.
-
-**Ground everything in the Product vision and intake answers above.**
-
-Put BOTH documents in your final reply as markdown headings the factory will copy into `requirements.md` and `architecture.md`:
-
-# Requirements
-functional/non-functional requirements, user flows, exclusions, quality bar for a complete v1
-
-# Architecture
-stack, API design, UI structure, testing strategy
-
-Use Python 3.12 + FastAPI, Docker on port 8080, pytest coverage, and a `/health` endpoint.
-"""
-            )
+            sections.append("\n" + _render(AgentRole.ARCHITECT, "plan_no_repo"))
     elif role == AgentRole.DEVELOPER:
         stream = context.get("work_stream")
         existing_note = ""
@@ -208,114 +219,101 @@ Use Python 3.12 + FastAPI, Docker on port 8080, pytest coverage, and a `/health`
 Extend the current implementation. **Do not rebuild** working routes, models, or UI unless this task explicitly says to replace them.
 """
         if stream == "backend":
-            sections.append(
-                f"""
-## Your task
-Implement or update the **backend API** (FastAPI): routes, models, validation, tests under `tests/`.
-Ensure `/health` and core CRUD endpoints work with proper error responses. Match requirements.md if present.
-Build production-quality code — not stubs. Do not start a server or container; the factory live preview already runs the app.
-{existing_note}
-"""
-            )
+            sections.append("\n" + _render(AgentRole.DEVELOPER, "backend", existing_note=existing_note))
         elif stream == "frontend":
-            sections.append(
-                f"""
-## Your task
-Implement or update the **frontend UI**: static HTML/JS served by FastAPI under `app/static/`.
-Provide a polished browser interface: loading states, empty states, validation feedback, mobile-friendly layout.
-Use relative fetch URLs (`api/items`, not `/api/items`) so the UI works through the factory preview gateway.
-{existing_note}
-"""
-            )
+            sections.append("\n" + _render(AgentRole.DEVELOPER, "frontend", existing_note=existing_note))
         elif stream == "feature":
             feature_id = context.get("feature_id") or "feature"
             content = context.get("feature_content") or context.get("work_description", "")
             enrichment_cmd = context.get("enrichment_command")
             enrichment_block = ""
             if enrichment_cmd:
-                enrichment_block = """
-## Enrichment implementation standards
-This is an **enrichment pass** — implement **all** listed improvements in this task, not a subset.
-- Touch both backend and frontend when the feature needs it.
-- Add or update pytest tests for new/changed API behavior.
-- Wire the UI with loading, error, and empty states — verify through the factory live preview.
-- Do **not** stop after cosmetic-only changes; each item should be a visible capability or flow.
-"""
+                enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_block")
             sections.append(
-                f"""
-## Your task
-Implement feature **{feature_id}**:
-{content}
-{existing_note}
-{enrichment_block}
-"""
+                "\n"
+                + _render(
+                    AgentRole.DEVELOPER,
+                    "feature",
+                    feature_id=feature_id,
+                    content=content,
+                    existing_note=existing_note,
+                    enrichment_block=enrichment_block,
+                )
             )
         else:
-            sections.append(
-                f"""
-## Your task
-Implement the full application: FastAPI backend, static frontend, Dockerfile, docker-compose,
-requirements.txt, and pytest tests. Match requirements.md and architecture.md if present.
-The factory starts the live preview for you — implement the app, do not try to run Docker.
-{existing_note}
-"""
-            )
+            sections.append("\n" + _render(AgentRole.DEVELOPER, "full", existing_note=existing_note))
         if context.get("incremental") and context.get("last_failure"):
             sections.append(f"\n## Fix previous failure\n{context['last_failure'][:4000]}")
+            regression_hint = context.get("regression_test_hint")
+            if regression_hint:
+                sections.append(
+                    f"\nAfter fixing, add a regression test `tests/regression/{regression_hint}` "
+                    "that fails on the old behavior and passes on the fix. Do not modify existing tests."
+                )
     elif role == AgentRole.TESTER:
         upstream = context.get("preview_upstream") or context.get("preview_url") or ""
         stage = context.get("test_stage", "unit")
-        if stage == "product_qa":
+        if stage == "write_acceptance":
+            sections.append("\n" + _render(AgentRole.TESTER, "write_acceptance"))
+        elif stage == "product_qa":
             audit = context.get("preview_audit") or {}
             pass_num = context.get("enrichment_pass")
             sections.append(
-                f"""
-## Your task — product QA on the live preview (enrichment pass {pass_num or "?"})
-Interact with the factory live preview like a user. Do not start Docker or uvicorn.
-
-Live preview: {upstream or "not running"}
-Health: GET {health_path}
-Audit summary: health_ok={audit.get('health_ok')}, has_ui={audit.get('has_html_ui')}
-
-Probe key endpoints and the HTML UI. Write `product-qa.json` with:
-- `passed`: boolean — did this enrichment pass add **meaningful** user-visible value?
-- `issues`: list of concrete UX/functionality problems still present
-- `suggested_features`: list of substantial improvements worth implementing next (not nits)
-
-**Fail the pass** if the only changes were cosmetic while core flows are still missing.
-"""
+                "\n"
+                + _render(
+                    AgentRole.TESTER,
+                    "product_qa",
+                    pass_num=pass_num or "?",
+                    upstream=upstream or "not running",
+                    health_path=health_path,
+                    audit_health_ok=audit.get("health_ok"),
+                    audit_has_html_ui=audit.get("has_html_ui"),
+                )
             )
         else:
             sections.append(
-                f"""
-## Your task
-Probe the factory live preview. Do not start Docker or uvicorn.
-
-Live preview: {upstream or "not running"}
-Health: GET {health_path}
-
-Report whether the running preview meets the acceptance contract. If it is down, say so —
-do not try to start a replacement container.
-"""
+                "\n"
+                + _render(
+                    AgentRole.TESTER,
+                    "probe",
+                    upstream=upstream or "not running",
+                    health_path=health_path,
+                )
             )
+    elif role == AgentRole.ADVERSARY:
+        upstream = context.get("preview_upstream") or context.get("preview_url") or ""
+        sections.append(
+            "\n"
+            + _render(
+                AgentRole.ADVERSARY,
+                "adversary",
+                upstream=upstream or "not running",
+                health_path=health_path,
+            )
+        )
     elif role == AgentRole.REVIEWER:
         tests_passed = context.get("tests_passed", False)
         sections.append(
-            f"""
-## Your task
-Review the project for production readiness. Tests passed: {tests_passed}.
-Enrichment passes completed: {context.get('enrichment_passes_completed', 0)}.
-
-The app should feel **complete and polished**, not a bare scaffold. Reject if core UX polish is missing
-unless enrichment passes were exhausted and remaining gaps are documented.
-
-Write `review.json` with:
-- decision: "approve" or "reject"
-- checklist: requirements_documented, architecture_documented, all_tests_passed,
-  dockerfile_present, supervisor_notes_applied (booleans)
-- concerns: list of strings
-- severity: "low" or "high"
-"""
+            "\n"
+            + _render(
+                AgentRole.REVIEWER,
+                "review",
+                tests_passed=tests_passed,
+                enrichment_passes=context.get("enrichment_passes_completed", 0),
+            )
         )
+        acceptance_report = context.get("acceptance_report")
+        if acceptance_report:
+            verified = acceptance_report.get("verified", 0)
+            total = acceptance_report.get("total", 0)
+            sections.append(
+                f"\n## Acceptance report (factory-evaluated)\n"
+                f"{verified}/{total} requirement(s) verified with evidence. "
+                "Statuses: "
+                + ", ".join(
+                    f"{rid}={entry.get('status')}"
+                    for rid, entry in (acceptance_report.get("requirements") or {}).items()
+                )
+            )
 
     return "\n".join(sections).strip()

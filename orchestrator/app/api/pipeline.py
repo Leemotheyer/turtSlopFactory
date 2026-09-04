@@ -123,7 +123,6 @@ async def run_pipeline(project_id: UUID, db: AsyncSession = Depends(get_db)) -> 
     allowed_states = {
         ProjectState.PLANNING.value,
         ProjectState.IMPLEMENTING.value,
-        ProjectState.UNIT_TESTING.value,
         ProjectState.INTEGRATION_TESTING.value,
         ProjectState.DOCKER_BUILD.value,
         ProjectState.STAGING_DEPLOY.value,

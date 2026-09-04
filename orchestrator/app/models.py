@@ -6,12 +6,18 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ProjectState(StrEnum):
+    """Pipeline gates are named for the stage that runs *at* that state.
+
+    Unit testing is a substage of IMPLEMENTING; the standalone UNIT_TESTING
+    state was removed when the gates were realigned (migration
+    0001_gate_realignment shifts persisted values).
+    """
+
     REQUESTED = "REQUESTED"
     DISCOVERY = "DISCOVERY"
     INTAKE_PENDING = "INTAKE_PENDING"
     PLANNING = "PLANNING"
     IMPLEMENTING = "IMPLEMENTING"
-    UNIT_TESTING = "UNIT_TESTING"
     INTEGRATION_TESTING = "INTEGRATION_TESTING"
     DOCKER_BUILD = "DOCKER_BUILD"
     STAGING_DEPLOY = "STAGING_DEPLOY"
@@ -28,6 +34,7 @@ class AgentRole(StrEnum):
     ARCHITECT = "architect"
     DEVELOPER = "developer"
     TESTER = "tester"
+    ADVERSARY = "adversary"
     REVIEWER = "reviewer"
 
 
@@ -298,6 +305,12 @@ class ProgressDigest(BaseModel):
     summary_lines: list[str] = Field(default_factory=list)
 
 
+class InputRequestRisk(StrEnum):
+    NORMAL = "normal"
+    # Destructive requests never auto-resolve — they block on a human answer.
+    DESTRUCTIVE = "destructive"
+
+
 class InputRequest(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     project_id: UUID
@@ -311,6 +324,7 @@ class InputRequest(BaseModel):
     status: InputRequestStatus = InputRequestStatus.OPEN
     human_response: str | None = None
     resolved_decision: str | None = None
+    risk: InputRequestRisk = InputRequestRisk.NORMAL
     expires_at: datetime
     created_at: datetime = Field(default_factory=datetime.utcnow)
     resolved_at: datetime | None = None
@@ -371,8 +385,7 @@ FORWARD_TRANSITIONS: dict[ProjectState, ProjectState] = {
     ProjectState.DISCOVERY: ProjectState.INTAKE_PENDING,
     ProjectState.INTAKE_PENDING: ProjectState.PLANNING,
     ProjectState.PLANNING: ProjectState.IMPLEMENTING,
-    ProjectState.IMPLEMENTING: ProjectState.UNIT_TESTING,
-    ProjectState.UNIT_TESTING: ProjectState.INTEGRATION_TESTING,
+    ProjectState.IMPLEMENTING: ProjectState.INTEGRATION_TESTING,
     ProjectState.INTEGRATION_TESTING: ProjectState.DOCKER_BUILD,
     ProjectState.DOCKER_BUILD: ProjectState.STAGING_DEPLOY,
     ProjectState.STAGING_DEPLOY: ProjectState.SMOKE_TESTING,
@@ -383,10 +396,15 @@ FORWARD_TRANSITIONS: dict[ProjectState, ProjectState] = {
 FAILURE_TRANSITIONS: dict[ProjectState, ProjectState] = {
     ProjectState.PLANNING: ProjectState.DIAGNOSING,
     ProjectState.IMPLEMENTING: ProjectState.DIAGNOSING,
-    ProjectState.UNIT_TESTING: ProjectState.DIAGNOSING,
     ProjectState.INTEGRATION_TESTING: ProjectState.DIAGNOSING,
     ProjectState.DOCKER_BUILD: ProjectState.DIAGNOSING,
     ProjectState.STAGING_DEPLOY: ProjectState.DIAGNOSING,
     ProjectState.SMOKE_TESTING: ProjectState.DIAGNOSING,
     ProjectState.REVIEW: ProjectState.DIAGNOSING,
+}
+
+# Legacy state names from before the gate realignment → the gate a project in
+# that state should resume from under the new naming.
+LEGACY_STATE_ALIASES: dict[str, ProjectState] = {
+    "UNIT_TESTING": ProjectState.INTEGRATION_TESTING,
 }

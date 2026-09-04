@@ -44,6 +44,8 @@ def dev_preview_image_tag(project_id: UUID) -> str:
 
 
 def docker_available() -> bool:
+    if settings.disable_docker:
+        return False
     return Path("/var/run/docker.sock").exists()
 
 
@@ -65,13 +67,16 @@ def subprocess_run_silent(cmd: list[str]) -> None:
 
 
 async def _run_docker(*args: str, stdin: bytes | None = None, log_path: Path | None = None) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(
-        "docker",
-        *args,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            *args,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except FileNotFoundError:
+        return 127, "docker binary not available"
     stdout, _ = await proc.communicate(input=stdin)
     output = stdout.decode(errors="replace")
     if log_path is not None:
@@ -102,6 +107,8 @@ async def stop_preview(
     ephemeral_image: str | None = None,
 ) -> None:
     """Stop preview container and remove leftover project preview images (never volumes)."""
+    if not docker_available():
+        return
     name = container_name or preview_container_name(project_id)
     await _remove_container(name)
 

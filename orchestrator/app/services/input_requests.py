@@ -28,10 +28,16 @@ def _to_model(row: InputRequestRow) -> InputRequest:
         status=InputRequestStatus(row.status),
         human_response=row.human_response,
         resolved_decision=row.resolved_decision,
+        risk=getattr(row, "risk", None) or "normal",
         expires_at=row.expires_at,
         created_at=row.created_at,
         resolved_at=row.resolved_at,
     )
+
+
+# Destructive requests stay open until a human answers (no auto-resolve);
+# the expiry is pushed far out so the standard sweeper never touches them.
+_DESTRUCTIVE_EXPIRY_DAYS = 365
 
 
 async def create_input_request(
@@ -44,12 +50,17 @@ async def create_input_request(
     context_detail: str = "",
     options: list[str] | None = None,
     task_id: UUID | None = None,
+    risk: str = "normal",
 ) -> InputRequest:
     """
-    Create a non-blocking input request. The agent proceeds immediately with default_decision.
-    Human can optionally respond before expiry; otherwise it auto-resolves.
+    Create an input request. Normal risk: non-blocking — the agent proceeds
+    with default_decision and the request auto-resolves at expiry. Destructive
+    risk: never auto-resolves; the decision waits for a human.
     """
-    expires_at = datetime.utcnow() + timedelta(seconds=settings.input_request_timeout_seconds)
+    if risk == "destructive":
+        expires_at = datetime.utcnow() + timedelta(days=_DESTRUCTIVE_EXPIRY_DAYS)
+    else:
+        expires_at = datetime.utcnow() + timedelta(seconds=settings.input_request_timeout_seconds)
 
     row = InputRequestRow(
         project_id=project_id,
@@ -62,6 +73,7 @@ async def create_input_request(
         default_decision=default_decision,
         status=InputRequestStatus.OPEN.value,
         resolved_decision=default_decision,
+        risk=risk,
         expires_at=expires_at,
     )
     session.add(row)
@@ -79,7 +91,8 @@ async def create_input_request(
                 "question": question,
                 "default_decision": default_decision,
                 "expires_at": expires_at.isoformat(),
-                "non_blocking": True,
+                "non_blocking": risk != "destructive",
+                "risk": risk,
             },
         ),
     )
@@ -134,12 +147,16 @@ async def respond_to_input(
 
 
 async def expire_stale_requests(session: AsyncSession) -> int:
-    """Auto-resolve open requests past their expiry. Pipeline never waits."""
+    """Auto-resolve open normal-risk requests past their expiry.
+
+    Destructive-risk requests are exempt — they block until a human answers.
+    """
     now = datetime.utcnow()
     result = await session.execute(
         select(InputRequestRow).where(
             InputRequestRow.status == InputRequestStatus.OPEN.value,
             InputRequestRow.expires_at <= now,
+            InputRequestRow.risk != "destructive",
         )
     )
     rows = result.scalars().all()
