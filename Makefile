@@ -28,6 +28,7 @@ install:
 
 test:
 	cd orchestrator && python3 -m pytest tests/ -q
+	cd dashboard && npm test
 
 dev-api:
 	cd orchestrator && uvicorn app.main:app --reload --port 8000

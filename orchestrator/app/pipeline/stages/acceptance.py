@@ -44,6 +44,24 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
     )
 
     await sync_requirements_from_contract(session, project.id, contract)
+
+    # Refresh evidence with a full test run so the evaluation reflects the
+    # code as it stands now (fix loops re-enter here without re-running the
+    # earlier test gates).
+    from app.services.evidence import record_test_results_evidence
+
+    tests_ok, tests_output = await ex.runner._tester(
+        project.id, {**context, "test_stage": "acceptance_full"}
+    )
+    await record_test_results_evidence(session, ex.workspace, project.id, stage="acceptance_full")
+    if not tests_ok:
+        await ex.complete_task(session, task, False, tests_output[:1000])
+        context["last_failure"] = (
+            "Acceptance test refresh failed — the current code does not pass its "
+            f"test suite:\n\n{tests_output[:3000]}"
+        )
+        return False
+
     report = await evaluate_acceptance(session, project.id, contract)
 
     # Regression-test policy: resolved app-level failures must reference a

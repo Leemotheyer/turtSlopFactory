@@ -4,7 +4,6 @@ export const PIPELINE_STATES = [
   "INTAKE_PENDING",
   "PLANNING",
   "IMPLEMENTING",
-  "UNIT_TESTING",
   "INTEGRATION_TESTING",
   "DOCKER_BUILD",
   "STAGING_DEPLOY",
@@ -25,7 +24,7 @@ export const PIPELINE_PHASES: {
   {
     id: "build",
     label: "Build",
-    states: ["IMPLEMENTING", "UNIT_TESTING", "INTEGRATION_TESTING"],
+    states: ["IMPLEMENTING", "INTEGRATION_TESTING"],
   },
   {
     id: "ship",
@@ -42,7 +41,6 @@ export const STATE_COLORS: Record<string, string> = {
   INTAKE_PENDING: "#f5a623",
   PLANNING: "#5b8def",
   IMPLEMENTING: "#5b8def",
-  UNIT_TESTING: "#f5a623",
   INTEGRATION_TESTING: "#f5a623",
   DOCKER_BUILD: "#f5a623",
   STAGING_DEPLOY: "#f5a623",
@@ -59,14 +57,13 @@ export const AUTO_START_PIPELINE_STATES = new Set([
   "DIAGNOSING",
   "FIXING",
   "IMPLEMENTING",
-  "UNIT_TESTING",
   "INTEGRATION_TESTING",
   "DOCKER_BUILD",
   "STAGING_DEPLOY",
   "SMOKE_TESTING",
 ]);
 
-export type ProjectTab = "journey" | "intake" | "notes" | "secrets" | "deep";
+export type ProjectTab = "journey" | "intake" | "contract" | "notes" | "secrets" | "deep";
 export type DeepTab = "tasks" | "artifacts" | "logs" | "deployments";
 
 export const PROJECT_NAME_MAX = 200;

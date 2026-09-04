@@ -381,6 +381,9 @@ class LocalAgentRunner(AgentRunner):
             return await self._run_pytest(repo, project_id, "tests/", stage="integration")
         if stage == "acceptance":
             return await self._run_pytest(repo, project_id, "tests/acceptance", stage="acceptance")
+        if stage == "acceptance_full":
+            # Full suite refresh used by the acceptance evaluator.
+            return await self._run_pytest(repo, project_id, "tests/", stage="acceptance_full")
         if stage == "smoke":
             return await self._run_smoke(project_id, context)
         if stage == "product_qa":

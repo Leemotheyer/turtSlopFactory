@@ -17,6 +17,7 @@ type Props = {
 const MAIN_TABS: { id: ProjectTab; label: string }[] = [
   { id: "journey", label: "Journey" },
   { id: "intake", label: "Intake" },
+  { id: "contract", label: "Contract" },
   { id: "notes", label: "Notes" },
   { id: "secrets", label: "Secrets" },
   { id: "deep", label: "Deep dive" },

@@ -4,7 +4,6 @@ export type ProjectState =
   | "INTAKE_PENDING"
   | "PLANNING"
   | "IMPLEMENTING"
-  | "UNIT_TESTING"
   | "INTEGRATION_TESTING"
   | "DOCKER_BUILD"
   | "STAGING_DEPLOY"
@@ -1236,4 +1235,169 @@ export function getWebSocketUrl(): string {
   if (publicConfig?.ws_url) return publicConfig.ws_url;
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
   return browserOrigin().replace(/^http/, "ws");
+}
+
+export interface ContractRequirement {
+  id: string;
+  description: string;
+  acceptance: string[];
+  priority: string;
+}
+
+export interface Contract {
+  goal: string;
+  users: string[];
+  requirements: ContractRequirement[];
+  non_goals: string[];
+  constraints: string[];
+  quality_targets: string[];
+  security_requirements: string[];
+  runtime?: { type: string; healthcheck_path: string; healthcheck_port: number };
+  version?: number;
+  source?: string;
+}
+
+export interface ContractHistoryEntry {
+  version: number;
+  source: string;
+  created_at: string;
+}
+
+export interface ContractResponse {
+  contract: Contract | null;
+  version: number | null;
+  source: string | null;
+  history: ContractHistoryEntry[];
+}
+
+export interface ContractUpdateResponse {
+  contract: Contract;
+  version: number;
+  source: string;
+  feedback_scheduled: boolean;
+}
+
+export interface EvidenceItem {
+  kind: string;
+  reference: string;
+  passed: boolean;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export type RequirementStatus = "pending" | "verified" | "failed" | "unverified" | "waived";
+
+export interface RequirementWithEvidence {
+  req_id: string;
+  description: string;
+  acceptance: string[];
+  status: RequirementStatus;
+  contract_version: number;
+  evidence: EvidenceItem[];
+}
+
+export interface RequirementsHealth {
+  total_requirements: number;
+  verified: number;
+  failed: number;
+  unverified: number;
+  health_percent: number | null;
+}
+
+export interface RequirementsResponse {
+  requirements: RequirementWithEvidence[];
+  health: RequirementsHealth;
+}
+
+export interface FactoryMetricsGateFailure {
+  gate: string;
+  substage: string | null;
+  at: string;
+}
+
+export interface FactoryMetricsRun {
+  project_id: string;
+  mode: string;
+  outcome: string;
+  started_at: string;
+  finished_at: string | null;
+  fix_attempts: number;
+  human_interventions: number;
+  gates_failed: FactoryMetricsGateFailure[];
+}
+
+export interface FactoryMetrics {
+  total_projects: number;
+  runs_recorded: number;
+  runs_completed: number;
+  runs_blocked: number;
+  runs_stopped: number;
+  success_rate: number | null;
+  avg_fix_attempts_per_run: number | null;
+  avg_infra_retries_per_run: number | null;
+  avg_human_interventions_per_completed_run: number | null;
+  avg_auto_resolved_inputs_per_run: number | null;
+  mean_seconds_to_successful_run: number | null;
+  recent_runs: FactoryMetricsRun[];
+}
+
+export async function fetchContract(projectId: string): Promise<ContractResponse> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/contract`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(await parseApiError(res, "Failed to fetch contract"));
+  return res.json();
+}
+
+export async function updateContract(projectId: string, contract: Contract): Promise<ContractUpdateResponse> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/contract`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify(contract),
+  });
+  if (!res.ok) throw new Error(await parseApiError(res, "Failed to update contract"));
+  return res.json();
+}
+
+export async function fetchRequirements(projectId: string): Promise<RequirementsResponse> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}/requirements`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(await parseApiError(res, "Failed to fetch requirements"));
+  return res.json();
+}
+
+export async function waiveRequirement(
+  projectId: string,
+  reqId: string
+): Promise<{ req_id: string; status: string }> {
+  const res = await fetch(
+    `${await resolvedApiUrl()}/api/projects/${projectId}/requirements/${encodeURIComponent(reqId)}/waive`,
+    { method: "POST", headers: headers() }
+  );
+  if (!res.ok) throw new Error(await parseApiError(res, "Failed to waive requirement"));
+  return res.json();
+}
+
+export async function unwaiveRequirement(
+  projectId: string,
+  reqId: string
+): Promise<{ req_id: string; status: string }> {
+  const res = await fetch(
+    `${await resolvedApiUrl()}/api/projects/${projectId}/requirements/${encodeURIComponent(reqId)}/unwaive`,
+    { method: "POST", headers: headers() }
+  );
+  if (!res.ok) throw new Error(await parseApiError(res, "Failed to unwaive requirement"));
+  return res.json();
+}
+
+export async function fetchFactoryMetrics(): Promise<FactoryMetrics> {
+  const res = await fetch(`${await resolvedApiUrl()}/api/metrics/factory`, {
+    cache: "no-store",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(await parseApiError(res, "Failed to fetch factory metrics"));
+  return res.json();
 }

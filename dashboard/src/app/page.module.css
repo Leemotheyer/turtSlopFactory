@@ -258,6 +258,12 @@
   gap: 1rem;
 }
 
+.contractStack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .journeyStack .livePreview {
   margin-bottom: 0;
 }

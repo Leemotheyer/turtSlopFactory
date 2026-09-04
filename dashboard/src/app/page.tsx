@@ -88,6 +88,9 @@ import uiStyles from "@/components/ui/ui.module.css";
 import styles from "./page.module.css";
 import { IntakePanel } from "@/components/intake/IntakePanel";
 import { CollapsibleSection } from "@/components/project/CollapsibleSection";
+import { ContractPanel } from "@/components/project/ContractPanel";
+import { RequirementsPanel } from "@/components/project/RequirementsPanel";
+import { FactoryMetricsPanel } from "@/components/ui/FactoryMetricsPanel";
 import { PipelineTimeline } from "@/components/project/PipelineTimeline";
 import { ProjectNav } from "@/components/project/ProjectNav";
 import { StepFocusCard } from "@/components/project/StepFocusCard";
@@ -2111,6 +2114,8 @@ export default function DashboardPage() {
               )}
             </button>
           </form>
+
+          <FactoryMetricsPanel />
         </aside>
 
         <main
@@ -2743,6 +2748,13 @@ export default function DashboardPage() {
                   }
                   onSubmit={handleSubmitIntake}
                 />
+              )}
+
+              {tab === "contract" && (
+                <div className={styles.contractStack}>
+                  <ContractPanel projectId={detail.id} />
+                  <RequirementsPanel projectId={detail.id} />
+                </div>
               )}
 
               {tab === "notes" && (
