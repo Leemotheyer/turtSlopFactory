@@ -26,8 +26,15 @@ from app.pipeline.stages import (
     BUILD_STAGES,
     POST_PRODUCTION_STAGES,
     SUBSTAGE_IMPLEMENTING,
+    SUBSTAGE_REVIEW,
     SUBSTAGE_UNIT_TESTING,
     StageSpec,
+)
+from app.pipeline.resume import (
+    clear_completion_from_gate,
+    gate_needs_preview_refresh,
+    is_review_policy_failure,
+    preview_type_for_context,
 )
 from app.pipeline.stages import (
     acceptance as acceptance_stage,
@@ -915,8 +922,21 @@ class PipelineExecutor:
                         reason="manual_resume",
                     )
                     context.pop("fix_attempt", None)
+                    context.pop("infra_retries", None)
                     context.pop("implementation_complete", None)
                     failed_substage = context.get("failed_substage") or meta.get("failed_substage")
+                    await self._refresh_context(session, project, context)
+                    if gate_needs_preview_refresh(resume_gate):
+                        clear_completion_from_gate(
+                            context, resume_gate, substage=failed_substage
+                        )
+                        await self._deploy_live_preview(
+                            session,
+                            project,
+                            context,
+                            preview_type=preview_type_for_context(context),
+                            notify=False,
+                        )
                     if failed_substage == SUBSTAGE_UNIT_TESTING:
                         await self._ensure_runnable_app(project, context)
                         await self._stage_fix_from_failure(session, project, context)
@@ -924,13 +944,14 @@ class PipelineExecutor:
                             session,
                             project,
                             context,
-                            preview_type="dev",
+                            preview_type=preview_type_for_context(context),
                         )
                         context["implementation_complete"] = True
                     self.workspace.append_log(
                         project_id,
                         "pipeline.log",
-                        f"[resume] Unblocked — restarting from {resume_gate.value}",
+                        f"[resume] Unblocked — restarting from {resume_gate.value}"
+                        + (f"/{failed_substage}" if failed_substage else ""),
                     )
 
                 if parse_project_state(project.state) == ProjectState.REVIEW:
@@ -1205,6 +1226,26 @@ class PipelineExecutor:
             # Regression-test policy: the fix must pin this failure with a test.
             context["regression_test_hint"] = f"test_fix_{str(failure_record_id)[:8]}.py"
 
+        failure_text = str(context.get("last_failure") or "")
+        if failed_substage == SUBSTAGE_REVIEW or (
+            failed_at == ProjectState.SMOKE_TESTING and is_review_policy_failure(failure_text)
+        ):
+            await self.transition(session, project, block_autonomous())
+            await create_notification(
+                session,
+                project.id,
+                NotificationType.PIPELINE_BLOCKED,
+                "Review rejected",
+                (
+                    f"{project.name} failed the review gate (policy check — not an application "
+                    "test failure). Open review.json in artifacts. For oversized first builds, "
+                    "upgrade the factory or set change-budget mode to Auto/Never under "
+                    "Configure pipeline."
+                ),
+                action="guidance",
+            )
+            return
+
         # Infra failures retry without consuming a fix attempt (cheap rung of
         # the failure ladder) — the code is not the problem.
         if diagnosis["error_class"] == "infra":
@@ -1217,6 +1258,17 @@ class PipelineExecutor:
                     f"[diagnosis] Infra failure — retry {infra_retries + 1}/{_MAX_INFRA_RETRIES} "
                     "without consuming a fix attempt",
                 )
+                if failed_at in (ProjectState.STAGING_DEPLOY, ProjectState.SMOKE_TESTING):
+                    clear_completion_from_gate(
+                        context, failed_at, substage=failed_substage
+                    )
+                    await self._deploy_live_preview(
+                        session,
+                        project,
+                        context,
+                        preview_type=preview_type_for_context(context),
+                        notify=False,
+                    )
                 await self.transition(session, project, ProjectState.FIXING)
                 await self.transition(session, project, failed_at)
                 specs = (
@@ -1255,6 +1307,18 @@ class PipelineExecutor:
                 )
                 return
             context["implementation_complete"] = True
+        elif failed_at == ProjectState.SMOKE_TESTING and failed_substage is None:
+            fixed = await self._stage_fix_from_failure(session, project, context)
+            if not fixed:
+                await self._handle_failure(
+                    session,
+                    project,
+                    context,
+                    failed_at=failed_at,
+                    failed_substage=failed_substage,
+                )
+                return
+            context.pop("smoke_testing_complete", None)
 
         specs = POST_PRODUCTION_STAGES if context.get("post_production") else BUILD_STAGES
         await self._run_stage_sequence(session, project, context, specs)

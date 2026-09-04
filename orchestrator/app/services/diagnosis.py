@@ -25,6 +25,9 @@ _INFRA_PATTERNS = (
     r"cursor cloud capacity",
     r"cursor cloud create timed out",
     r"docker is required for live preview",
+    r"no factory live preview",
+    r"live preview is not running",
+    r"smoke test skipped",
     r"oserror: \[errno 28\]",
     r"could not clone",
 )

@@ -61,11 +61,13 @@ async def stage_fix_from_failure(
         # does not masquerade as a failed code fix. App-level preview
         # failures re-populate last_failure inside _deploy_live_preview.
         context.pop("last_failure", None)
+        from app.pipeline.resume import preview_type_for_context
+
         preview_ok = await ex._deploy_live_preview(
             session,
             project,
             context,
-            preview_type="dev",
+            preview_type=preview_type_for_context(context),
         )
         return preview_ok or not context.get("last_failure")
     return True

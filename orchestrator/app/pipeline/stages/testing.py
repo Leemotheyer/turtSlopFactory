@@ -67,6 +67,26 @@ async def stage_integration_testing(ex: "PipelineExecutor", session, project, co
 
 
 async def stage_smoke_testing(ex: "PipelineExecutor", session, project, context) -> bool:
+    from app.pipeline.resume import preview_type_for_context
+
+    # Staging previews can go cold during long review/fix cycles — ensure the
+    # factory-owned container is up before probing health.
+    meta = ex.workspace.load_metadata(project.id)
+    if ex.runner.docker_available() and meta.get("preview_status") != "running":
+        redeployed = await ex._deploy_live_preview(
+            session,
+            project,
+            context,
+            preview_type=preview_type_for_context(context),
+            notify=False,
+        )
+        if not redeployed:
+            context["last_failure"] = (
+                context.get("last_failure")
+                or "Smoke test blocked — factory could not restart the live preview"
+            )
+            return False
+
     task = await ex.create_task(
         session, project.id, "Smoke tests", "Health check on staging", AgentRole.TESTER
     )
