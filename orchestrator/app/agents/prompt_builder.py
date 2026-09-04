@@ -185,6 +185,14 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
                 max_features=max_features,
             )
         )
+        from app.services.intake_contract import intake_capability_lines
+
+        intake_lines = intake_capability_lines(intake)
+        if intake_lines:
+            sections.append(
+                "\n## Intake capabilities (always in scope — implement, do not question)\n"
+                + "\n".join(f"- {line}" for line in intake_lines[:20])
+            )
         if role == AgentRole.ARCHITECT:
             sections.append(
                 """

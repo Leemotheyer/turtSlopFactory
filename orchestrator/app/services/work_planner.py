@@ -179,11 +179,12 @@ def plan_from_enrichment_features(
     input_responses: list[dict] | None = None,
     *,
     completed_slugs: set[str] | None = None,
+    intake: dict | None = None,
 ) -> list[WorkUnit]:
     from app.services.product_enrichment import features_to_work_units
 
     return features_to_work_units(
-        features, notes, input_responses, completed_slugs=completed_slugs
+        features, notes, input_responses, completed_slugs=completed_slugs, intake=intake
     )
 
 

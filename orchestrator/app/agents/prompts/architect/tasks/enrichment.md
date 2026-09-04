@@ -30,8 +30,9 @@ Rules:
 - Propose **$max_features** or fewer **high-impact** features. Each feature should touch backend + frontend where applicable.
 - Every description must list concrete deliverables (routes, UI screens, states, tests) — not vague "improve UX".
 - Prefer **fewer, larger features** over many one-line nits (e.g. "full CRUD with forms" not "add a button color").
-- Mark `uncertain` when a feature may be out of scope (payments, OAuth, email/SMS, multi-tenant admin, ML, etc.).
-- Mark `out_of_scope` when it clearly contradicts supervisor notes or intake exclusions.
+- Mark `uncertain` only for **new** capabilities that are **not** listed in intake form answers and may expand scope (payments, OAuth, email/SMS, multi-tenant admin, ML, etc.).
+- Anything described in intake (`must_have_features`, `success_criteria`, `primary_goal`, etc.) is **always `in_scope`** — never mark it `uncertain` and never defer it.
+- Mark `out_of_scope` when it clearly contradicts supervisor notes or the intake `out_of_scope` field.
 - Set `stop_reason` only when the app is genuinely production-ready and no worthwhile improvements remain.
 - Do NOT replan from scratch — iterate on the running product.
 - You **cannot** reach the private preview URL from Cursor Cloud. Use the audit summary above and existing code/docs only.

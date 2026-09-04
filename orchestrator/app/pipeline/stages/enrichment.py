@@ -9,10 +9,10 @@ from app.config import settings
 from app.models import AgentRole
 from app.services.product_enrichment import (
     audit_live_preview,
-    classify_scope,
     enrichment_change_summary,
     local_enrichment_plan,
     parse_enrichment_plan,
+    resolve_feature_scope,
 )
 from app.services.self_propelling import (
     check_token_budget,
@@ -139,6 +139,7 @@ async def run_enrichment_passes(
                 context.get("notes", []),
                 max_passes=max_passes,
                 completed_slugs=completed_slugs,
+                intake=context.get("intake"),
             )
             ex.workspace.write_artifact(
                 project.id,
@@ -173,6 +174,7 @@ async def run_enrichment_passes(
                     context.get("notes", []),
                     max_passes=max_passes,
                     completed_slugs=completed_slugs,
+                    intake=context.get("intake"),
                 )
                 ex.workspace.write_artifact(
                     project.id,
@@ -206,13 +208,20 @@ async def run_enrichment_passes(
                 record_audit_fingerprint(project.id, audit, ex.workspace)
 
         request_input = context.get("request_input")
+        intake = context.get("intake") or {}
         if request_input:
             for feat in plan.get("features") or []:
                 if not isinstance(feat, dict):
                     continue
                 title = str(feat.get("title") or "feature")
                 description = str(feat.get("description") or title)
-                scope = feat.get("scope") or classify_scope(title, description, context.get("notes"))
+                scope = resolve_feature_scope(
+                    title,
+                    description,
+                    context.get("notes"),
+                    intake=intake,
+                    declared_scope=feat.get("scope"),
+                )
                 feat["scope"] = scope
                 if scope != "uncertain":
                     continue
@@ -234,6 +243,7 @@ async def run_enrichment_passes(
             context.get("notes", []),
             context.get("input_responses", []),
             completed_slugs=completed_slugs,
+            intake=intake,
         )
         if not units:
             reason = plan.get("stop_reason") or "no in-scope improvements"

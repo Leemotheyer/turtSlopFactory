@@ -99,6 +99,102 @@ def requirements_from_intake(intake: dict[str, Any] | None) -> list[ContractRequ
     return requirements
 
 
+_SCOPE_STOP_WORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "into",
+        "like",
+        "must",
+        "have",
+        "should",
+        "will",
+        "user",
+        "users",
+        "app",
+        "application",
+        "feature",
+        "features",
+        "support",
+        "using",
+        "able",
+        "need",
+        "needs",
+    }
+)
+
+
+def _significant_tokens(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for raw in re.findall(r"[a-z0-9]+", text.lower()):
+        if len(raw) < 3 or raw in _SCOPE_STOP_WORDS:
+            continue
+        tokens.add(raw)
+    return tokens
+
+
+def feature_matches_intake(
+    title: str,
+    description: str,
+    intake: dict[str, Any] | None,
+) -> bool:
+    """True when a proposed feature aligns with intake-specified capabilities."""
+    intake = intake or {}
+    text = f"{title} {description}".lower().strip()
+    if not text:
+        return False
+
+    lines = intake_capability_lines(intake)
+    text_tokens = _significant_tokens(text)
+
+    for line in lines:
+        line_lower = line.lower()
+        if len(line_lower) >= 8 and (line_lower in text or text in line_lower):
+            return True
+        line_tokens = _significant_tokens(line_lower)
+        if not line_tokens:
+            continue
+        overlap = line_tokens & text_tokens
+        if len(overlap) >= 2:
+            return True
+        if line_tokens <= text_tokens:
+            return True
+
+    # Whole-intake blob match for short feature titles referencing intake jargon.
+    intake_blob = " ".join(lines).lower()
+    if intake_blob and len(text) >= 6:
+        for token in text_tokens:
+            if len(token) >= 5 and token in intake_blob:
+                return True
+    return False
+
+
+def intake_explicitly_excludes(
+    title: str,
+    description: str,
+    intake: dict[str, Any] | None,
+) -> bool:
+    """True when intake's explicit exclusions cover this feature."""
+    intake = intake or {}
+    raw = intake.get("out_of_scope")
+    if not raw:
+        return False
+    text = f"{title} {description}".lower()
+    for line in _split_capability_lines(str(raw)):
+        line_lower = line.lower()
+        if len(line_lower) >= 6 and line_lower in text:
+            return True
+        line_tokens = _significant_tokens(line_lower)
+        if line_tokens and line_tokens <= _significant_tokens(text):
+            return True
+    return False
+
+
 def minimum_enrichment_passes(intake: dict[str, Any] | None, *, configured_max: int) -> int:
     """How many enrichment passes must complete before the project is production-ready."""
     if configured_max <= 0:

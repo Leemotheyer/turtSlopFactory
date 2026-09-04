@@ -9,12 +9,36 @@ from app.services.product_enrichment import (
     features_to_work_units,
     local_enrichment_plan,
     parse_enrichment_plan,
+    resolve_feature_scope,
 )
 
 
 def test_classify_scope_uncertain_for_payments():
     assert classify_scope("Stripe billing", "Add subscription checkout") == "uncertain"
     assert classify_scope("Item list", "Show items in a table") == "in_scope"
+
+
+def test_classify_scope_in_scope_when_intake_requested_payments():
+    intake = {"must_have_features": "Stripe subscription billing and checkout"}
+    assert classify_scope("Stripe billing", "Add subscription checkout", intake=intake) == "in_scope"
+
+
+def test_resolve_feature_scope_overrides_architect_uncertain_with_intake():
+    intake = {"must_have_features": "Search manga catalog and download chapters"}
+    scope = resolve_feature_scope(
+        "Manga search",
+        "Search catalog by title",
+        declared_scope="uncertain",
+        intake=intake,
+    )
+    assert scope == "in_scope"
+
+
+def test_features_to_work_units_includes_intake_specified_oauth_without_approval():
+    intake = {"must_have_features": "OAuth login with Google"}
+    features = [{"title": "OAuth login", "description": "Google sign-in", "scope": "uncertain"}]
+    units = features_to_work_units(features, intake=intake)
+    assert len(units) == 1
 
 
 def test_parse_enrichment_plan_json_block():

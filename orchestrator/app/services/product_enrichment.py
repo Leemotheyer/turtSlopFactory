@@ -120,18 +120,63 @@ _ENRICHMENT_PASS_THEMES: dict[int, list[tuple[str, str, str]]] = {
 }
 
 
-def classify_scope(title: str, description: str, notes: list[dict] | None = None) -> str:
+def classify_scope(
+    title: str,
+    description: str,
+    notes: list[dict] | None = None,
+    *,
+    intake: dict | None = None,
+) -> str:
     """Return in_scope, uncertain, or out_of_scope."""
+    from app.services.intake_contract import (
+        feature_matches_intake,
+        intake_capability_lines,
+        intake_explicitly_excludes,
+    )
+
     text = f"{title} {description}".lower()
     notes = notes or []
+
+    if feature_matches_intake(title, description, intake):
+        return "in_scope"
+    if intake_explicitly_excludes(title, description, intake):
+        return "out_of_scope"
+
     for note in notes:
         if note.get("type") == "scope_out":
             scope_text = (note.get("content") or "").lower()
             if scope_text and scope_text in text:
                 return "out_of_scope"
-    if any(kw in text for kw in _SCOPE_UNCERTAIN_KEYWORDS):
+
+    uncertain_kws = [kw for kw in _SCOPE_UNCERTAIN_KEYWORDS if kw in text]
+    if uncertain_kws:
+        intake_blob = " ".join(intake_capability_lines(intake)).lower()
+        if intake_blob and any(kw in intake_blob for kw in uncertain_kws):
+            return "in_scope"
         return "uncertain"
     return "in_scope"
+
+
+def resolve_feature_scope(
+    title: str,
+    description: str,
+    notes: list[dict] | None = None,
+    *,
+    intake: dict | None = None,
+    declared_scope: str | None = None,
+) -> str:
+    """Final scope for an enrichment feature — intake commitments override heuristics."""
+    from app.services.intake_contract import feature_matches_intake, intake_explicitly_excludes
+
+    if feature_matches_intake(title, description, intake):
+        return "in_scope"
+    if intake_explicitly_excludes(title, description, intake):
+        return "out_of_scope"
+    if declared_scope == "in_scope":
+        return "in_scope"
+    if declared_scope == "out_of_scope":
+        return "out_of_scope"
+    return classify_scope(title, description, notes, intake=intake)
 
 
 def parse_enrichment_plan(raw: str | None) -> dict[str, Any]:
@@ -224,6 +269,7 @@ def features_to_work_units(
     input_responses: list[dict] | None = None,
     *,
     completed_slugs: set[str] | None = None,
+    intake: dict | None = None,
 ) -> list[WorkUnit]:
     notes = notes or []
     completed_slugs = completed_slugs or set()
@@ -235,7 +281,13 @@ def features_to_work_units(
             continue
         title = str(item.get("title") or item.get("id") or "Improvement").strip()
         description = str(item.get("description") or title).strip()
-        scope = item.get("scope") or classify_scope(title, description, notes)
+        scope = resolve_feature_scope(
+            title,
+            description,
+            notes,
+            intake=intake,
+            declared_scope=item.get("scope"),
+        )
         if scope == "uncertain" and _human_approved_uncertain(title, input_responses):
             scope = "in_scope"
         if scope in ("out_of_scope", "uncertain") or not description:
@@ -260,6 +312,7 @@ def local_enrichment_plan(
     *,
     max_passes: int | None = None,
     completed_slugs: set[str] | None = None,
+    intake: dict | None = None,
 ) -> dict:
     """Deterministic fallback when Cursor architect is unavailable."""
     notes = notes or []
@@ -350,7 +403,13 @@ def local_enrichment_plan(
 
     filtered: list[dict] = []
     for feat in features[: settings.max_features_per_enrichment_pass]:
-        scope = classify_scope(feat["title"], feat["description"], notes)
+        scope = resolve_feature_scope(
+            feat["title"],
+            feat["description"],
+            notes,
+            intake=intake,
+            declared_scope=feat.get("scope"),
+        )
         feat["scope"] = scope
         slug = feat.get("id") or _slugify(feat["title"])
         if scope != "out_of_scope" and slug not in completed_slugs:

@@ -7,7 +7,9 @@ from app.db_models import ProjectRow
 from app.services.contracts import fallback_contract
 from app.services.feature_completeness import evaluate_feature_completeness
 from app.services.intake_contract import (
+    feature_matches_intake,
     intake_capability_lines,
+    intake_explicitly_excludes,
     intake_has_product_scope,
     minimum_enrichment_passes,
     requirements_from_intake,
@@ -60,6 +62,27 @@ def test_minimum_enrichment_passes_respects_zero_config():
     intake = {"must_have_features": "Search\nDownload\nTrack library\nManage queue"}
     assert minimum_enrichment_passes(intake, configured_max=0) == 0
     assert minimum_enrichment_passes(intake, configured_max=4) >= 1
+
+
+def test_feature_matches_intake_for_specified_capabilities():
+    intake = {
+        "must_have_features": "Search manga catalog and download chapters",
+        "success_criteria": "Sonarr-like library UI for series management",
+    }
+    assert feature_matches_intake("Manga search", "Search the catalog by title", intake)
+    assert feature_matches_intake("Chapter download", "Download new chapters automatically", intake)
+    assert feature_matches_intake("OAuth login", "Google sign-in", {"must_have_features": "OAuth with Google"})
+
+
+def test_feature_does_not_match_unrelated_intake():
+    intake = {"must_have_features": "Search manga catalog"}
+    assert not feature_matches_intake("Stripe billing", "Add subscription checkout", intake)
+
+
+def test_intake_explicitly_excludes_feature():
+    intake = {"out_of_scope": "Payment processing\nNative mobile apps"}
+    assert intake_explicitly_excludes("Stripe checkout", "Payment processing for subscriptions", intake)
+    assert not intake_explicitly_excludes("Manga search", "Search catalog", intake)
 
 
 def test_feature_completeness_blocks_unverified_intake_requirements():
