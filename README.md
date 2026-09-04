@@ -100,7 +100,7 @@ Legacy installs that used `FACTORY_DATA_DIR` still work — compose falls back t
 ```env
 FACTORY_DATA=./data     # host path for all persistent data (default)
 HTTP_PORT=8044          # default; change if 8044 is taken
-IMAGE_TAG=latest        # pin GHCR release
+IMAGE_TAG=latest        # pin GHCR release (use `dev` on the dev branch)
 PUBLIC_HOST=factory.example.com
 ```
 
