@@ -232,6 +232,7 @@ export default function DashboardPage() {
   const discoveryKickoff = useRef<string | null>(null);
   const pipelineKickoff = useRef<string | null>(null);
   const intakeInitializedFor = useRef<string | null>(null);
+  const settingsFormSyncedProjectIdRef = useRef<string | null>(null);
 
   function selectProject(id: string) {
     setSelectedId(id);
@@ -367,67 +368,62 @@ export default function DashboardPage() {
   }, [loadGithubRepos]);
 
   useEffect(() => {
-    if (detail) {
-      setEditRepoUrl(detail.repo_url ?? "");
-      setEditBranch(detail.base_branch ?? detail.branch ?? "main");
-      setEditIsolateBranch(detail.isolate_branch ?? true);
-      setEditEnrichmentPasses(
-        detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""
-      );
-      setEditChangeBudgetFiles(
-        detail.change_budget_files != null ? String(detail.change_budget_files) : ""
-      );
-      setEditChangeBudgetLines(
-        detail.change_budget_lines != null ? String(detail.change_budget_lines) : ""
-      );
-      setEditMaxFixAttempts(
-        detail.max_fix_attempts != null ? String(detail.max_fix_attempts) : ""
-      );
-      setEditAdversaryMode(
-        detail.adversary_enabled === true
-          ? "on"
-          : detail.adversary_enabled === false
-            ? "off"
-            : "factory"
-      );
-      setEditChangeBudgetMode(
-        detail.enforce_change_budget === true
-          ? "always"
-          : detail.enforce_change_budget === false
-            ? "never"
-            : "auto"
-      );
-      setPipelineConfigError(null);
-      setEditProjectName(detail.name);
-      setEditProjectDesc(detail.description);
-      setEditProjectRules(detail.agent_rules ?? "");
-      setProjectDetailsError(null);
-      const sp = detail.self_propelling;
-      setSelfPropellingEnabled(Boolean(sp?.enabled));
-      setEditPostProdPasses(
-        sp?.post_production_passes != null ? String(sp.post_production_passes) : ""
-      );
-      setEditCycleInterval(sp?.interval_hours != null ? String(sp.interval_hours) : "");
-      setEditTokenBudget(
-        sp?.token_budget_per_cycle != null ? String(sp.token_budget_per_cycle) : ""
-      );
-      setSelfPropellingError(null);
+    if (!detail) {
+      settingsFormSyncedProjectIdRef.current = null;
+      return;
     }
-  }, [
-    detail?.id,
-    detail?.repo_url,
-    detail?.branch,
-    detail?.base_branch,
-    detail?.isolate_branch,
-    detail?.max_enrichment_passes,
-    detail?.change_budget_files,
-    detail?.change_budget_lines,
-    detail?.max_fix_attempts,
-    detail?.adversary_enabled,
-    detail?.enforce_change_budget,
-    detail?.self_propelling,
-    detail?.agent_rules,
-  ]);
+    // Poll refreshes replace `detail` every few seconds — only hydrate the form when
+    // the selected project changes, not on every fetch (otherwise inputs clear while typing).
+    if (settingsFormSyncedProjectIdRef.current === detail.id) {
+      return;
+    }
+    settingsFormSyncedProjectIdRef.current = detail.id;
+
+    setEditRepoUrl(detail.repo_url ?? "");
+    setEditBranch(detail.base_branch ?? detail.branch ?? "main");
+    setEditIsolateBranch(detail.isolate_branch ?? true);
+    setEditEnrichmentPasses(
+      detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""
+    );
+    setEditChangeBudgetFiles(
+      detail.change_budget_files != null ? String(detail.change_budget_files) : ""
+    );
+    setEditChangeBudgetLines(
+      detail.change_budget_lines != null ? String(detail.change_budget_lines) : ""
+    );
+    setEditMaxFixAttempts(
+      detail.max_fix_attempts != null ? String(detail.max_fix_attempts) : ""
+    );
+    setEditAdversaryMode(
+      detail.adversary_enabled === true
+        ? "on"
+        : detail.adversary_enabled === false
+          ? "off"
+          : "factory"
+    );
+    setEditChangeBudgetMode(
+      detail.enforce_change_budget === true
+        ? "always"
+        : detail.enforce_change_budget === false
+          ? "never"
+          : "auto"
+    );
+    setPipelineConfigError(null);
+    setEditProjectName(detail.name);
+    setEditProjectDesc(detail.description);
+    setEditProjectRules(detail.agent_rules ?? "");
+    setProjectDetailsError(null);
+    const sp = detail.self_propelling;
+    setSelfPropellingEnabled(Boolean(sp?.enabled));
+    setEditPostProdPasses(
+      sp?.post_production_passes != null ? String(sp.post_production_passes) : ""
+    );
+    setEditCycleInterval(sp?.interval_hours != null ? String(sp.interval_hours) : "");
+    setEditTokenBudget(
+      sp?.token_budget_per_cycle != null ? String(sp.token_budget_per_cycle) : ""
+    );
+    setSelfPropellingError(null);
+  }, [detail]);
 
   const loadGlobalRules = useCallback(async () => {
     try {
