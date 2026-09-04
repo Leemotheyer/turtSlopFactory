@@ -38,6 +38,7 @@ from app.services.repo_exploration import (
     explore_repo_with_agent,
     needs_agent_repo_exploration,
 )
+from app.services.git_branching import setup_project_branches
 from app.services.secrets import get_github_token
 from app.workspace.manager import WorkspaceManager
 from app.workspace.provisioner import repo_display_name

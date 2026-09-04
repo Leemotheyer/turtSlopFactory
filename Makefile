@@ -1,3 +1,7 @@
+.PHONY: benchmarks
+benchmarks: ## Run factory benchmarks (deterministic local backend, no docker needed)
+	python3 scripts/run_benchmarks.py
+
 .PHONY: up down dev deps logs test build install
 
 # Production deploy (pull GHCR image, single container on :8044)
