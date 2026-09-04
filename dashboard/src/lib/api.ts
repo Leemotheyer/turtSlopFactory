@@ -76,16 +76,19 @@ export interface ProjectDetail extends Project {
   repo_analysis?: RepoAnalysisSummary | null;
   factory_default_enrichment_passes?: number;
   effective_enrichment_passes?: number;
-  effective_change_budget_files?: number;
-  effective_change_budget_lines?: number;
+  effective_change_budget_files?: number | null;
+  effective_change_budget_lines?: number | null;
   effective_max_fix_attempts?: number;
   effective_adversary_enabled?: boolean;
   change_budget_enforced?: boolean;
+  change_budget_unlimited?: boolean;
   factory_defaults?: {
+    change_budget_unlimited?: boolean;
     change_budget_files?: number;
     change_budget_lines?: number;
     max_fix_attempts?: number;
     adversary_enabled?: boolean;
+    enforce_change_budget?: boolean;
   };
   pipeline_substage?: {
     gate?: string;

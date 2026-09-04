@@ -125,6 +125,31 @@ const GLOBAL_RULES_PLACEHOLDER = `- Do not add rate limiting unless explicitly r
 - Production deployments must use real data sources; dummy/sample data is fine for dev and tests only
 - If the app needs external data to function, wiring up that data is part of the project scope`;
 
+function changeBudgetLimitsApply(
+  mode: "auto" | "always" | "never",
+  detail: ProjectDetail | null | undefined,
+): boolean {
+  if (mode === "always") return true;
+  if (mode === "never") return false;
+  return Boolean(detail?.factory_defaults?.enforce_change_budget);
+}
+
+function changeBudgetFilesPlaceholder(
+  limitsActive: boolean,
+  detail: ProjectDetail | null | undefined,
+): string {
+  if (!limitsActive) return "Unlimited";
+  return `When enforced (${detail?.factory_defaults?.change_budget_files ?? 8})`;
+}
+
+function changeBudgetLinesPlaceholder(
+  limitsActive: boolean,
+  detail: ProjectDetail | null | undefined,
+): string {
+  if (!limitsActive) return "Unlimited";
+  return `When enforced (${detail?.factory_defaults?.change_budget_lines ?? 500})`;
+}
+
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -895,6 +920,8 @@ export default function DashboardPage() {
         (detail.self_propelling?.token_budget_per_cycle != null
           ? String(detail.self_propelling.token_budget_per_cycle)
           : ""));
+
+  const changeBudgetLimitsActive = changeBudgetLimitsApply(editChangeBudgetMode, detail);
 
   const effectiveEnrichmentPasses =
     detail?.effective_enrichment_passes ??
@@ -2747,12 +2774,13 @@ export default function DashboardPage() {
                           type="number"
                           min={1}
                           max={500}
-                          placeholder={`Default (${detail.factory_defaults?.change_budget_files ?? detail.effective_change_budget_files ?? 8})`}
+                          placeholder={changeBudgetFilesPlaceholder(changeBudgetLimitsActive, detail)}
                           value={editChangeBudgetFiles}
                           onChange={(e) => {
                             setEditChangeBudgetFiles(e.target.value);
                             setPipelineConfigError(null);
                           }}
+                          disabled={!changeBudgetLimitsActive}
                           aria-invalid={!!pipelineConfigError}
                           className={inputInvalidClass(!!pipelineConfigError)}
                         />
@@ -2763,12 +2791,13 @@ export default function DashboardPage() {
                           type="number"
                           min={1}
                           max={100000}
-                          placeholder={`Default (${detail.factory_defaults?.change_budget_lines ?? detail.effective_change_budget_lines ?? 500})`}
+                          placeholder={changeBudgetLinesPlaceholder(changeBudgetLimitsActive, detail)}
                           value={editChangeBudgetLines}
                           onChange={(e) => {
                             setEditChangeBudgetLines(e.target.value);
                             setPipelineConfigError(null);
                           }}
+                          disabled={!changeBudgetLimitsActive}
                           aria-invalid={!!pipelineConfigError}
                           className={inputInvalidClass(!!pipelineConfigError)}
                         />
@@ -2778,7 +2807,12 @@ export default function DashboardPage() {
                         <select
                           value={editChangeBudgetMode}
                           onChange={(e) => {
-                            setEditChangeBudgetMode(e.target.value as "auto" | "always" | "never");
+                            const mode = e.target.value as "auto" | "always" | "never";
+                            setEditChangeBudgetMode(mode);
+                            if (!changeBudgetLimitsApply(mode, detail)) {
+                              setEditChangeBudgetFiles("");
+                              setEditChangeBudgetLines("");
+                            }
                             setPipelineConfigError(null);
                           }}
                         >
@@ -2825,9 +2859,18 @@ export default function DashboardPage() {
                       </label>
                       <FieldError message={pipelineConfigError ?? undefined} />
                       <p className={styles.repoHint}>
-                        Oversized changes need a developer <code>JUSTIFICATION:</code> in their output
-                        only when enforcement is turned on. By default the change budget is unlimited
-                        and review is not blocked on diff size.
+                        {changeBudgetLimitsActive ? (
+                          <>
+                            Oversized changes need a developer <code>JUSTIFICATION:</code> in their
+                            output when over the soft file/line limits. Leave limits blank to use
+                            factory defaults (8 files / 500 lines).
+                          </>
+                        ) : (
+                          <>
+                            Change budget is <strong>unlimited</strong> — diff size is recorded but
+                            does not block review. Turn enforcement on above to apply soft limits.
+                          </>
+                        )}
                         {detail.change_budget_enforced === true && (
                           <> Currently: enforcement active for this project.</>
                         )}

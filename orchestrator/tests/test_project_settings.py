@@ -51,13 +51,23 @@ def test_apply_project_settings_to_context_first_build():
     context: dict = {}
     apply_project_settings_to_context(project, context)
     assert context["change_budget_enforced"] is False
-    assert context["effective_change_budget_files"] >= 1
+    assert context["change_budget_unlimited"] is True
+    assert context["effective_change_budget_files"] is None
+    assert context["effective_change_budget_lines"] is None
+
+
+def test_project_settings_payload_limits_when_enforcement_on():
+    payload = project_settings_payload(_project(enforce_change_budget=True))
+    assert payload["change_budget_unlimited"] is False
+    assert payload["effective_change_budget_files"] >= 1
+    assert payload["effective_change_budget_lines"] >= 1
 
 
 def test_project_settings_payload_includes_factory_defaults():
     payload = project_settings_payload(_project(), review_ever_approved=False)
     assert "factory_defaults" in payload
     assert payload["change_budget_enforced"] is False
+    assert payload["factory_defaults"]["change_budget_unlimited"] is True
 
 
 @pytest.mark.asyncio

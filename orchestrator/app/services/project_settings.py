@@ -51,20 +51,25 @@ def should_enforce_change_budget(project: "ProjectRow", *, review_ever_approved:
 
 def project_settings_payload(project: "ProjectRow", *, review_ever_approved: bool = False) -> dict:
     """Serializable effective settings for API responses and agent context."""
+    enforced = should_enforce_change_budget(project, review_ever_approved=review_ever_approved)
     return {
         "change_budget_files": project.change_budget_files,
         "change_budget_lines": project.change_budget_lines,
         "max_fix_attempts": project.max_fix_attempts,
         "adversary_enabled": project.adversary_enabled,
         "enforce_change_budget": project.enforce_change_budget,
-        "effective_change_budget_files": resolve_change_budget_files(project),
-        "effective_change_budget_lines": resolve_change_budget_lines(project),
+        "change_budget_unlimited": not enforced,
+        "effective_change_budget_files": (
+            resolve_change_budget_files(project) if enforced else None
+        ),
+        "effective_change_budget_lines": (
+            resolve_change_budget_lines(project) if enforced else None
+        ),
         "effective_max_fix_attempts": resolve_max_fix_attempts(project),
         "effective_adversary_enabled": resolve_adversary_enabled(project),
-        "change_budget_enforced": should_enforce_change_budget(
-            project, review_ever_approved=review_ever_approved
-        ),
+        "change_budget_enforced": enforced,
         "factory_defaults": {
+            "change_budget_unlimited": not settings.enforce_change_budget,
             "change_budget_files": settings.change_budget_files,
             "change_budget_lines": settings.change_budget_lines,
             "max_fix_attempts": settings.max_fix_attempts,
