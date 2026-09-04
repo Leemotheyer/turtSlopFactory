@@ -64,6 +64,20 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
 
     report = await evaluate_acceptance(session, project.id, contract)
 
+    from app.services.feature_completeness import evaluate_feature_completeness
+
+    feature_report = evaluate_feature_completeness(
+        contract,
+        context,
+        report,
+        workspace=ex.workspace,
+        project_id=project.id,
+    )
+    ex.workspace.write_artifact(
+        project.id, "feature-completeness.json", json.dumps(feature_report, indent=2)
+    )
+    context["feature_completeness"] = feature_report
+
     # Regression-test policy: resolved app-level failures must reference a
     # passing regression test (tests/regression/test_<failure>.py).
     regression_gaps = await unresolved_regression_gaps(
@@ -79,11 +93,13 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
 
     verified = report.get("verified", 0)
     total = report.get("total", 0)
-    passed = bool(report.get("all_verified")) and not regression_gaps
+    passed = bool(report.get("all_verified")) and not regression_gaps and feature_report.get("passed")
 
     summary = f"{verified}/{total} requirement(s) verified"
     if regression_gaps:
         summary += f"; {len(regression_gaps)} fixed failure(s) missing regression tests"
+    if not feature_report.get("passed"):
+        summary += f"; feature completeness blocked ({len(feature_report.get('issues') or [])} issue(s))"
 
     await ex.complete_task(session, task, passed, summary)
     await ex._log_progress(
@@ -113,6 +129,8 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
             f"- Missing regression test for fixed failure `{gap['failure_id']}`: "
             f"add tests/regression/{gap['expected_test']} covering: {gap['summary'][:200]}"
         )
+    for issue in feature_report.get("issues") or []:
+        problems.append(f"- Feature completeness: {issue}")
 
     context["last_failure"] = (
         "Acceptance evaluation failed. Every contract requirement needs verifiable "

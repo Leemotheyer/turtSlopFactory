@@ -476,6 +476,7 @@ class LocalAgentRunner(AgentRunner):
             return False, str(exc)
 
     async def _run_product_qa(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        from app.services.intake_contract import intake_capability_lines
         from app.services.product_enrichment import audit_live_preview
 
         audit = context.get("preview_audit") or await audit_live_preview(context)
@@ -489,18 +490,57 @@ class LocalAgentRunner(AgentRunner):
         if audit.get("has_html_ui") and not audit.get("mobile_friendly"):
             issues.append("UI lacks mobile-friendly signals (viewport meta / responsive CSS)")
 
+        intake_lines = intake_capability_lines(context.get("intake"))
+        if intake_lines:
+            # Intake-driven projects must show more than a placeholder — require
+            # multiple successful API routes when capabilities mention data flows.
+            ok_endpoints = [e for e in audit.get("endpoints") or [] if e.get("ok")]
+            api_hits = [e for e in ok_endpoints if str(e.get("path", "")).startswith("/api/")]
+            text_blob = " ".join(intake_lines).lower()
+            needs_rich_api = any(
+                kw in text_blob
+                for kw in (
+                    "search",
+                    "download",
+                    "catalog",
+                    "library",
+                    "track",
+                    "manage",
+                    "sync",
+                    "index",
+                    "fetch",
+                    "import",
+                )
+            )
+            if needs_rich_api and len(api_hits) < 2:
+                issues.append(
+                    "Intake requires data/search/download flows but the live preview "
+                    "only exposes a minimal API surface"
+                )
+            if not audit.get("has_html_ui"):
+                issues.append(
+                    "Intake requires a usable product UI but no HTML UI was detected"
+                )
+
         for endpoint in audit.get("endpoints") or []:
             if endpoint.get("path") == "/api/items" and endpoint.get("ok"):
                 suggested.append("Verify create/update/delete flows in the UI")
                 break
         else:
-            suggested.append("Implement working /api/items endpoints")
+            if not intake_lines:
+                suggested.append("Implement working /api/items endpoints")
 
-        passed = audit.get("health_ok") and (audit.get("has_html_ui") or context.get("repo_url"))
+        passed = audit.get("health_ok") and (
+            audit.get("has_html_ui") or context.get("repo_url")
+        )
+        if intake_lines:
+            passed = passed and not issues
+
         report = {
             "passed": passed,
             "issues": issues,
             "suggested_features": suggested,
+            "intake_capabilities": intake_lines[:12],
         }
         payload = json.dumps(report, indent=2)
         self.workspace.write_artifact(project_id, "product-qa.json", payload)
@@ -572,6 +612,18 @@ class LocalAgentRunner(AgentRunner):
             if oversized and not context.get("change_justification"):
                 change_size_justified = False
 
+        feature_complete = True
+        fc = context.get("feature_completeness")
+        if fc is None and "feature-completeness.json" in artifacts:
+            try:
+                fc = json.loads(
+                    self.workspace.read_artifact(project_id, "feature-completeness.json") or "{}"
+                )
+            except json.JSONDecodeError:
+                fc = None
+        if isinstance(fc, dict) and fc.get("intake_scope") and not fc.get("passed"):
+            feature_complete = False
+
         notes_applied = len([n for n in context.get("notes", []) if n.get("type") != "scope_out"])
         checklist = {
             "acceptance_verified": acceptance_verified,
@@ -579,6 +631,7 @@ class LocalAgentRunner(AgentRunner):
             "dockerfile_present": (self.workspace.repo_dir(project_id) / "Dockerfile").exists(),
             "supervisor_notes_applied": notes_applied == 0 or "requirements.md" in artifacts,
             "change_size_justified": change_size_justified,
+            "feature_complete": feature_complete,
         }
         approved = all(checklist.values())
         concerns = [k for k, v in checklist.items() if not v]
@@ -586,6 +639,9 @@ class LocalAgentRunner(AgentRunner):
             for req_id, entry in (acceptance_report.get("requirements") or {}).items():
                 if entry.get("status") in ("failed", "unverified"):
                     concerns.append(f"{req_id} is {entry.get('status')}")
+        if isinstance(fc, dict) and fc.get("intake_scope") and not fc.get("passed"):
+            for issue in fc.get("issues") or []:
+                concerns.append(f"feature_incomplete: {issue}")
 
         report = {
             "decision": "approve" if approved else "reject",

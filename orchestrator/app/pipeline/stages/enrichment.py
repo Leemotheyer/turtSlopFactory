@@ -325,6 +325,17 @@ async def run_enrichment_passes(
         )
         await ex.complete_task(session, qa_task, qa_ok, qa_output)
         context["product_qa"] = qa_output
+        context["product_qa_passed"] = qa_ok
+
+        from app.services.intake_contract import intake_has_product_scope
+
+        if not qa_ok and intake_has_product_scope(context.get("intake")):
+            context["last_failure"] = (
+                "Product QA failed — intake capabilities must work on the live preview "
+                "before the factory can continue.\n\n"
+                f"{qa_output[:3000]}"
+            )
+            return False
 
         passes_done += 1
         context[passes_completed_key] = passes_done

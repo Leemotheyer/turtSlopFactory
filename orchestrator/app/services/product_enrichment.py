@@ -321,6 +321,33 @@ def local_enrichment_plan(
             }
         )
 
+    for note in notes:
+        if note.get("type") not in ("feature", "instruction"):
+            continue
+        content = str(note.get("content") or "").strip()
+        if len(content) < 12:
+            continue
+        for line in content.splitlines():
+            line = line.strip(" •-\t")
+            if len(line) < 12:
+                continue
+            slug = _slugify(line[:48])
+            if slug in completed_slugs:
+                continue
+            features.append(
+                {
+                    "id": slug,
+                    "title": line[:72],
+                    "description": (
+                        f"Deliver intake capability end-to-end (API + UI + tests): {line}"
+                    ),
+                    "scope": "in_scope",
+                    "priority": "high",
+                }
+            )
+            if len(features) >= settings.max_features_per_enrichment_pass:
+                break
+
     filtered: list[dict] = []
     for feat in features[: settings.max_features_per_enrichment_pass]:
         scope = classify_scope(feat["title"], feat["description"], notes)

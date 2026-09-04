@@ -14,6 +14,7 @@ from app.artifacts.schemas import ArchitectureDecisionDraft, ContractDraft
 from app.contract import ContractRequirement, ProjectContract, RuntimeSpec
 from app.db_models import ProjectContractRow, ProjectRow
 from app.services.work_planner import WorkUnit
+from app.services.intake_contract import requirements_from_intake
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,9 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
         kw in desc_lower for kw in ("api only", "api-only", "no ui", "no frontend", "headless")
     )
 
+    intake = context.get("intake") or {}
+    intake_reqs = requirements_from_intake(intake)
+
     requirements = [
         ContractRequirement(
             id="R1",
@@ -129,9 +133,14 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
                 "GET /health returns HTTP 200",
                 "Response body reports an ok/healthy status",
             ],
+            priority="must",
         )
     ]
-    if not existing:
+
+    if intake_reqs:
+        requirements.extend(intake_reqs)
+        source = "intake"
+    elif not existing:
         requirements.append(
             ContractRequirement(
                 id="R2",
@@ -141,6 +150,7 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
                     "GET /api/items lists created items",
                     "GET /api/items/{id} returns 404 for unknown ids",
                 ],
+                priority="must",
             )
         )
         if not api_only:
@@ -152,8 +162,12 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
                         "GET / returns an HTML page",
                         "The page is wired to the API with relative URLs",
                     ],
+                    priority="must",
                 )
             )
+        source = "fallback"
+    else:
+        source = "fallback"
 
     non_goals = [
         note.get("content", "")
@@ -161,9 +175,8 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
         if note.get("type") == "scope_out" and note.get("content")
     ]
     quality_targets = ["All pytest suites pass", "App works through the factory live preview"]
-    intake = context.get("intake") or {}
     success = intake.get("success_criteria")
-    if success:
+    if success and not intake_reqs:
         quality_targets.append(str(success))
 
     return ProjectContract(
@@ -172,7 +185,7 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
         non_goals=[n for n in non_goals if n],
         quality_targets=quality_targets,
         runtime=RuntimeSpec(),
-        source="fallback",
+        source=source,
     )
 
 
@@ -252,9 +265,25 @@ def contract_from_planning(
         draft = parse_agent_json(ContractDraft, raw)
         if draft and draft.requirements:
             contract = _contract_from_draft(draft, base)
+            _merge_intake_requirements(contract, context)
             return contract, draft.decisions
 
-    return base, []
+    contract = base
+    _merge_intake_requirements(contract, context)
+    return contract, []
+
+
+def _merge_intake_requirements(contract: ProjectContract, context: dict) -> None:
+    """Ensure intake capabilities appear as must-requirements even when the architect draft is thin."""
+    intake_reqs = requirements_from_intake(context.get("intake"))
+    if not intake_reqs:
+        return
+    existing = {r.id for r in contract.requirements}
+    for req in intake_reqs:
+        if req.id not in existing:
+            contract.requirements.append(req)
+    if contract.source == "fallback":
+        contract.source = "intake"
 
 
 # ---------------------------------------------------------------------------

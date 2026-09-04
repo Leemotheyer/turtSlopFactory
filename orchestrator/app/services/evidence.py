@@ -249,6 +249,10 @@ async def evaluate_acceptance(
 
     report: dict = {"requirements": {}, "total": 0, "verified": 0, "all_verified": False}
     verified_count = 0
+    blocking_reqs = [r for r in contract.requirements if r.priority == "must"] or list(
+        contract.requirements
+    )
+    blocking_ids = {r.id for r in blocking_reqs}
 
     for req in contract.requirements:
         row = requirements.get(req.id)
@@ -262,14 +266,16 @@ async def evaluate_acceptance(
         }
         if row is None:
             report["requirements"][req.id] = entry
-            report["total"] += 1
+            if req.id in blocking_ids:
+                report["total"] += 1
             continue
 
         if row.status == "waived":
             entry["status"] = "waived"
-            verified_count += 1
+            if req.id in blocking_ids:
+                verified_count += 1
+                report["total"] += 1
             report["requirements"][req.id] = entry
-            report["total"] += 1
             continue
 
         rows = evidence_by_req.get(row.id, [])
@@ -307,12 +313,15 @@ async def evaluate_acceptance(
             row.updated_at = datetime.utcnow()
 
         if new_status in ("verified", "waived"):
-            verified_count += 1
+            if req.id in blocking_ids:
+                verified_count += 1
         report["requirements"][req.id] = entry
-        report["total"] += 1
+        if req.id in blocking_ids:
+            report["total"] += 1
 
     await session.commit()
     report["verified"] = verified_count
+    report["blocking_total"] = len(blocking_ids)
     report["all_verified"] = report["total"] > 0 and verified_count == report["total"]
     if report["total"] == 0:
         report["all_verified"] = True
