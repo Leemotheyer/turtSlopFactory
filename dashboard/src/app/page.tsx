@@ -211,6 +211,12 @@ export default function DashboardPage() {
   const [editBranch, setEditBranch] = useState("main");
   const [editIsolateBranch, setEditIsolateBranch] = useState(true);
   const [editEnrichmentPasses, setEditEnrichmentPasses] = useState("");
+  const [editChangeBudgetFiles, setEditChangeBudgetFiles] = useState("");
+  const [editChangeBudgetLines, setEditChangeBudgetLines] = useState("");
+  const [editMaxFixAttempts, setEditMaxFixAttempts] = useState("");
+  const [editAdversaryMode, setEditAdversaryMode] = useState<"factory" | "on" | "off">("factory");
+  const [editChangeBudgetMode, setEditChangeBudgetMode] = useState<"auto" | "always" | "never">("auto");
+  const [pipelineConfigError, setPipelineConfigError] = useState<string | null>(null);
   const [selfPropellingEnabled, setSelfPropellingEnabled] = useState(false);
   const [editPostProdPasses, setEditPostProdPasses] = useState("");
   const [editCycleInterval, setEditCycleInterval] = useState("");
@@ -368,6 +374,30 @@ export default function DashboardPage() {
       setEditEnrichmentPasses(
         detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : ""
       );
+      setEditChangeBudgetFiles(
+        detail.change_budget_files != null ? String(detail.change_budget_files) : ""
+      );
+      setEditChangeBudgetLines(
+        detail.change_budget_lines != null ? String(detail.change_budget_lines) : ""
+      );
+      setEditMaxFixAttempts(
+        detail.max_fix_attempts != null ? String(detail.max_fix_attempts) : ""
+      );
+      setEditAdversaryMode(
+        detail.adversary_enabled === true
+          ? "on"
+          : detail.adversary_enabled === false
+            ? "off"
+            : "factory"
+      );
+      setEditChangeBudgetMode(
+        detail.enforce_change_budget === true
+          ? "always"
+          : detail.enforce_change_budget === false
+            ? "never"
+            : "auto"
+      );
+      setPipelineConfigError(null);
       setEditProjectName(detail.name);
       setEditProjectDesc(detail.description);
       setEditProjectRules(detail.agent_rules ?? "");
@@ -390,6 +420,11 @@ export default function DashboardPage() {
     detail?.base_branch,
     detail?.isolate_branch,
     detail?.max_enrichment_passes,
+    detail?.change_budget_files,
+    detail?.change_budget_lines,
+    detail?.max_fix_attempts,
+    detail?.adversary_enabled,
+    detail?.enforce_change_budget,
     detail?.self_propelling,
     detail?.agent_rules,
   ]);
@@ -640,8 +675,30 @@ export default function DashboardPage() {
         return;
       }
     }
+    if (editChangeBudgetFiles.trim() !== "") {
+      const parsed = parseInt(editChangeBudgetFiles, 10);
+      if (Number.isNaN(parsed) || parsed < 1 || parsed > 500) {
+        setPipelineConfigError("Change budget (files) must be 1–500, or leave blank for the factory default.");
+        return;
+      }
+    }
+    if (editChangeBudgetLines.trim() !== "") {
+      const parsed = parseInt(editChangeBudgetLines, 10);
+      if (Number.isNaN(parsed) || parsed < 1 || parsed > 100000) {
+        setPipelineConfigError("Change budget (lines) must be 1–100000, or leave blank for the factory default.");
+        return;
+      }
+    }
+    if (editMaxFixAttempts.trim() !== "") {
+      const parsed = parseInt(editMaxFixAttempts, 10);
+      if (Number.isNaN(parsed) || parsed < 1 || parsed > 20) {
+        setPipelineConfigError("Max fix attempts must be 1–20, or leave blank for the factory default.");
+        return;
+      }
+    }
     setEnrichmentError(null);
     setSelfPropellingError(null);
+    setPipelineConfigError(null);
     setLoading(true);
     try {
       await updateProjectRepo(selectedId, {
@@ -653,6 +710,24 @@ export default function DashboardPage() {
           editEnrichmentPasses.trim() === ""
             ? null
             : Math.max(0, Math.min(20, parseInt(editEnrichmentPasses, 10) || 0)),
+        change_budget_files:
+          editChangeBudgetFiles.trim() === ""
+            ? null
+            : Math.max(1, Math.min(500, parseInt(editChangeBudgetFiles, 10) || 1)),
+        change_budget_lines:
+          editChangeBudgetLines.trim() === ""
+            ? null
+            : Math.max(1, Math.min(100000, parseInt(editChangeBudgetLines, 10) || 1)),
+        max_fix_attempts:
+          editMaxFixAttempts.trim() === ""
+            ? null
+            : Math.max(1, Math.min(20, parseInt(editMaxFixAttempts, 10) || 1)),
+        adversary_enabled:
+          editAdversaryMode === "factory" ? null : editAdversaryMode === "on",
+        enforce_change_budget:
+          editChangeBudgetMode === "auto"
+            ? null
+            : editChangeBudgetMode === "always",
       });
       await updateSelfPropelling(selectedId, {
         enabled: selfPropellingEnabled,
@@ -793,6 +868,24 @@ export default function DashboardPage() {
       editIsolateBranch !== (detail.isolate_branch ?? true) ||
       editEnrichmentPasses !==
         (detail.max_enrichment_passes != null ? String(detail.max_enrichment_passes) : "") ||
+      editChangeBudgetFiles !==
+        (detail.change_budget_files != null ? String(detail.change_budget_files) : "") ||
+      editChangeBudgetLines !==
+        (detail.change_budget_lines != null ? String(detail.change_budget_lines) : "") ||
+      editMaxFixAttempts !==
+        (detail.max_fix_attempts != null ? String(detail.max_fix_attempts) : "") ||
+      editAdversaryMode !==
+        (detail.adversary_enabled === true
+          ? "on"
+          : detail.adversary_enabled === false
+            ? "off"
+            : "factory") ||
+      editChangeBudgetMode !==
+        (detail.enforce_change_budget === true
+          ? "always"
+          : detail.enforce_change_budget === false
+            ? "never"
+            : "auto") ||
       selfPropellingEnabled !== Boolean(detail.self_propelling?.enabled) ||
       editPostProdPasses !==
         (detail.self_propelling?.post_production_passes != null
@@ -2649,6 +2742,99 @@ export default function DashboardPage() {
                       <FieldError message={enrichmentError ?? undefined} />
                       <p className={styles.repoHint}>
                         Autonomous product-improvement passes after the first working build. Leave blank for factory default.
+                      </p>
+
+                      <h4 className={styles.settingsSubheading}>Change budget &amp; recovery</h4>
+                      <label className={styles.repoField}>
+                        Soft change budget — files
+                        <input
+                          type="number"
+                          min={1}
+                          max={500}
+                          placeholder={`Default (${detail.factory_defaults?.change_budget_files ?? detail.effective_change_budget_files ?? 8})`}
+                          value={editChangeBudgetFiles}
+                          onChange={(e) => {
+                            setEditChangeBudgetFiles(e.target.value);
+                            setPipelineConfigError(null);
+                          }}
+                          aria-invalid={!!pipelineConfigError}
+                          className={inputInvalidClass(!!pipelineConfigError)}
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Soft change budget — lines
+                        <input
+                          type="number"
+                          min={1}
+                          max={100000}
+                          placeholder={`Default (${detail.factory_defaults?.change_budget_lines ?? detail.effective_change_budget_lines ?? 500})`}
+                          value={editChangeBudgetLines}
+                          onChange={(e) => {
+                            setEditChangeBudgetLines(e.target.value);
+                            setPipelineConfigError(null);
+                          }}
+                          aria-invalid={!!pipelineConfigError}
+                          className={inputInvalidClass(!!pipelineConfigError)}
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Enforce change budget
+                        <select
+                          value={editChangeBudgetMode}
+                          onChange={(e) => {
+                            setEditChangeBudgetMode(e.target.value as "auto" | "always" | "never");
+                            setPipelineConfigError(null);
+                          }}
+                        >
+                          <option value="auto">Auto — exempt first build until review passes</option>
+                          <option value="always">Always — require justification when over budget</option>
+                          <option value="never">Never — never block review on change size</option>
+                        </select>
+                      </label>
+                      <label className={styles.repoField}>
+                        Max fix attempts
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          placeholder={`Default (${detail.factory_defaults?.max_fix_attempts ?? detail.effective_max_fix_attempts ?? 5})`}
+                          value={editMaxFixAttempts}
+                          onChange={(e) => {
+                            setEditMaxFixAttempts(e.target.value);
+                            setPipelineConfigError(null);
+                          }}
+                          aria-invalid={!!pipelineConfigError}
+                          className={inputInvalidClass(!!pipelineConfigError)}
+                        />
+                      </label>
+                      <label className={styles.repoField}>
+                        Adversarial verification
+                        <select
+                          value={editAdversaryMode}
+                          onChange={(e) => {
+                            setEditAdversaryMode(e.target.value as "factory" | "on" | "off");
+                            setPipelineConfigError(null);
+                          }}
+                        >
+                          <option value="factory">
+                            Factory default (
+                            {detail.factory_defaults?.adversary_enabled ?? detail.effective_adversary_enabled
+                              ? "on"
+                              : "off"}
+                            )
+                          </option>
+                          <option value="on">Enabled</option>
+                          <option value="off">Disabled</option>
+                        </select>
+                      </label>
+                      <FieldError message={pipelineConfigError ?? undefined} />
+                      <p className={styles.repoHint}>
+                        Oversized changes need a developer <code>JUSTIFICATION:</code> in their output once the
+                        budget is enforced. The first build is exempt by default so greenfield apps are not blocked
+                        at review.
+                        {detail.change_budget_enforced === false && (
+                          <> Currently: first-build exemption active.</>
+                        )}
                       </p>
 
                       <h4 className={styles.settingsSubheading}>Self-propelling development</h4>

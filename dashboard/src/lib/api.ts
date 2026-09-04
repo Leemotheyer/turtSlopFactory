@@ -32,6 +32,11 @@ export interface Project {
   image_tag: string | null;
   max_enrichment_passes: number | null;
   agent_rules?: string | null;
+  change_budget_files?: number | null;
+  change_budget_lines?: number | null;
+  max_fix_attempts?: number | null;
+  adversary_enabled?: boolean | null;
+  enforce_change_budget?: boolean | null;
   preview_url: string | null;
   created_at: string;
   updated_at: string;
@@ -71,6 +76,17 @@ export interface ProjectDetail extends Project {
   repo_analysis?: RepoAnalysisSummary | null;
   factory_default_enrichment_passes?: number;
   effective_enrichment_passes?: number;
+  effective_change_budget_files?: number;
+  effective_change_budget_lines?: number;
+  effective_max_fix_attempts?: number;
+  effective_adversary_enabled?: boolean;
+  change_budget_enforced?: boolean;
+  factory_defaults?: {
+    change_budget_files?: number;
+    change_budget_lines?: number;
+    max_fix_attempts?: number;
+    adversary_enabled?: boolean;
+  };
   pipeline_substage?: {
     gate?: string;
     step?: string;
@@ -603,6 +619,11 @@ export async function updateProjectRepo(
     clear_repo?: boolean;
     max_enrichment_passes?: number | null;
     agent_rules?: string | null;
+    change_budget_files?: number | null;
+    change_budget_lines?: number | null;
+    max_fix_attempts?: number | null;
+    adversary_enabled?: boolean | null;
+    enforce_change_budget?: boolean | null;
   }
 ): Promise<Project> {
   const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}`, {

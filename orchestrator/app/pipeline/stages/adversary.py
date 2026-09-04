@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 async def stage_adversary(ex: "PipelineExecutor", session, project, context) -> bool:
-    if not settings.adversary_enabled:
+    if not context.get("effective_adversary_enabled", settings.adversary_enabled):
         context["adversary_complete"] = True
         return True
 

@@ -592,6 +592,7 @@ class PipelineExecutor:
 
         from app.services.contracts import get_latest_contract
         from app.services.memory import load_project_memory
+        from app.services.project_settings import apply_project_settings_to_context
         from app.services.system_map import load_git_history
 
         if context.get("contract") is None:
@@ -599,6 +600,8 @@ class PipelineExecutor:
         context["project_memory"] = await load_project_memory(
             session, project.id, gate=project.state
         )
+        context["review_ever_approved"] = bool(meta.get("review_ever_approved"))
+        apply_project_settings_to_context(project, context)
         if project.repo_url and (repo / ".git").exists():
             context["git_history"] = load_git_history(repo)
 
@@ -608,6 +611,11 @@ class PipelineExecutor:
         if project.max_enrichment_passes is not None:
             return max(0, project.max_enrichment_passes)
         return settings.max_enrichment_passes
+
+    def _resolve_max_fix_attempts(self, project: ProjectRow) -> int:
+        from app.services.project_settings import resolve_max_fix_attempts
+
+        return resolve_max_fix_attempts(project)
 
     async def _scan_env_placeholders(
         self, session: AsyncSession, project: ProjectRow, context: dict
@@ -1220,7 +1228,7 @@ class PipelineExecutor:
         attempt = context.get("fix_attempt", 0) + 1
         context["fix_attempt"] = attempt
 
-        if attempt >= settings.max_fix_attempts:
+        if attempt >= self._resolve_max_fix_attempts(project):
             await self.transition(session, project, block_autonomous())
             await create_notification(
                 session,

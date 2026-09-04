@@ -103,6 +103,11 @@ async def _ensure_factory_settings_columns() -> None:
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS merge_status VARCHAR(32)"),
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_enrichment_passes INTEGER"),
         ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS agent_rules TEXT"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS change_budget_files INTEGER"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS change_budget_lines INTEGER"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_fix_attempts INTEGER"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS adversary_enabled BOOLEAN"),
+        ("projects", "ALTER TABLE projects ADD COLUMN IF NOT EXISTS enforce_change_budget BOOLEAN"),
         ("factory_settings", "ALTER TABLE factory_settings ADD COLUMN IF NOT EXISTS global_agent_rules TEXT"),
     ]
     async with engine.begin() as conn:

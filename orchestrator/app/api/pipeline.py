@@ -23,6 +23,7 @@ from app.services.self_propelling import (
     maybe_schedule_post_production,
     save_self_propelling_settings,
 )
+from app.services.project_settings import project_settings_payload
 from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
@@ -106,6 +107,9 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "repo_analysis": _load_repo_analysis_summary(project_id),
         "agent_rules": row.agent_rules or "",
+        **project_settings_payload(
+            row, review_ever_approved=bool(meta.get("review_ever_approved"))
+        ),
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }

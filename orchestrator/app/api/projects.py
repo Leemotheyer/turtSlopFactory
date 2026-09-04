@@ -27,6 +27,7 @@ from app.services.project_lifecycle import delete_project as delete_project_reco
 from app.services.preview import preview_from_metadata
 from app.services.agent_rules import normalize_agent_rules
 from app.services.factory_settings import get_preview_origin
+from app.services.project_settings import project_settings_payload
 from app.services.secrets import get_github_token, maybe_request_github_token
 from app.workspace.provisioner import normalize_repo_url
 from app.pipeline.executor import pipeline_executor
@@ -52,6 +53,11 @@ def _project_from_row(row: ProjectRow, preview_url: str | None = None) -> Projec
         image_tag=row.image_tag,
         max_enrichment_passes=row.max_enrichment_passes,
         agent_rules=row.agent_rules,
+        change_budget_files=row.change_budget_files,
+        change_budget_lines=row.change_budget_lines,
+        max_fix_attempts=row.max_fix_attempts,
+        adversary_enabled=row.adversary_enabled,
+        enforce_change_budget=row.enforce_change_budget,
         preview_url=preview_url,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -104,6 +110,11 @@ async def create_project(body: ProjectCreate, db: AsyncSession = Depends(get_db)
         isolate_branch=body.isolate_branch if repo_url else False,
         merge_status="pending" if repo_url and body.isolate_branch else None,
         max_enrichment_passes=body.max_enrichment_passes,
+        change_budget_files=body.change_budget_files,
+        change_budget_lines=body.change_budget_lines,
+        max_fix_attempts=body.max_fix_attempts,
+        adversary_enabled=body.adversary_enabled,
+        enforce_change_budget=body.enforce_change_budget,
         state=ProjectState.REQUESTED.value,
     )
     db.add(row)
@@ -226,6 +237,33 @@ async def update_project(
         if passes < 0 or passes > 20:
             raise HTTPException(status_code=400, detail="max_enrichment_passes must be between 0 and 20")
         row.max_enrichment_passes = passes
+
+    if "change_budget_files" in body.model_fields_set:
+        if body.change_budget_files is not None and (
+            body.change_budget_files < 1 or body.change_budget_files > 500
+        ):
+            raise HTTPException(status_code=400, detail="change_budget_files must be between 1 and 500")
+        row.change_budget_files = body.change_budget_files
+
+    if "change_budget_lines" in body.model_fields_set:
+        if body.change_budget_lines is not None and (
+            body.change_budget_lines < 1 or body.change_budget_lines > 100_000
+        ):
+            raise HTTPException(status_code=400, detail="change_budget_lines must be between 1 and 100000")
+        row.change_budget_lines = body.change_budget_lines
+
+    if "max_fix_attempts" in body.model_fields_set:
+        if body.max_fix_attempts is not None and (
+            body.max_fix_attempts < 1 or body.max_fix_attempts > 20
+        ):
+            raise HTTPException(status_code=400, detail="max_fix_attempts must be between 1 and 20")
+        row.max_fix_attempts = body.max_fix_attempts
+
+    if "adversary_enabled" in body.model_fields_set:
+        row.adversary_enabled = body.adversary_enabled
+
+    if "enforce_change_budget" in body.model_fields_set:
+        row.enforce_change_budget = body.enforce_change_budget
 
     if body.agent_rules is not None:
         row.agent_rules = normalize_agent_rules(body.agent_rules) or None

@@ -38,6 +38,12 @@ async def stage_review(ex: "PipelineExecutor", session, project, context) -> boo
         context["last_failure"] = run.output
         return False
 
+    meta = ex.workspace.load_metadata(project.id)
+    meta["review_ever_approved"] = True
+    ex.workspace.save_metadata(project.id, meta)
+    context["review_ever_approved"] = True
+    context["change_budget_enforced"] = True
+
     from app.services.evidence import record_evidence
 
     await record_evidence(

@@ -564,10 +564,13 @@ class LocalAgentRunner(AgentRunner):
             acceptance_verified = tests_passed
 
         # Change-size: oversized deltas need a justification in the developer output.
+        # First builds are exempt until review has passed once (greenfield apps
+        # routinely exceed the soft budget on initial delivery).
         change_size_justified = True
-        oversized = context.get("change_stats_oversized")
-        if oversized and not context.get("change_justification"):
-            change_size_justified = False
+        if context.get("change_budget_enforced"):
+            oversized = context.get("change_stats_oversized")
+            if oversized and not context.get("change_justification"):
+                change_size_justified = False
 
         notes_applied = len([n for n in context.get("notes", []) if n.get("type") != "scope_out"])
         checklist = {

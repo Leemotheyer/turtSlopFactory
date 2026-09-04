@@ -24,6 +24,11 @@ class ProjectRow(Base):
     image_tag: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_enrichment_passes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     agent_rules: Mapped[str | None] = mapped_column(Text, nullable=True)
+    change_budget_files: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    change_budget_lines: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_fix_attempts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    adversary_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    enforce_change_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

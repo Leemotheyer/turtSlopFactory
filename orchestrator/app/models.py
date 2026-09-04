@@ -55,6 +55,11 @@ class ProjectCreate(BaseModel):
     base_branch: str | None = Field(default=None, max_length=255)
     isolate_branch: bool = True
     max_enrichment_passes: int | None = Field(default=None, ge=0, le=20)
+    change_budget_files: int | None = Field(default=None, ge=1, le=500)
+    change_budget_lines: int | None = Field(default=None, ge=1, le=100_000)
+    max_fix_attempts: int | None = Field(default=None, ge=1, le=20)
+    adversary_enabled: bool | None = None
+    enforce_change_budget: bool | None = None
 
     @field_validator("name", "description", mode="before")
     @classmethod
@@ -75,6 +80,11 @@ class ProjectUpdate(BaseModel):
     clear_repo: bool = False
     max_enrichment_passes: int | None = None
     agent_rules: str | None = Field(default=None, max_length=10000)
+    change_budget_files: int | None = Field(default=None, ge=1, le=500)
+    change_budget_lines: int | None = Field(default=None, ge=1, le=100_000)
+    max_fix_attempts: int | None = Field(default=None, ge=1, le=20)
+    adversary_enabled: bool | None = None
+    enforce_change_budget: bool | None = None
 
     @field_validator("name", "description", mode="before")
     @classmethod
@@ -99,6 +109,11 @@ class Project(BaseModel):
     image_tag: str | None = None
     max_enrichment_passes: int | None = None
     agent_rules: str | None = None
+    change_budget_files: int | None = None
+    change_budget_lines: int | None = None
+    max_fix_attempts: int | None = None
+    adversary_enabled: bool | None = None
+    enforce_change_budget: bool | None = None
     preview_url: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

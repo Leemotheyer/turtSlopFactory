@@ -109,11 +109,23 @@ async def _migrate_0004_input_request_risk(conn: AsyncConnection) -> None:
     await add_column_if_missing(conn, "input_requests", "risk", "VARCHAR(16) DEFAULT 'normal'")
 
 
+# --- migration 0005: per-project pipeline settings ---------------------------
+
+
+async def _migrate_0005_project_pipeline_settings(conn: AsyncConnection) -> None:
+    await add_column_if_missing(conn, "projects", "change_budget_files", "INTEGER")
+    await add_column_if_missing(conn, "projects", "change_budget_lines", "INTEGER")
+    await add_column_if_missing(conn, "projects", "max_fix_attempts", "INTEGER")
+    await add_column_if_missing(conn, "projects", "adversary_enabled", "BOOLEAN")
+    await add_column_if_missing(conn, "projects", "enforce_change_budget", "BOOLEAN")
+
+
 MIGRATIONS: list[tuple[str, Callable[[AsyncConnection], Awaitable[None]]]] = [
     ("0001_gate_realignment", _migrate_0001_gate_realignment),
     ("0002_task_prompt_version", _migrate_0002_task_prompt_version),
     ("0003_deployment_verification", _migrate_0003_deployment_verification),
     ("0004_input_request_risk", _migrate_0004_input_request_risk),
+    ("0005_project_pipeline_settings", _migrate_0005_project_pipeline_settings),
 ]
 
 

@@ -108,14 +108,21 @@ async def record_change_stats(
 
     repo = ex.workspace.repo_dir(project.id)
     stats = compute_change_stats(repo, baseline)
-    oversized = (
-        stats["files_changed"] > settings.change_budget_files
-        or stats["lines_changed"] > settings.change_budget_lines
+    budget_files = int(
+        (context or {}).get("effective_change_budget_files") or settings.change_budget_files
+    )
+    budget_lines = int(
+        (context or {}).get("effective_change_budget_lines") or settings.change_budget_lines
+    )
+    enforce_budget = bool((context or {}).get("change_budget_enforced"))
+    oversized = enforce_budget and (
+        stats["files_changed"] > budget_files or stats["lines_changed"] > budget_lines
     )
     stats["oversized"] = oversized
     stats["budget"] = {
-        "files": settings.change_budget_files,
-        "lines": settings.change_budget_lines,
+        "files": budget_files,
+        "lines": budget_lines,
+        "enforced": enforce_budget,
     }
     stats["label"] = label
     if units:
@@ -144,7 +151,7 @@ async def record_change_stats(
             "pipeline.log",
             f"[change-budget] {label}: {stats['files_changed']} files / "
             f"{stats['lines_changed']} lines exceeds soft budget "
-            f"({settings.change_budget_files} files / {settings.change_budget_lines} lines) "
+            f"({budget_files} files / {budget_lines} lines) "
             "— reviewer will see this",
         )
     return stats
