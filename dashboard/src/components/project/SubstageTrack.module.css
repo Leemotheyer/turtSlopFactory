@@ -1,0 +1,66 @@
+.track {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-elevated, rgba(255, 255, 255, 0.02));
+}
+
+.track h4 {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.label {
+  font-weight: 500;
+}
+
+.meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.stepUpcoming {
+  opacity: 0.55;
+}
+
+.stepActive {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.stepDone {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.stepFailed {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.stepSkipped {
+  opacity: 0.45;
+  border-style: dashed;
+}

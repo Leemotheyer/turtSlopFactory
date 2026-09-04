@@ -1,0 +1,35 @@
+# Postgres + Redis only — for host-based API/dashboard development.
+#   docker compose -f docker-compose.deps.yml up -d
+#   cd orchestrator && uvicorn app.main:app --reload --port 8000
+#   cd dashboard && npm run dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: factory
+      POSTGRES_DB: factory
+    ports:
+      - "5432:5432"
+    volumes:
+      - ${FACTORY_DATA:-${FACTORY_DATA_DIR:-./data}}/postgres-deps:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ${FACTORY_DATA:-${FACTORY_DATA_DIR:-./data}}/redis-deps:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 8

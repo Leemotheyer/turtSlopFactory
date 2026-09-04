@@ -257,6 +257,36 @@ async def run_enrichment_passes(
                 "pipeline.log",
                 f"[{log_prefix}] Enrichment complete: {reason}",
             )
+            # Count the pass and run product QA even when the architect finds no
+            # new work — otherwise feature-completeness blocks with 0 passes and
+            # no product-qa.json (common on rich intake specs that ship complete).
+            passes_done += 1
+            context[passes_completed_key] = passes_done
+            await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
+            audit = await audit_live_preview(context)
+            context["preview_audit"] = audit
+            qa_task = await ex.create_task(
+                session,
+                project.id,
+                f"Product QA (pass {pass_number})",
+                "Evaluate live preview quality",
+                AgentRole.TESTER,
+            )
+            qa_ok, qa_output = await ex.runner._tester(
+                project.id, {**context, "test_stage": "product_qa"}
+            )
+            await ex.complete_task(session, qa_task, qa_ok, qa_output)
+            context["product_qa"] = qa_output
+            context["product_qa_passed"] = qa_ok
+            from app.services.intake_contract import intake_has_product_scope
+
+            if not qa_ok and intake_has_product_scope(context.get("intake")):
+                context["last_failure"] = (
+                    "Product QA failed — intake capabilities must work on the live preview "
+                    "before the factory can continue.\n\n"
+                    f"{qa_output[:3000]}"
+                )
+                return False
             break
 
         change_summary = enrichment_change_summary(units)

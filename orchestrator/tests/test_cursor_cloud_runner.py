@@ -136,7 +136,7 @@ async def test_no_repo_architect_writes_docs_from_string_result(workspace):
     assert workspace.read_artifact(project_id, "requirements.md")
     assert workspace.read_artifact(project_id, "architecture.md")
     client.create_agent.assert_awaited()
-    assert client.create_agent.await_args.kwargs["mode"] == "plan"
+    assert client.create_agent.await_args.kwargs["mode"] == "agent"
     assert client.create_agent.await_args.kwargs["repos"] is None
 
 

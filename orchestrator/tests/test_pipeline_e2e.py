@@ -46,6 +46,10 @@ async def pipeline_env(tmp_path, monkeypatch):
         session.add(FactorySettingsRow(id=1, agent_backend="local", setup_complete=True))
         await session.commit()
 
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "auto_promote_to_production", False)
+
     yield session_factory
 
     await engine.dispose()

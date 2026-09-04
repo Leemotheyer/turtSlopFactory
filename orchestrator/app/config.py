@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     agent_tester_enabled: bool = True  # LLM tester writes tests/acceptance/ when a backend is available
     deploy_observation_seconds: int = 30  # Post-deploy health observation window
     deploy_observation_polls: int = 3  # Health checks spread across the window
+    auto_promote_to_production: bool = True  # Promote to production after review without manual click
     change_budget_files: int = 8  # Soft threshold when enforcement is enabled
     change_budget_lines: int = 500
     enforce_change_budget: bool = False  # Default: unlimited — no review blocks on change size

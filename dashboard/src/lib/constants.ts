@@ -29,7 +29,12 @@ export const PIPELINE_PHASES: {
   {
     id: "ship",
     label: "Ship",
-    states: ["DOCKER_BUILD", "STAGING_DEPLOY", "SMOKE_TESTING"],
+    states: ["DOCKER_BUILD", "STAGING_DEPLOY"],
+  },
+  {
+    id: "verify",
+    label: "Verify",
+    states: ["SMOKE_TESTING"],
   },
   { id: "review", label: "Review", states: ["REVIEW"] },
   { id: "live", label: "Live", states: ["PRODUCTION"] },

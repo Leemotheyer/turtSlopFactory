@@ -80,6 +80,7 @@ export interface ProjectDetail extends Project {
   effective_change_budget_lines?: number | null;
   effective_max_fix_attempts?: number;
   effective_adversary_enabled?: boolean;
+  effective_user_journey_enabled?: boolean;
   change_budget_enforced?: boolean;
   change_budget_unlimited?: boolean;
   factory_defaults?: {
@@ -88,6 +89,7 @@ export interface ProjectDetail extends Project {
     change_budget_lines?: number;
     max_fix_attempts?: number;
     adversary_enabled?: boolean;
+    user_journey_testing_enabled?: boolean;
     enforce_change_budget?: boolean;
   };
   pipeline_substage?: {

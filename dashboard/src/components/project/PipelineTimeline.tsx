@@ -1,9 +1,11 @@
 import { PIPELINE_PHASES, STATE_COLORS, type PipelineState } from "@/lib/constants";
+import { verificationSubstageLabel } from "@/lib/pipelineSubstages";
 import styles from "./PipelineTimeline.module.css";
 
 type Props = {
   currentState: string;
   failedGate?: string | null;
+  activeSubstage?: string | null;
 };
 
 function phaseStatus(
@@ -27,7 +29,7 @@ function phaseStatus(
   return "upcoming";
 }
 
-export function PipelineTimeline({ currentState, failedGate }: Props) {
+export function PipelineTimeline({ currentState, failedGate, activeSubstage }: Props) {
   return (
     <div className={styles.track} role="list" aria-label="Project journey">
       {PIPELINE_PHASES.map((phase, index) => {
@@ -57,7 +59,9 @@ export function PipelineTimeline({ currentState, failedGate }: Props) {
               <span className={styles.label}>{phase.label}</span>
               {status === "active" && (
                 <span className={styles.substate}>
-                  {currentState.replace(/_/g, " ")}
+                  {currentState === "SMOKE_TESTING" && activeSubstage
+                    ? verificationSubstageLabel(activeSubstage)
+                    : currentState.replace(/_/g, " ")}
                 </span>
               )}
             </div>

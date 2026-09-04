@@ -275,6 +275,8 @@ class PipelineExecutor:
             if current != spec.gate:
                 await self.transition(session, project, spec.gate)
 
+            self._notify_pipeline_substage(project.id, spec)
+
             stage_fn = getattr(self, spec.method)
             success = await stage_fn(session, project, context)
             await self._refresh_context(session, project, context)
@@ -660,6 +662,33 @@ class PipelineExecutor:
         else:
             meta["pipeline_substage"] = payload
         self.workspace.save_metadata(project_id, meta)
+
+    def _notify_pipeline_substage(self, project_id: UUID, spec: StageSpec) -> None:
+        """Persist the active substage so the dashboard journey can show progress."""
+        from app.models import ProjectState
+
+        step = spec.substage
+        if spec.gate == ProjectState.SMOKE_TESTING and step is None:
+            step = "smoke_testing"
+        if step is None:
+            return
+
+        meta = self.workspace.load_metadata(project_id)
+        existing = meta.get("pipeline_substage") or {}
+        if (
+            step == "enrichment"
+            and existing.get("step") == "enrichment"
+            and existing.get("current_pass") is not None
+        ):
+            return
+
+        self._save_pipeline_substage(
+            project_id,
+            {
+                "gate": spec.gate.value,
+                "step": step,
+            },
+        )
 
     def _save_enrichment_progress(self, project_id: UUID, payload: dict | None) -> None:
         meta = self.workspace.load_metadata(project_id)
@@ -1056,6 +1085,19 @@ class PipelineExecutor:
 
                 specs = POST_PRODUCTION_STAGES if context.get("post_production") else BUILD_STAGES
                 await self._run_stage_sequence(session, project, context, specs)
+
+                await session.refresh(project)
+                if (
+                    not context.get("post_production")
+                    and project.state == ProjectState.REVIEW.value
+                    and settings.auto_promote_to_production
+                ):
+                    self.workspace.append_log(
+                        project_id,
+                        "pipeline.log",
+                        "[promote] Auto-promoting to production after successful review",
+                    )
+                    await self.promote_to_production(project_id)
 
                 await self._finalize_run_metrics(session, project, context, run_row_id)
 

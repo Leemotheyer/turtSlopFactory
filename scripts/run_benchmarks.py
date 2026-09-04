@@ -37,6 +37,7 @@ os.environ["DISABLE_DOCKER"] = "1"
 os.environ["AGENT_BACKEND"] = "local"
 os.environ["WORKER_ENABLED"] = "false"
 os.environ["DEPLOY_OBSERVATION_SECONDS"] = "0"
+os.environ["AUTO_PROMOTE_TO_PRODUCTION"] = "false"
 
 sys.path.insert(0, str(REPO_ROOT / "orchestrator"))
 

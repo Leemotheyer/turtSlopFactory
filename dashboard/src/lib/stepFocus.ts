@@ -42,6 +42,19 @@ export function getStepFocus(
   }
 
   if (detail.pipeline_running || agentActivity?.stop_requested) {
+    if (state === "SMOKE_TESTING" && detail.pipeline_substage?.step) {
+      const step = detail.pipeline_substage.step;
+      const stepLabel = step.replace(/_/g, " ");
+      return {
+        title: step === "user_journey" ? "User journey testing" : `Verification: ${stepLabel}`,
+        body:
+          latest ??
+          (step === "user_journey"
+            ? "Simulating a real user session against the live preview — navigation, CRUD, search, and health checks."
+            : `Running ${stepLabel} before production review.`),
+        tone: "neutral",
+      };
+    }
     return {
       title: agentActivity?.stop_requested ? "Stopping pipeline" : "Pipeline running",
       body: latest ?? "Agents are working through the current stage. Watch live activity below or open Deep dive for tasks and logs.",
@@ -78,6 +91,19 @@ export function getStepFocus(
       tone: "action",
       action: "run",
       actionLabel: "Start planning",
+    };
+  }
+
+  if (state === "SMOKE_TESTING") {
+    const substage = detail.pipeline_substage?.step;
+    const substageLabel = substage ? substage.replace(/_/g, " ") : "verification";
+    return {
+      title: "Verifying staging deploy",
+      body: latest
+        ?? (substage === "user_journey"
+          ? "Simulating a real user session against the live preview — navigation, CRUD, search, and health checks."
+          : `Running ${substageLabel} before production review.`),
+      tone: "neutral",
     };
   }
 

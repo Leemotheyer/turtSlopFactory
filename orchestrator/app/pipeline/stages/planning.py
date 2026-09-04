@@ -138,9 +138,22 @@ async def stage_planning(ex: "PipelineExecutor", session, project, context) -> b
         session, task, run.success, run.output, agent_id=run.agent_id or None, cursor_url=run.cursor_url
     )
     if not run.success:
-        context["last_failure"] = run.output
-        ex._persist_last_failure(project.id, context)
-        return False
+        draft = context.get("requirements_draft")
+        artifacts = ex.workspace.list_artifacts(project.id)
+        if draft and "requirements.md" not in artifacts:
+            ex.workspace.write_artifact(project.id, "requirements.md", draft)
+            ensure_planning_artifacts(ex, project.id)
+            ex.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[planning] Cloud architect unavailable — using deterministic requirements draft",
+            )
+            run.success = True
+            run.output = draft
+        else:
+            context["last_failure"] = run.output
+            ex._persist_last_failure(project.id, context)
+            return False
     ensure_planning_artifacts(ex, project.id)
 
     # Project contract: architect output when parseable, deterministic fallback otherwise.

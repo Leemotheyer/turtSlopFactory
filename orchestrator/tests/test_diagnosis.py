@@ -35,3 +35,12 @@ def test_unknown_defaults_to_app():
 def test_logs_tail_contributes_to_classification():
     result = diagnose_failure("stage failed", logs_tail="... port is already allocated ...")
     assert result["error_class"] == "infra"
+
+
+def test_logs_tail_ignored_for_unit_testing_substage():
+    result = diagnose_failure(
+        "[tester] pytest FAILED (exit 1)",
+        logs_tail="[preview] failed (infra): Docker is required for live preview",
+        substage="unit_testing",
+    )
+    assert result["error_class"] == "app"

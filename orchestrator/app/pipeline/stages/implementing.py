@@ -336,4 +336,18 @@ async def stage_implementing(ex: "PipelineExecutor", session, project, context) 
         preview_type="dev",
         notify=first_preview,
     )
+    if not preview_ok and context.get("last_failure"):
+        from app.services.diagnosis import diagnose_failure
+
+        preview_diag = diagnose_failure(str(context.get("last_failure")), gate="IMPLEMENTING")
+        if preview_diag["error_class"] == "infra":
+            ex.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                "[preview] Infra-only preview failure during implementation — continuing to unit tests",
+            )
+            context.pop("last_failure", None)
+            context["implementation_complete"] = True
+            return True
+    context["implementation_complete"] = True
     return preview_ok or not context.get("last_failure")

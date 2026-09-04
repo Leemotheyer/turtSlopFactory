@@ -1,0 +1,10 @@
+# Build from source instead of pulling the GHCR image.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#   make dev
+
+services:
+  factory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: turtslopfactory:dev

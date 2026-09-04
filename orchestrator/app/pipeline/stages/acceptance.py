@@ -13,6 +13,7 @@ import json
 from typing import TYPE_CHECKING
 
 from app.models import AgentRole
+from app.pipeline.resume import preview_type_for_context
 
 if TYPE_CHECKING:
     from app.pipeline.executor import PipelineExecutor
@@ -65,6 +66,24 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
     report = await evaluate_acceptance(session, project.id, contract)
 
     from app.services.feature_completeness import evaluate_feature_completeness
+    from app.services.intake_contract import intake_has_product_scope
+    from app.services.product_enrichment import audit_live_preview
+
+    if intake_has_product_scope(context.get("intake")) and not context.get("product_qa_passed"):
+        await ex._deploy_live_preview(
+            session, project, context, preview_type=preview_type_for_context(context), notify=False
+        )
+        context["preview_audit"] = await audit_live_preview(context)
+        qa_ok, qa_output = await ex.runner._tester(
+            project.id, {**context, "test_stage": "product_qa"}
+        )
+        context["product_qa_passed"] = qa_ok
+        if not qa_ok:
+            context["last_failure"] = (
+                "Product QA failed before acceptance sign-off.\n\n" f"{qa_output[:3000]}"
+            )
+            await ex.complete_task(session, task, False, qa_output[:1000])
+            return False
 
     feature_report = evaluate_feature_completeness(
         contract,

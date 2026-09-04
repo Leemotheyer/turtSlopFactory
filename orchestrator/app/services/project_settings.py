@@ -67,6 +67,7 @@ def project_settings_payload(project: "ProjectRow", *, review_ever_approved: boo
         ),
         "effective_max_fix_attempts": resolve_max_fix_attempts(project),
         "effective_adversary_enabled": resolve_adversary_enabled(project),
+        "effective_user_journey_enabled": settings.user_journey_testing_enabled,
         "change_budget_enforced": enforced,
         "factory_defaults": {
             "change_budget_unlimited": not settings.enforce_change_budget,
@@ -74,6 +75,7 @@ def project_settings_payload(project: "ProjectRow", *, review_ever_approved: boo
             "change_budget_lines": settings.change_budget_lines,
             "max_fix_attempts": settings.max_fix_attempts,
             "adversary_enabled": settings.adversary_enabled,
+            "user_journey_testing_enabled": settings.user_journey_testing_enabled,
             "enforce_change_budget": settings.enforce_change_budget,
         },
     }

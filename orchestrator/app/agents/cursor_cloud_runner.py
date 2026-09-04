@@ -54,9 +54,11 @@ class CursorCloudRunner:
         branch = context.get("branch", "main")
         agent_name = f"factory-{role.value}-{str(task_id)[:8]}"
         selected_model = model_id or settings.cursor_agent_model
+        # No-repo greenfield planning must use agent mode — plan mode often returns
+        # empty result text, leaving requirements.md / architecture.md missing.
         mode = (
             "agent"
-            if context.get("enrichment_pass")
+            if context.get("enrichment_pass") or (role == AgentRole.ARCHITECT and not repo_url)
             else ("plan" if role == AgentRole.ARCHITECT else "agent")
         )
 

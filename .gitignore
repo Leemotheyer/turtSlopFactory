@@ -12,3 +12,6 @@ node_modules/
 out/
 
 .DS_Store
+
+# Local factory runtime data (postgres, redis, workspaces, logs)
+data/

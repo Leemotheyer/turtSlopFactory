@@ -79,6 +79,11 @@ def _classify(corpus: str) -> dict | None:
     return None
 
 
+_TEST_SUBSTAGES = frozenset(
+    {"unit_testing", "integration", "acceptance", "acceptance_full", "testing", "smoke_testing"}
+)
+
+
 def diagnose_failure(
     failure_text: str,
     *,
@@ -92,11 +97,14 @@ def diagnose_failure(
     failure itself is inconclusive (old log lines about unrelated infra
     hiccups must not reclassify an application defect).
     """
-    result = _classify(failure_text.lower())
+    failure_lower = failure_text.lower()
+    result = _classify(failure_lower)
     if result is not None:
         return result
 
-    if logs_tail:
+    # Test substages: stale preview/docker lines in the log tail must not
+    # masquerade as infra when pytest is the actual failure.
+    if logs_tail and substage not in _TEST_SUBSTAGES:
         result = _classify(logs_tail.lower())
         if result is not None:
             return result

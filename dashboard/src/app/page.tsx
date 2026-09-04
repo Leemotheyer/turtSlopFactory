@@ -92,6 +92,7 @@ import { ContractPanel } from "@/components/project/ContractPanel";
 import { RequirementsPanel } from "@/components/project/RequirementsPanel";
 import { FactoryMetricsPanel } from "@/components/ui/FactoryMetricsPanel";
 import { PipelineTimeline } from "@/components/project/PipelineTimeline";
+import { SubstageTrack } from "@/components/project/SubstageTrack";
 import { ProjectNav } from "@/components/project/ProjectNav";
 import { StepFocusCard } from "@/components/project/StepFocusCard";
 import {
@@ -103,6 +104,7 @@ import {
   type DeepTab,
   type ProjectTab,
 } from "@/lib/constants";
+import { BUILD_SUBSTAGES, VERIFICATION_SUBSTAGES } from "@/lib/pipelineSubstages";
 import { formatEvent } from "@/lib/formatEvent";
 import { getStepFocus } from "@/lib/stepFocus";
 
@@ -932,6 +934,35 @@ export default function DashboardPage() {
   const pipelineSubstage = detail?.pipeline_substage;
   const enrichmentProgressLines =
     progress?.summary_lines.filter((line) => /enrichment pass/i.test(line)) ?? [];
+
+  const showBuildSubstages =
+    detail?.state === "IMPLEMENTING" ||
+    (pipelineSubstage?.gate === "IMPLEMENTING" && pipelineSubstage?.step === "enrichment");
+  const buildActiveStep =
+    pipelineSubstage?.gate === "IMPLEMENTING"
+      ? pipelineSubstage.step
+      : detail?.state === "IMPLEMENTING"
+        ? "implementing"
+        : null;
+
+  const showVerificationSubstages =
+    detail?.state === "SMOKE_TESTING" ||
+    detail?.state === "REVIEW" ||
+    detail?.failed_gate === "SMOKE_TESTING";
+  const verificationActiveStep =
+    pipelineSubstage?.gate === "SMOKE_TESTING"
+      ? pipelineSubstage.step
+      : detail?.state === "SMOKE_TESTING"
+        ? "smoke_testing"
+        : null;
+  const verificationComplete = detail?.state === "REVIEW" || detail?.state === "PRODUCTION";
+  const adversaryEnabled =
+    detail?.effective_adversary_enabled ?? detail?.factory_defaults?.adversary_enabled ?? true;
+  const userJourneyEnabled =
+    detail?.effective_user_journey_enabled ??
+    detail?.factory_defaults?.user_journey_testing_enabled ??
+    true;
+  const hasUserJourneyReport = detail?.artifacts.includes("user-journey-report.json") ?? false;
 
   async function viewArtifact(name: string) {
     if (!selectedId) return;
@@ -2359,7 +2390,61 @@ export default function DashboardPage() {
                     />
                   )}
 
-                  <PipelineTimeline currentState={detail.state} failedGate={detail.failed_gate} />
+                  <PipelineTimeline
+                    currentState={detail.state}
+                    failedGate={detail.failed_gate}
+                    activeSubstage={
+                      pipelineSubstage?.gate === "SMOKE_TESTING" ? pipelineSubstage.step : null
+                    }
+                  />
+
+                  {showBuildSubstages && (
+                    <SubstageTrack
+                      title="Build substages"
+                      steps={BUILD_SUBSTAGES}
+                      activeStep={buildActiveStep}
+                      failedSubstage={
+                        detail.failed_gate === "IMPLEMENTING" ? detail.failed_substage : null
+                      }
+                      stepMeta={(step) =>
+                        step.id === "enrichment" && pipelineSubstage?.gate === "IMPLEMENTING"
+                          ? pipelineSubstage.max_passes != null
+                            ? `Pass ${pipelineSubstage.current_pass ?? 0}/${pipelineSubstage.max_passes}`
+                            : null
+                          : null
+                      }
+                    />
+                  )}
+
+                  {showVerificationSubstages && (
+                    <SubstageTrack
+                      title="Verification substages"
+                      steps={VERIFICATION_SUBSTAGES}
+                      activeStep={verificationActiveStep}
+                      failedSubstage={
+                        detail.failed_gate === "SMOKE_TESTING" ? detail.failed_substage : null
+                      }
+                      phaseComplete={verificationComplete}
+                      stepEnabled={(step) => {
+                        if (step.id === "adversary") return adversaryEnabled;
+                        if (step.id === "user_journey") return userJourneyEnabled;
+                        return true;
+                      }}
+                      stepMeta={(step) => {
+                        if (
+                          step.id === "enrichment" &&
+                          pipelineSubstage?.gate === "SMOKE_TESTING" &&
+                          pipelineSubstage.max_passes != null
+                        ) {
+                          return `Pass ${pipelineSubstage.current_pass ?? 0}/${pipelineSubstage.max_passes}`;
+                        }
+                        if (step.id === "user_journey" && hasUserJourneyReport) {
+                          return "Report ready";
+                        }
+                        return null;
+                      }}
+                    />
+                  )}
 
                   {livePreviewUrl && (
                     <div className={styles.livePreview}>
@@ -2637,42 +2722,6 @@ export default function DashboardPage() {
                 )}
                     </section>
                   </CollapsibleSection>
-
-                  {(detail.state === "IMPLEMENTING" || pipelineSubstage?.step === "enrichment") && (
-                    <div className={styles.substageTrack}>
-                      <h4>Build substages</h4>
-                      <div className={styles.substageSteps}>
-                        {[
-                          { id: "implement", label: "Build" },
-                          { id: "unit_test", label: "Unit tests" },
-                          { id: "enrichment", label: "Enrichment" },
-                        ].map((step) => {
-                          const isEnrichment = step.id === "enrichment";
-                          const active =
-                            pipelineSubstage?.step === "enrichment"
-                              ? isEnrichment
-                              : detail.state === "IMPLEMENTING" &&
-                                !pipelineSubstage?.step &&
-                                step.id === "implement";
-                          return (
-                            <div
-                              key={step.id}
-                              className={`${styles.substageStep} ${active ? styles.substageStepActive : ""}`}
-                            >
-                              {step.label}
-                              {isEnrichment && (
-                                <span className={styles.substageMeta}>
-                                  {detail.max_enrichment_passes != null
-                                    ? `${detail.max_enrichment_passes} max`
-                                    : `${effectiveEnrichmentPasses} max`}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
 
                   {(enrichmentProgress || enrichmentProgressLines.length > 0) && (
                     <div className={styles.enrichmentPanel}>
