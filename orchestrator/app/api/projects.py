@@ -30,7 +30,7 @@ from app.services.factory_settings import get_preview_origin
 from app.services.secrets import get_github_token, maybe_request_github_token
 from app.workspace.provisioner import normalize_repo_url
 from app.pipeline.executor import pipeline_executor
-from app.state_machine import StateMachineError, advance_project, fail_project
+from app.state_machine import StateMachineError, advance_project, fail_project, parse_project_state
 from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -43,7 +43,7 @@ def _project_from_row(row: ProjectRow, preview_url: str | None = None) -> Projec
         name=row.name,
         description=row.description,
         repo_url=row.repo_url,
-        state=ProjectState(row.state),
+        state=parse_project_state(row.state),
         branch=row.branch,
         base_branch=row.base_branch or "main",
         work_branch=row.work_branch,

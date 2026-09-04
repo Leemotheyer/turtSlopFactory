@@ -51,16 +51,7 @@ _APP_PATTERNS = (
 )
 
 
-def diagnose_failure(
-    failure_text: str,
-    *,
-    logs_tail: str = "",
-    gate: str | None = None,
-    substage: str | None = None,
-) -> dict:
-    """Classify a failure; returns {error_class, hint, matched}."""
-    corpus = f"{failure_text}\n{logs_tail}".lower()
-
+def _classify(corpus: str) -> dict | None:
     for pattern in _INFRA_PATTERNS:
         if re.search(pattern, corpus):
             return {
@@ -68,7 +59,6 @@ def diagnose_failure(
                 "hint": f"Environment/tooling failure (matched '{pattern}') — retry without code changes",
                 "matched": pattern,
             }
-
     for pattern in _TEST_PATTERNS:
         if re.search(pattern, corpus):
             return {
@@ -76,7 +66,6 @@ def diagnose_failure(
                 "hint": f"Test harness problem (matched '{pattern}') — fix test collection/imports",
                 "matched": pattern,
             }
-
     for pattern in _APP_PATTERNS:
         if re.search(pattern, corpus):
             return {
@@ -84,9 +73,32 @@ def diagnose_failure(
                 "hint": f"Application defect (matched '{pattern}') — developer fix needed",
                 "matched": pattern,
             }
+    return None
 
-    # Deploy-flavored gates default to infra-leaning only with clear signals;
-    # otherwise assume the app is at fault (safe default: run the fix loop).
+
+def diagnose_failure(
+    failure_text: str,
+    *,
+    logs_tail: str = "",
+    gate: str | None = None,
+    substage: str | None = None,
+) -> dict:
+    """Classify a failure; returns {error_class, hint, matched}.
+
+    The failure text is authoritative; the log tail is consulted only when the
+    failure itself is inconclusive (old log lines about unrelated infra
+    hiccups must not reclassify an application defect).
+    """
+    result = _classify(failure_text.lower())
+    if result is not None:
+        return result
+
+    if logs_tail:
+        result = _classify(logs_tail.lower())
+        if result is not None:
+            return result
+
+    # Default: assume the app is at fault (safe default: run the fix loop).
     return {
         "error_class": "app",
         "hint": "Unclassified failure — treating as application defect",

@@ -154,3 +154,155 @@ async def test_full_pipeline_reaches_review_with_verified_requirements(pipeline_
     repo = executor.workspace.repo_dir(project_id)
     assert (repo / "project.contract.yaml").is_file()
     assert (repo / "tests" / "acceptance").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_failure_ladder_diagnoses_fixes_and_pins_regression(pipeline_env, tmp_path):
+    """Plant one unit-test failure: diagnosis → fix → regression test → REVIEW."""
+    from app.db_models import FailureRecordRow
+    from app.pipeline.executor import PipelineExecutor
+    from app.workspace.manager import WorkspaceManager
+
+    session_factory = pipeline_env
+    project_id = uuid4()
+
+    async with session_factory() as session:
+        session.add(
+            ProjectRow(
+                id=project_id,
+                name="Flaky App",
+                description="An app whose first unit test run fails",
+                state=ProjectState.PLANNING.value,
+                max_enrichment_passes=0,
+            )
+        )
+        await session.commit()
+
+    executor = PipelineExecutor()
+    executor.workspace = WorkspaceManager(str(tmp_path))
+    executor.runner.workspace = executor.workspace
+    executor.runner._cloud.workspace = executor.workspace
+    executor.runner._cursor_local.workspace = executor.workspace
+    executor.test_runner.agent.workspace = executor.workspace
+
+    real_unit_testing = executor._stage_unit_testing
+    calls = {"n": 0}
+
+    async def flaky_unit_testing(session, project, context):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            context["last_failure"] = (
+                "FAILED tests/test_app.py::test_r1_health - AssertionError: assert 500 == 200"
+            )
+            return False
+        return await real_unit_testing(session, project, context)
+
+    with ExitStack() as stack:
+        stack.enter_context(patch("app.pipeline.executor.SessionLocal", session_factory))
+        stack.enter_context(patch("app.agents.factory.SessionLocal", session_factory))
+        stack.enter_context(patch.object(executor.runner, "docker_available", lambda: False))
+        stack.enter_context(patch.object(executor, "_stage_unit_testing", flaky_unit_testing))
+
+        await asyncio.wait_for(executor.run_pipeline(project_id), timeout=600)
+
+    async with session_factory() as session:
+        project = await session.get(ProjectRow, project_id)
+        assert project.state == ProjectState.REVIEW.value, project.state
+
+        failures = (
+            (await session.execute(
+                select(FailureRecordRow).where(FailureRecordRow.project_id == project_id)
+            )).scalars().all()
+        )
+        assert len(failures) == 1
+        record = failures[0]
+        assert record.error_class == "app"
+        assert record.gate == ProjectState.IMPLEMENTING.value
+        assert record.resolved is True
+        assert record.regression_test and record.regression_test.startswith("test_fix_")
+
+        runs = (
+            (await session.execute(
+                select(PipelineRunRow).where(PipelineRunRow.project_id == project_id)
+            )).scalars().all()
+        )
+        assert runs[0].outcome == "completed"
+        assert runs[0].fix_attempts == 1
+        assert runs[0].gates_failed and runs[0].gates_failed[0]["gate"] == "IMPLEMENTING"
+
+    # The regression-test policy held: the fix pinned the failure on disk.
+    repo = WorkspaceManager(str(tmp_path)).repo_dir(project_id)
+    regression_tests = list((repo / "tests" / "regression").glob("test_fix_*.py"))
+    assert len(regression_tests) == 1
+
+
+@pytest.mark.asyncio
+async def test_infra_failures_retry_without_spending_fix_attempts(pipeline_env, tmp_path):
+    """Infra-classified failures use the cheap ladder rung (retry, no developer fix)."""
+    from app.db_models import FailureRecordRow
+    from app.pipeline.executor import PipelineExecutor
+    from app.workspace.manager import WorkspaceManager
+
+    session_factory = pipeline_env
+    project_id = uuid4()
+
+    async with session_factory() as session:
+        session.add(
+            ProjectRow(
+                id=project_id,
+                name="Infra Flake",
+                description="Docker hiccups once during integration",
+                state=ProjectState.PLANNING.value,
+                max_enrichment_passes=0,
+            )
+        )
+        await session.commit()
+
+    executor = PipelineExecutor()
+    executor.workspace = WorkspaceManager(str(tmp_path))
+    executor.runner.workspace = executor.workspace
+    executor.runner._cloud.workspace = executor.workspace
+    executor.runner._cursor_local.workspace = executor.workspace
+    executor.test_runner.agent.workspace = executor.workspace
+
+    real_integration = executor._stage_integration_testing
+    calls = {"n": 0}
+
+    async def flaky_integration(session, project, context):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            context["last_failure"] = (
+                "Cannot connect to the Docker daemon at unix:///var/run/docker.sock"
+            )
+            return False
+        return await real_integration(session, project, context)
+
+    with ExitStack() as stack:
+        stack.enter_context(patch("app.pipeline.executor.SessionLocal", session_factory))
+        stack.enter_context(patch("app.agents.factory.SessionLocal", session_factory))
+        stack.enter_context(patch.object(executor.runner, "docker_available", lambda: False))
+        stack.enter_context(
+            patch.object(executor, "_stage_integration_testing", flaky_integration)
+        )
+
+        await asyncio.wait_for(executor.run_pipeline(project_id), timeout=600)
+
+    async with session_factory() as session:
+        project = await session.get(ProjectRow, project_id)
+        assert project.state == ProjectState.REVIEW.value, project.state
+
+        runs = (
+            (await session.execute(
+                select(PipelineRunRow).where(PipelineRunRow.project_id == project_id)
+            )).scalars().all()
+        )
+        # The retry consumed an infra retry, not a developer fix attempt.
+        assert runs[0].fix_attempts == 0
+        assert runs[0].infra_retries == 1
+
+        failures = (
+            (await session.execute(
+                select(FailureRecordRow).where(FailureRecordRow.project_id == project_id)
+            )).scalars().all()
+        )
+        assert failures[0].error_class == "infra"

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import contracts as contracts_api
 from app.api import cursor as cursor_api
 from app.api import github as github_api
 from app.api import discovery as discovery_api
@@ -149,6 +150,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(preview_proxy_api.router)
     app.include_router(projects_api.router, prefix="/api")
+    app.include_router(contracts_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(events_api.router, prefix="/api")
     app.include_router(pipeline_api.router, prefix="/api")

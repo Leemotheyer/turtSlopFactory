@@ -56,6 +56,11 @@ async def stage_fix_from_failure(
 
     substage = context.get("failed_substage")
     if substage in (SUBSTAGE_UNIT_TESTING, SUBSTAGE_IMPLEMENTING, None):
+        # The developer fix succeeded — clear the stale failure before the
+        # preview refresh so an infra-only preview problem (e.g. no docker)
+        # does not masquerade as a failed code fix. App-level preview
+        # failures re-populate last_failure inside _deploy_live_preview.
+        context.pop("last_failure", None)
         preview_ok = await ex._deploy_live_preview(
             session,
             project,
@@ -302,6 +307,10 @@ async def stage_implementing(ex: "PipelineExecutor", session, project, context) 
     if not success:
         context["last_failure"] = output
         return False
+
+    # Developers succeeded — drop any stale failure from earlier attempts so
+    # the preview refresh below is judged on its own outcome only.
+    context.pop("last_failure", None)
 
     stream_count = len(context.get("work_plan", {}).get("units", []))
     max_parallel = (context.get("work_plan", {}).get("concurrency") or {}).get("max_parallel")
