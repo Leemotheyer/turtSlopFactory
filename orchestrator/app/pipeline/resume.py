@@ -8,6 +8,7 @@ from app.pipeline.stages import (
     SUBSTAGE_ADVERSARY,
     SUBSTAGE_ENRICHMENT,
     SUBSTAGE_REVIEW,
+    SUBSTAGE_USER_JOURNEY,
 )
 
 # Completion flags cleared when resuming at/after these gates so substages
@@ -18,6 +19,7 @@ _SMOKE_GATE_FLAGS = (
     "post_smoke_enrichment_complete",
     "adversary_complete",
     "acceptance_complete",
+    "user_journey_complete",
 )
 
 _RESUME_REFRESH_GATES = frozenset(
@@ -41,6 +43,10 @@ def clear_completion_from_gate(
             context.pop(key, None)
 
     if gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_REVIEW:
+        context.pop("user_journey_complete", None)
+        context.pop("acceptance_complete", None)
+    elif gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_USER_JOURNEY:
+        context.pop("user_journey_complete", None)
         context.pop("acceptance_complete", None)
     elif gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_ACCEPTANCE:
         context.pop("acceptance_complete", None)

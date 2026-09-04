@@ -390,6 +390,8 @@ class LocalAgentRunner(AgentRunner):
             return await self._run_product_qa(project_id, context)
         if stage == "mobile_check":
             return await self._run_mobile_check(project_id, context)
+        if stage == "user_journey":
+            return await self._run_user_journey(project_id, context)
         return False, f"Unknown test stage: {stage}"
 
     async def _run_pytest(
@@ -576,6 +578,32 @@ class LocalAgentRunner(AgentRunner):
         summary = f"Mobile check: {'PASS' if passed else 'ISSUES'} — {', '.join(issues[:3]) or 'ok'}"
         return passed, summary
 
+    async def _run_user_journey(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        from app.services.user_journey_testing import (
+            format_blocking_failure,
+            persist_user_journey_results,
+            run_user_journey_tests,
+        )
+
+        report = await run_user_journey_tests(context)
+        await persist_user_journey_results(self.workspace, project_id, report)
+        context["user_journey_report"] = report.model_dump()
+        context["user_journey_passed"] = report.passed
+
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[tester] User journey {'passed' if report.passed else 'BLOCKED'} — "
+            f"{len(report.blocking_findings)} blocking, {len(report.ux_improvements)} UX note(s)",
+        )
+        if report.passed:
+            summary = (
+                f"User journey: PASS — {sum(1 for s in report.steps if s.success)}/"
+                f"{len(report.steps)} steps; {len(report.ux_improvements)} UX improvement(s) logged"
+            )
+            return True, summary
+        return False, format_blocking_failure(report)
+
     async def _reviewer(
         self, project_id: UUID, context: dict, task_id: UUID, agent_id: str
     ) -> tuple[bool, str]:
@@ -623,6 +651,18 @@ class LocalAgentRunner(AgentRunner):
         if isinstance(fc, dict) and fc.get("intake_scope") and not fc.get("passed"):
             feature_complete = False
 
+        user_journey_ok = context.get("user_journey_passed")
+        if user_journey_ok is None and "user-journey-report.json" in artifacts:
+            try:
+                uj = json.loads(
+                    self.workspace.read_artifact(project_id, "user-journey-report.json") or "{}"
+                )
+                user_journey_ok = bool(uj.get("passed"))
+            except json.JSONDecodeError:
+                user_journey_ok = None
+        if user_journey_ok is False:
+            feature_complete = False
+
         notes_applied = len([n for n in context.get("notes", []) if n.get("type") != "scope_out"])
         checklist = {
             "acceptance_verified": acceptance_verified,
@@ -631,6 +671,7 @@ class LocalAgentRunner(AgentRunner):
             "supervisor_notes_applied": notes_applied == 0 or "requirements.md" in artifacts,
             "change_size_justified": change_size_justified,
             "feature_complete": feature_complete,
+            "user_journey_passed": user_journey_ok is not False,
         }
         approved = all(checklist.values())
         concerns = [k for k, v in checklist.items() if not v]
@@ -641,6 +682,8 @@ class LocalAgentRunner(AgentRunner):
         if isinstance(fc, dict) and fc.get("intake_scope") and not fc.get("passed"):
             for issue in fc.get("issues") or []:
                 concerns.append(f"feature_incomplete: {issue}")
+        if user_journey_ok is False:
+            concerns.append("user_journey: blocking issues found in simulated user session")
 
         report = {
             "decision": "approve" if approved else "reject",

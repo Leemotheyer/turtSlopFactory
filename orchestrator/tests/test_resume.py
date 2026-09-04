@@ -27,11 +27,13 @@ def test_clear_completion_from_gate_clears_smoke_substage_flags():
         "post_smoke_enrichment_complete": True,
         "adversary_complete": True,
         "acceptance_complete": True,
+        "user_journey_complete": True,
         "implementation_complete": True,
     }
     clear_completion_from_gate(context, ProjectState.SMOKE_TESTING, substage=SUBSTAGE_REVIEW)
     assert "smoke_testing_complete" not in context
     assert "acceptance_complete" not in context
+    assert "user_journey_complete" not in context
     assert context["implementation_complete"] is True
 
 

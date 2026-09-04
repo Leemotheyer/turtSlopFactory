@@ -109,6 +109,9 @@ async def run_enrichment_passes(
 
         audit = await audit_live_preview(context)
         context["preview_audit"] = audit
+        from app.services.user_journey_testing import load_ux_backlog_items
+
+        context["ux_improvement_backlog"] = load_ux_backlog_items(ex.workspace, project.id)
         if skip_unchanged_audit:
             record_audit_fingerprint(project.id, audit, ex.workspace)
         await ex._scan_env_placeholders(session, project, context)
@@ -140,6 +143,7 @@ async def run_enrichment_passes(
                 max_passes=max_passes,
                 completed_slugs=completed_slugs,
                 intake=context.get("intake"),
+                ux_backlog=context.get("ux_improvement_backlog"),
             )
             ex.workspace.write_artifact(
                 project.id,
@@ -175,6 +179,7 @@ async def run_enrichment_passes(
                     max_passes=max_passes,
                     completed_slugs=completed_slugs,
                     intake=context.get("intake"),
+                    ux_backlog=context.get("ux_improvement_backlog"),
                 )
                 ex.workspace.write_artifact(
                     project.id,

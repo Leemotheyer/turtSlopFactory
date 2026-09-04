@@ -83,3 +83,4 @@ def apply_project_settings_to_context(project: "ProjectRow", context: dict) -> N
     review_ever_approved = bool(context.get("review_ever_approved"))
     payload = project_settings_payload(project, review_ever_approved=review_ever_approved)
     context.update(payload)
+    context["effective_user_journey_enabled"] = settings.user_journey_testing_enabled

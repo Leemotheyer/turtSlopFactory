@@ -313,6 +313,7 @@ def local_enrichment_plan(
     max_passes: int | None = None,
     completed_slugs: set[str] | None = None,
     intake: dict | None = None,
+    ux_backlog: list[dict] | None = None,
 ) -> dict:
     """Deterministic fallback when Cursor architect is unavailable."""
     notes = notes or []
@@ -400,6 +401,28 @@ def local_enrichment_plan(
             )
             if len(features) >= settings.max_features_per_enrichment_pass:
                 break
+
+    for item in ux_backlog or []:
+        title = str(item.get("title") or "").strip()
+        desc = str(item.get("description") or title).strip()
+        if len(title) < 8:
+            continue
+        slug = _slugify(title[:48])
+        if slug in completed_slugs:
+            continue
+        features.append(
+            {
+                "id": slug,
+                "title": title[:72],
+                "description": (
+                    f"UX improvement from user-journey testing (non-blocking): {desc}"
+                ),
+                "scope": "in_scope",
+                "priority": "medium",
+            }
+        )
+        if len(features) >= settings.max_features_per_enrichment_pass:
+            break
 
     filtered: list[dict] = []
     for feat in features[: settings.max_features_per_enrichment_pass]:

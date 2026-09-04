@@ -23,6 +23,7 @@ SUBSTAGE_UNIT_TESTING = "unit_testing"
 SUBSTAGE_ENRICHMENT = "enrichment"
 SUBSTAGE_ADVERSARY = "adversary"
 SUBSTAGE_ACCEPTANCE = "acceptance"
+SUBSTAGE_USER_JOURNEY = "user_journey"
 SUBSTAGE_REVIEW = "review"
 SUBSTAGE_TESTING = "testing"
 
@@ -92,9 +93,16 @@ BUILD_STAGES: tuple[StageSpec, ...] = (
     ),
     StageSpec(
         ProjectState.SMOKE_TESTING,
+        SUBSTAGE_USER_JOURNEY,
+        "_stage_user_journey",
+        requires="acceptance_complete",
+        completes="user_journey_complete",
+    ),
+    StageSpec(
+        ProjectState.SMOKE_TESTING,
         SUBSTAGE_REVIEW,
         "_stage_review",
-        requires="acceptance_complete",
+        requires="user_journey_complete",
     ),
 )
 

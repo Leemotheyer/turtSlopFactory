@@ -66,6 +66,9 @@ from app.pipeline.stages import (
 from app.pipeline.stages import (
     testing as testing_stage,
 )
+from app.pipeline.stages import (
+    user_journey as user_journey_stage,
+)
 from app.services.agent_rules import load_rules_context
 from app.services.diagnosis import diagnose_failure
 from app.services.discovery import get_discovery
@@ -788,6 +791,9 @@ class PipelineExecutor:
     async def _stage_acceptance(self, session, project, context) -> bool:
         return await acceptance_stage.stage_acceptance(self, session, project, context)
 
+    async def _stage_user_journey(self, session, project, context) -> bool:
+        return await user_journey_stage.stage_user_journey(self, session, project, context)
+
     async def _stage_review(self, session, project, context) -> bool:
         return await review_stage.stage_review(self, session, project, context)
 
@@ -962,6 +968,7 @@ class PipelineExecutor:
                     context.pop("post_smoke_enrichment_complete", None)
                     context.pop("adversary_complete", None)
                     context.pop("acceptance_complete", None)
+                    context.pop("user_journey_complete", None)
                     context.pop("enrichment_passes_completed", None)
                     context.pop("smoke_testing_complete", None)
                     context.pop("fix_attempt", None)

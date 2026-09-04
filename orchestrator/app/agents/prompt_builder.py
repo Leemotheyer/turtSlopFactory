@@ -193,6 +193,16 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
                 "\n## Intake capabilities (always in scope — implement, do not question)\n"
                 + "\n".join(f"- {line}" for line in intake_lines[:20])
             )
+        ux_backlog = context.get("ux_improvement_backlog") or []
+        if ux_backlog:
+            sections.append(
+                "\n## UX improvements from user-journey testing (polish — not blocking)\n"
+                + "\n".join(
+                    f"- {item.get('title', 'Improvement')}: {str(item.get('description', ''))[:160]}"
+                    for item in ux_backlog[:12]
+                    if isinstance(item, dict)
+                )
+            )
         if role == AgentRole.ARCHITECT:
             sections.append(
                 """

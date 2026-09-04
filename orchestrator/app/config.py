@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     cursor_agent_headroom: int = 2  # Reserve slots for agents you start outside the factory
     # Verification & measurement
     adversary_enabled: bool = True  # Adversarial verification stage before acceptance
+    user_journey_testing_enabled: bool = True  # Simulated user session before production review
     agent_tester_enabled: bool = True  # LLM tester writes tests/acceptance/ when a backend is available
     deploy_observation_seconds: int = 30  # Post-deploy health observation window
     deploy_observation_polls: int = 3  # Health checks spread across the window

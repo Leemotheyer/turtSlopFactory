@@ -64,6 +64,35 @@ class AdversaryReport(_Artifact):
     notes: str = ""
 
 
+class UserJourneyStep(_Artifact):
+    action: str = ""
+    target: str = ""
+    success: bool = False
+    detail: str = ""
+
+
+class UserJourneyFinding(_Artifact):
+    severity: str = "medium"  # low | medium | high
+    category: str = "ux_improvement"  # blocking | ux_improvement
+    title: str = ""
+    description: str = ""
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _normalize_severity(cls, value):
+        value = str(value or "medium").lower()
+        return value if value in ("low", "medium", "high") else "medium"
+
+
+class UserJourneyReport(_Artifact):
+    passed: bool = False
+    steps: list[UserJourneyStep] = Field(default_factory=list)
+    blocking_findings: list[UserJourneyFinding] = Field(default_factory=list)
+    ux_improvements: list[UserJourneyFinding] = Field(default_factory=list)
+    intake_expectations: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
 class ContractRequirementDraft(_Artifact):
     id: str = ""
     description: str = ""
