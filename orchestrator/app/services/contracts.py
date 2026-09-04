@@ -116,6 +116,10 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
     description = (context.get("original_description") or project.description or "").strip()
     analysis = context.get("repo_analysis") or {}
     existing = bool(analysis.get("has_existing_app"))
+    desc_lower = description.lower()
+    api_only = any(
+        kw in desc_lower for kw in ("api only", "api-only", "no ui", "no frontend", "headless")
+    )
 
     requirements = [
         ContractRequirement(
@@ -139,16 +143,17 @@ def fallback_contract(project: ProjectRow, context: dict) -> ProjectContract:
                 ],
             )
         )
-        requirements.append(
-            ContractRequirement(
-                id="R3",
-                description="Web UI is served and usable in a browser",
-                acceptance=[
-                    "GET / returns an HTML page",
-                    "The page is wired to the API with relative URLs",
-                ],
+        if not api_only:
+            requirements.append(
+                ContractRequirement(
+                    id="R3",
+                    description="Web UI is served and usable in a browser",
+                    acceptance=[
+                        "GET / returns an HTML page",
+                        "The page is wired to the API with relative URLs",
+                    ],
+                )
             )
-        )
 
     non_goals = [
         note.get("content", "")

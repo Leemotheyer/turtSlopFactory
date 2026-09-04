@@ -1,0 +1,21 @@
+# Benchmark 1 — greenfield web app: the factory's bread and butter.
+name: greenfield-item-tracker
+description: >
+  A small item tracker web app: create, list, and view items through a REST
+  API with a browser UI on top.
+max_enrichment_passes: 0
+expected:
+  final_state: REVIEW
+  min_requirements: 3
+  all_requirements_verified: true
+  artifacts:
+    - contract.json
+    - acceptance-report.json
+    - adversary-report.json
+    - work-plan.json
+    - build-manifest.json
+  repo_files:
+    - app/main.py
+    - Dockerfile
+    - project.contract.yaml
+    - tests/acceptance

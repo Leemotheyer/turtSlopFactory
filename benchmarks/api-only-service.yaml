@@ -1,0 +1,17 @@
+# Benchmark 2 — headless API service: no frontend requirement in the contract.
+name: api-only-service
+description: >
+  An api only backend service for managing items. No UI, no frontend —
+  headless REST API consumed by other services.
+max_enrichment_passes: 0
+expected:
+  final_state: REVIEW
+  min_requirements: 2
+  all_requirements_verified: true
+  requirement_absent_keywords:
+    - browser
+  artifacts:
+    - contract.json
+    - acceptance-report.json
+  repo_files:
+    - app/main.py

@@ -1,0 +1,14 @@
+# Benchmark 3 — recovery: the workspace starts with a syntactically broken app.
+name: recover-broken-app
+description: >
+  An item tracker whose previous build left a broken main module behind. The
+  factory must repair it and ship a working build.
+max_enrichment_passes: 0
+seed_repo_files:
+  app/main.py: |
+    this is not valid python at all (((
+expected:
+  final_state: REVIEW
+  all_requirements_verified: true
+  repo_files:
+    - app/main.py

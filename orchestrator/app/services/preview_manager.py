@@ -46,6 +46,10 @@ def dev_preview_image_tag(project_id: UUID) -> str:
 def docker_available() -> bool:
     if settings.disable_docker:
         return False
+    # Hardened deploys reach Docker through a socket proxy (DOCKER_HOST)
+    # instead of a mounted socket file.
+    if os.environ.get("DOCKER_HOST"):
+        return True
     return Path("/var/run/docker.sock").exists()
 
 
@@ -276,6 +280,18 @@ async def _copy_repo_to_container(repo_path: Path, container_name: str, log_path
     return True, f"Copied {repo_path} into {container_name}:/app"
 
 
+def _resource_limit_args() -> list[str]:
+    """CPU/memory/pids caps so a runaway generated app can't starve the host."""
+    args: list[str] = []
+    if settings.preview_memory_limit:
+        args.extend(["--memory", settings.preview_memory_limit])
+    if settings.preview_cpus:
+        args.extend(["--cpus", settings.preview_cpus])
+    if settings.preview_pids_limit > 0:
+        args.extend(["--pids-limit", str(settings.preview_pids_limit)])
+    return args
+
+
 async def _create_preview_container(
     *,
     project_id: UUID,
@@ -298,6 +314,7 @@ async def _create_preview_container(
         settings.preview_docker_network,
         "--restart",
         "no",
+        *_resource_limit_args(),
         *_build_label_args(project_id, mode=mode),
         "-e",
         f"PORT={spec.port}",

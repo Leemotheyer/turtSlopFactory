@@ -104,6 +104,37 @@ IMAGE_TAG=latest        # pin GHCR release
 PUBLIC_HOST=factory.example.com
 ```
 
+## How the factory decides "done"
+
+Every project gets a **contract** — requirements with testable acceptance criteria —
+generated during planning and editable in the dashboard. Pipeline stages record
+**evidence** (test results mapped to requirements via `test_<req_id>_*` naming, health
+probes, builds), an **adversarial stage** tries to break the staging deploy, and a
+deterministic **acceptance evaluator** blocks review until every requirement is verified
+(or explicitly waived). Failures are diagnosed (infra vs app), remembered across runs,
+and fixed bugs must ship a regression test. Deploys are observed after cutover and roll
+back automatically on health regression.
+
+## Benchmarks
+
+The factory's own quality is measured, not guessed:
+
+```bash
+python scripts/run_benchmarks.py        # full pipeline on fixture specs (no docker/LLM needed)
+```
+
+CI runs these on every push — a failing benchmark means the factory itself regressed.
+
+## Hardened deploy (optional)
+
+Scope Docker access through a socket proxy instead of mounting the raw socket:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d
+```
+
+Preview containers are always capped (memory/CPU/pids) regardless of mode.
+
 ## Local development
 
 Run API + dashboard on the host with postgres/redis from compose:

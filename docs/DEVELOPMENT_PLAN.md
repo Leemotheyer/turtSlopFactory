@@ -1,5 +1,10 @@
 # turtSlopFactory — Development Plan
 
+> **Status: implemented.** Phases 0–5 and the opt-in parts of Phase 6 (socket-proxy
+> overlay, preview resource limits) shipped together on this branch. The container split
+> (6.3) remains deliberately out of scope. See `docs/ARCHITECTURE.md` for the resulting
+> architecture and `benchmarks/` + `scripts/run_benchmarks.py` for the evaluation harness.
+
 This plan is the result of reviewing the "fundamental improvements" proposal against the
 actual codebase. It records what the proposal got right, what it got wrong or misjudged,
 what it missed entirely, and a concrete phased plan to follow.

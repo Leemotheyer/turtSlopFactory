@@ -37,6 +37,9 @@ jobs:
         run: python -m pytest -q
         working-directory: orchestrator
 
+      - name: Run factory benchmarks (deterministic local backend)
+        run: python scripts/run_benchmarks.py
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:

@@ -1,0 +1,51 @@
+# Hardened overlay: scope the factory's Docker access through a socket proxy
+# instead of mounting the raw socket. The proxy only exposes the endpoint
+# groups the pipeline needs (containers, images, build, networks, volumes,
+# exec) — host-mutating endpoints stay disabled.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d
+#
+# Note: previews and builds keep working; anything that would need broader
+# host control (swarm, plugins, system prune) is refused by the proxy.
+
+services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3
+    restart: unless-stopped
+    environment:
+      # Endpoint groups (1 = allow). Everything not listed is denied.
+      CONTAINERS: 1
+      IMAGES: 1
+      BUILD: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      EXEC: 1
+      INFO: 1
+      PING: 1
+      VERSION: 1
+      POST: 1
+      # Explicitly denied (defaults, listed for clarity):
+      SWARM: 0
+      SYSTEM: 0
+      PLUGINS: 0
+      SECRETS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - factory-internal
+
+  factory:
+    environment:
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    volumes:
+      # Override the base compose file: keep the data mount, drop the raw socket.
+      - ${FACTORY_DATA:-${FACTORY_DATA_DIR:-./data}}:/data
+    depends_on:
+      - docker-socket-proxy
+    networks:
+      - default
+      - factory-internal
+
+networks:
+  factory-internal:
+    internal: true

@@ -1,0 +1,17 @@
+# Benchmark 4 — supervisor feature notes become shipped work units.
+name: feature-notes
+description: >
+  A bookmarks manager web app with tagging.
+max_enrichment_passes: 0
+notes:
+  - type: feature
+    content: Export bookmarks as JSON from a dedicated endpoint
+  - type: scope_out
+    content: user accounts and login
+expected:
+  final_state: REVIEW
+  all_requirements_verified: true
+  repo_globs:
+    - app/features/*.py
+  contract_non_goal_keywords:
+    - user accounts
