@@ -2782,9 +2782,9 @@ export default function DashboardPage() {
                             setPipelineConfigError(null);
                           }}
                         >
-                          <option value="auto">Auto — exempt first build until review passes</option>
-                          <option value="always">Always — require justification when over budget</option>
-                          <option value="never">Never — never block review on change size</option>
+                          <option value="auto">Default — unlimited (no change-size blocking)</option>
+                          <option value="always">On — require justification when over budget</option>
+                          <option value="never">Off — never block review on change size</option>
                         </select>
                       </label>
                       <label className={styles.repoField}>
@@ -2825,11 +2825,11 @@ export default function DashboardPage() {
                       </label>
                       <FieldError message={pipelineConfigError ?? undefined} />
                       <p className={styles.repoHint}>
-                        Oversized changes need a developer <code>JUSTIFICATION:</code> in their output once the
-                        budget is enforced. The first build is exempt by default so greenfield apps are not blocked
-                        at review.
-                        {detail.change_budget_enforced === false && (
-                          <> Currently: first-build exemption active.</>
+                        Oversized changes need a developer <code>JUSTIFICATION:</code> in their output
+                        only when enforcement is turned on. By default the change budget is unlimited
+                        and review is not blocked on diff size.
+                        {detail.change_budget_enforced === true && (
+                          <> Currently: enforcement active for this project.</>
                         )}
                       </p>
 

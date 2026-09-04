@@ -33,10 +33,10 @@ def test_resolve_change_budget_uses_project_override():
     assert resolve_change_budget_lines(project) == 2000
 
 
-def test_should_enforce_change_budget_first_build_exempt_by_default():
+def test_should_enforce_change_budget_unlimited_by_default():
     project = _project()
     assert should_enforce_change_budget(project, review_ever_approved=False) is False
-    assert should_enforce_change_budget(project, review_ever_approved=True) is True
+    assert should_enforce_change_budget(project, review_ever_approved=True) is False
 
 
 def test_should_enforce_change_budget_project_override():

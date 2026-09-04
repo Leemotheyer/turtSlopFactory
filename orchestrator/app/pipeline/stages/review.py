@@ -42,7 +42,12 @@ async def stage_review(ex: "PipelineExecutor", session, project, context) -> boo
     meta["review_ever_approved"] = True
     ex.workspace.save_metadata(project.id, meta)
     context["review_ever_approved"] = True
-    context["change_budget_enforced"] = True
+
+    from app.services.project_settings import should_enforce_change_budget
+
+    context["change_budget_enforced"] = should_enforce_change_budget(
+        project, review_ever_approved=True
+    )
 
     from app.services.evidence import record_evidence
 

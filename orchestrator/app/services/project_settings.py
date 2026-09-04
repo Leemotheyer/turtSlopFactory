@@ -35,17 +35,18 @@ def resolve_adversary_enabled(project: "ProjectRow") -> bool:
 
 
 def should_enforce_change_budget(project: "ProjectRow", *, review_ever_approved: bool) -> bool:
-    """Soft change budgets apply after the project's first successful review.
+    """Whether oversized changes require developer JUSTIFICATION: at review.
 
-    Greenfield first builds routinely exceed the factory default (~8 files /
-    ~500 lines); blocking review on missing JUSTIFICATION: there is pointless.
-    Feedback iterations and post-production cycles enforce the budget.
+    Default (project unset + factory default) is unlimited — change stats are recorded
+    for visibility but never block review. Set enforce_change_budget=True per project
+    or ENFORCE_CHANGE_BUDGET=true at factory level to enable soft budgets.
     """
+    _ = review_ever_approved  # retained for API compatibility; no longer toggles enforcement
     if project.enforce_change_budget is False:
         return False
     if project.enforce_change_budget is True:
         return True
-    return review_ever_approved
+    return settings.enforce_change_budget
 
 
 def project_settings_payload(project: "ProjectRow", *, review_ever_approved: bool = False) -> dict:
@@ -68,6 +69,7 @@ def project_settings_payload(project: "ProjectRow", *, review_ever_approved: boo
             "change_budget_lines": settings.change_budget_lines,
             "max_fix_attempts": settings.max_fix_attempts,
             "adversary_enabled": settings.adversary_enabled,
+            "enforce_change_budget": settings.enforce_change_budget,
         },
     }
 

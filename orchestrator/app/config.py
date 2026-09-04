@@ -47,8 +47,9 @@ class Settings(BaseSettings):
     agent_tester_enabled: bool = True  # LLM tester writes tests/acceptance/ when a backend is available
     deploy_observation_seconds: int = 30  # Post-deploy health observation window
     deploy_observation_polls: int = 3  # Health checks spread across the window
-    change_budget_files: int = 8  # Soft threshold — oversized changes need justification
+    change_budget_files: int = 8  # Soft threshold when enforcement is enabled
     change_budget_lines: int = 500
+    enforce_change_budget: bool = False  # Default: unlimited — no review blocks on change size
     disable_docker: bool = False  # Force simulated docker paths (benchmarks / CI)
     # Resource caps for factory-launched preview/staging containers ("" disables)
     preview_memory_limit: str = "768m"

@@ -603,9 +603,8 @@ class LocalAgentRunner(AgentRunner):
             # Legacy project without a contract: fall back to the test signal.
             acceptance_verified = tests_passed
 
-        # Change-size: oversized deltas need a justification in the developer output.
-        # First builds are exempt until review has passed once (greenfield apps
-        # routinely exceed the soft budget on initial delivery).
+        # Change-size: oversized deltas need a justification when enforcement is on.
+        # Default factory setting is unlimited (no review block on diff size).
         change_size_justified = True
         if context.get("change_budget_enforced"):
             oversized = context.get("change_stats_oversized")
