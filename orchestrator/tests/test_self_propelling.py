@@ -8,6 +8,7 @@ from app.services.self_propelling import (
     get_self_propelling_settings,
     is_due_for_post_production,
     is_self_propelling_enabled,
+    mark_cycle_completed,
     resolve_post_production_passes,
     save_self_propelling_settings,
     should_skip_architect,
@@ -80,6 +81,67 @@ def test_is_due_when_no_next_cycle(monkeypatch):
     project_id = uuid4()
     ws.load_metadata = MagicMock(return_value={"self_propelling": {"enabled": True}})
     assert is_due_for_post_production(project_id, ws) is True
+
+
+def test_rapid_iterations_arms_immediate_next_cycle(monkeypatch):
+    meta_store: dict = {}
+
+    def load_metadata(_pid):
+        return dict(meta_store)
+
+    def save_metadata(_pid, meta):
+        meta_store.clear()
+        meta_store.update(meta)
+
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    ws.load_metadata = load_metadata
+    ws.save_metadata = save_metadata
+
+    project_id = uuid4()
+    save_self_propelling_settings(
+        project_id,
+        enabled=True,
+        rapid_iterations=True,
+        workspace=ws,
+    )
+    mark_cycle_completed(project_id, ws)
+    settings = get_self_propelling_settings(project_id, ws)
+    assert settings["rapid_iterations"] is True
+    assert settings["next_cycle_at"]
+    assert is_due_for_post_production(project_id, ws) is True
+
+
+@pytest.mark.asyncio
+async def test_maybe_schedule_rapid_next_cycle_chains(monkeypatch):
+    from app.services.self_propelling import maybe_schedule_rapid_next_cycle
+
+    meta_store = {
+        "self_propelling": {
+            "enabled": True,
+            "rapid_iterations": True,
+            "rapid_next_cycle_pending": True,
+        }
+    }
+
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    ws.load_metadata = MagicMock(return_value=meta_store)
+    ws.save_metadata = MagicMock()
+
+    project_id = uuid4()
+    session = AsyncMock()
+
+    with patch(
+        "app.services.self_propelling.WorkspaceManager",
+        return_value=ws,
+    ), patch(
+        "app.services.self_propelling.maybe_schedule_post_production",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as schedule:
+        assert await maybe_schedule_rapid_next_cycle(session, project_id) is True
+        schedule.assert_awaited_once_with(session, project_id, force=True)
 
 
 @pytest.mark.asyncio

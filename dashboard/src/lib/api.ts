@@ -109,6 +109,7 @@ export interface ProjectDetail extends Project {
   } | null;
   self_propelling?: {
     enabled: boolean;
+    rapid_iterations?: boolean;
     post_production_passes?: number | null;
     interval_hours?: number | null;
     token_budget_per_cycle?: number | null;
@@ -735,6 +736,7 @@ export async function updateSelfPropelling(
   projectId: string,
   params: {
     enabled?: boolean;
+    rapid_iterations?: boolean;
     post_production_passes?: number | null;
     interval_hours?: number | null;
     token_budget_per_cycle?: number | null;

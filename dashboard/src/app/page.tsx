@@ -245,6 +245,7 @@ export default function DashboardPage() {
   const [editChangeBudgetMode, setEditChangeBudgetMode] = useState<"auto" | "always" | "never">("auto");
   const [pipelineConfigError, setPipelineConfigError] = useState<string | null>(null);
   const [selfPropellingEnabled, setSelfPropellingEnabled] = useState(false);
+  const [rapidIterations, setRapidIterations] = useState(false);
   const [editPostProdPasses, setEditPostProdPasses] = useState("");
   const [editCycleInterval, setEditCycleInterval] = useState("");
   const [editTokenBudget, setEditTokenBudget] = useState("");
@@ -442,6 +443,7 @@ export default function DashboardPage() {
     setProjectDetailsError(null);
     const sp = detail.self_propelling;
     setSelfPropellingEnabled(Boolean(sp?.enabled));
+    setRapidIterations(Boolean(sp?.rapid_iterations));
     setEditPostProdPasses(
       sp?.post_production_passes != null ? String(sp.post_production_passes) : ""
     );
@@ -754,6 +756,7 @@ export default function DashboardPage() {
       });
       await updateSelfPropelling(selectedId, {
         enabled: selfPropellingEnabled,
+        rapid_iterations: rapidIterations,
         post_production_passes:
           editPostProdPasses.trim() === ""
             ? null
@@ -910,6 +913,7 @@ export default function DashboardPage() {
             ? "never"
             : "auto") ||
       selfPropellingEnabled !== Boolean(detail.self_propelling?.enabled) ||
+      rapidIterations !== Boolean(detail.self_propelling?.rapid_iterations) ||
       editPostProdPasses !==
         (detail.self_propelling?.post_production_passes != null
           ? String(detail.self_propelling.post_production_passes)
@@ -2941,16 +2945,34 @@ export default function DashboardPage() {
                         After production, the factory can periodically audit, enrich, test, and redeploy
                         without restarting the full build pipeline.
                       </p>
+                      <label className={styles.repoCheckbox}>
+                        <input
+                          type="checkbox"
+                          checked={rapidIterations}
+                          onChange={(e) => {
+                            setRapidIterations(e.target.checked);
+                            setSelfPropellingError(null);
+                          }}
+                          disabled={!selfPropellingEnabled}
+                        />
+                        Rapid iterations — run the next cycle as soon as the factory is free
+                      </label>
+                      <p className={styles.repoHint}>
+                        When enabled, the factory skips the cycle interval and chains improvement
+                        cycles back-to-back (still respects pause/stop and token budget).
+                      </p>
                       {detail.self_propelling && (
                         <p className={styles.repoHint}>
                           Cycles completed: {detail.self_propelling.cycles_completed ?? 0}
-                          {detail.self_propelling.next_cycle_at && (
+                          {detail.self_propelling.rapid_iterations ? (
+                            <> · Rapid mode — next cycle runs ASAP</>
+                          ) : detail.self_propelling.next_cycle_at ? (
                             <>
                               {" "}
                               · Next scheduled:{" "}
                               {new Date(detail.self_propelling.next_cycle_at).toLocaleString()}
                             </>
-                          )}
+                          ) : null}
                         </p>
                       )}
                       <label className={styles.repoField}>
@@ -2980,9 +3002,14 @@ export default function DashboardPage() {
                             setEditCycleInterval(e.target.value);
                             setSelfPropellingError(null);
                           }}
-                          disabled={!selfPropellingEnabled}
+                          disabled={!selfPropellingEnabled || rapidIterations}
                         />
                       </label>
+                      {rapidIterations && (
+                        <p className={styles.repoHint}>
+                          Interval is ignored while rapid iterations is on.
+                        </p>
+                      )}
                       <label className={styles.repoField}>
                         Token budget per cycle
                         <input

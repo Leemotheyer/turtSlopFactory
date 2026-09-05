@@ -9,6 +9,7 @@ from app.services.factory_settings import get_preview_origin
 from app.services.notifications import create_notification
 from app.services.preview import preview_from_metadata
 from app.services.self_propelling import (
+    get_self_propelling_settings,
     mark_cycle_completed,
     resolve_post_production_passes,
 )
@@ -152,7 +153,12 @@ async def stage_post_production_redeploy(ex: "PipelineExecutor", session, projec
         project.id,
         NotificationType.PROJECT_FINISHED,
         "Self-propelling cycle complete",
-        f"{project.name} was improved and redeployed. Next cycle scheduled automatically.",
+        f"{project.name} was improved and redeployed."
+        + (
+            " Next rapid cycle queued."
+            if get_self_propelling_settings(project.id, ex.workspace).get("rapid_iterations")
+            else " Next cycle scheduled automatically."
+        ),
         action="overview",
     )
     return True

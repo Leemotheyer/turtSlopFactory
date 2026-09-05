@@ -1155,6 +1155,16 @@ class PipelineExecutor:
                 if not stopped:
                     meta.pop("live_agents", None)
                     self.workspace.save_metadata(project_id, meta)
+            if not stopped:
+                try:
+                    async with SessionLocal() as session:
+                        from app.services.self_propelling import maybe_schedule_rapid_next_cycle
+
+                        await maybe_schedule_rapid_next_cycle(session, project_id)
+                except Exception:
+                    logger.exception(
+                        "Could not schedule rapid post-production cycle for %s", project_id
+                    )
 
     async def _finalize_run_metrics(
         self,

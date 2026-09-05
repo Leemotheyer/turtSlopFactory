@@ -33,6 +33,11 @@ def is_self_propelling_enabled(project_id: UUID, workspace: WorkspaceManager | N
     return bool(_config(ws.load_metadata(project_id)).get("enabled"))
 
 
+def is_rapid_iterations_enabled(project_id: UUID, workspace: WorkspaceManager | None = None) -> bool:
+    ws = workspace or WorkspaceManager()
+    return bool(_config(ws.load_metadata(project_id)).get("rapid_iterations"))
+
+
 def get_self_propelling_settings(
     project_id: UUID, workspace: WorkspaceManager | None = None
 ) -> dict[str, Any]:
@@ -41,6 +46,7 @@ def get_self_propelling_settings(
     cfg = _config(meta)
     return {
         "enabled": bool(cfg.get("enabled")),
+        "rapid_iterations": bool(cfg.get("rapid_iterations")),
         "post_production_passes": cfg.get("post_production_passes"),
         "interval_hours": cfg.get("interval_hours"),
         "token_budget_per_cycle": cfg.get("token_budget_per_cycle"),
@@ -61,6 +67,7 @@ def save_self_propelling_settings(
     project_id: UUID,
     *,
     enabled: bool | None = None,
+    rapid_iterations: bool | None = None,
     post_production_passes: int | None = None,
     interval_hours: int | None = None,
     token_budget_per_cycle: int | None = None,
@@ -72,6 +79,10 @@ def save_self_propelling_settings(
 
     if enabled is not None:
         cfg["enabled"] = enabled
+    if rapid_iterations is not None:
+        cfg["rapid_iterations"] = rapid_iterations
+        if rapid_iterations:
+            arm_immediate_next_cycle(cfg)
     if post_production_passes is not None:
         cfg["post_production_passes"] = post_production_passes
     if interval_hours is not None:
@@ -108,6 +119,45 @@ def resolve_token_budget(project_id: UUID, workspace: WorkspaceManager | None = 
         return value if value > 0 else None
     default = settings.default_token_budget_per_cycle
     return default if default and default > 0 else None
+
+
+def arm_immediate_next_cycle(cfg: dict[str, Any]) -> None:
+    """Mark the next post-production cycle as due immediately."""
+    cfg["next_cycle_at"] = datetime.utcnow().isoformat()
+    cfg["rapid_next_cycle_pending"] = True
+
+
+def mark_cycle_completed(project_id: UUID, workspace: WorkspaceManager) -> None:
+    meta = workspace.load_metadata(project_id)
+    cfg = _config(meta)
+    cfg["cycles_completed"] = int(cfg.get("cycles_completed") or 0) + 1
+    cfg["last_cycle_at"] = datetime.utcnow().isoformat()
+    if cfg.get("rapid_iterations"):
+        arm_immediate_next_cycle(cfg)
+    else:
+        interval = resolve_interval_hours(project_id, workspace)
+        cfg["next_cycle_at"] = (datetime.utcnow() + timedelta(hours=interval)).isoformat()
+        cfg.pop("rapid_next_cycle_pending", None)
+    cfg.pop("cycle_started_at", None)
+    cfg.pop("cycle_start_tokens", None)
+    meta["self_propelling"] = cfg
+    workspace.save_metadata(project_id, meta)
+
+
+async def maybe_schedule_rapid_next_cycle(
+    session: AsyncSession,
+    project_id: UUID,
+) -> bool:
+    """After a post-production run finishes, chain the next cycle when rapid mode is on."""
+    workspace = WorkspaceManager()
+    meta = workspace.load_metadata(project_id)
+    cfg = _config(meta)
+    if not cfg.get("rapid_iterations") or not cfg.get("rapid_next_cycle_pending"):
+        return False
+    cfg["rapid_next_cycle_pending"] = False
+    meta["self_propelling"] = cfg
+    workspace.save_metadata(project_id, meta)
+    return await maybe_schedule_post_production(session, project_id, force=True)
 
 
 def audit_fingerprint(audit: dict) -> str:
@@ -153,19 +203,6 @@ def mark_cycle_started(
     cfg["cycle_started_at"] = datetime.utcnow().isoformat()
     if cycle_start_tokens is not None:
         cfg["cycle_start_tokens"] = cycle_start_tokens
-    meta["self_propelling"] = cfg
-    workspace.save_metadata(project_id, meta)
-
-
-def mark_cycle_completed(project_id: UUID, workspace: WorkspaceManager) -> None:
-    meta = workspace.load_metadata(project_id)
-    cfg = _config(meta)
-    cfg["cycles_completed"] = int(cfg.get("cycles_completed") or 0) + 1
-    cfg["last_cycle_at"] = datetime.utcnow().isoformat()
-    interval = resolve_interval_hours(project_id, workspace)
-    cfg["next_cycle_at"] = (datetime.utcnow() + timedelta(hours=interval)).isoformat()
-    cfg.pop("cycle_started_at", None)
-    cfg.pop("cycle_start_tokens", None)
     meta["self_propelling"] = cfg
     workspace.save_metadata(project_id, meta)
 
