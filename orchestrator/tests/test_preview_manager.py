@@ -4,10 +4,12 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.preview import update_preview_metadata
+from app.services.preview import restore_preview_meta, snapshot_preview_meta, update_preview_metadata
 from app.services.preview_manager import (
     dev_preview_image_tag,
     preview_container_name,
+    preview_staging_container_name,
+    promote_preview_container,
     start_dev_preview,
     start_docker_preview,
     stop_preview,
@@ -23,6 +25,36 @@ def test_dev_preview_image_tag():
 def test_preview_container_name():
     project_id = uuid4()
     assert preview_container_name(project_id) == f"factory-live-{str(project_id)[:8]}"
+    assert preview_staging_container_name(project_id) == f"factory-live-{str(project_id)[:8]}-next"
+
+
+@pytest.mark.asyncio
+async def test_promote_preview_container_replaces_canonical():
+    project_id = uuid4()
+    staging = preview_staging_container_name(project_id)
+    with patch("app.services.preview_manager.stop_preview", new_callable=AsyncMock) as stop, patch(
+        "app.services.preview_manager._rename_container", new_callable=AsyncMock, return_value=True
+    ) as rename:
+        assert await promote_preview_container(project_id, staging) is True
+        stop.assert_awaited_once()
+        rename.assert_awaited_once_with(staging, preview_container_name(project_id))
+
+
+def test_snapshot_preview_meta_preserves_running_state():
+    project_id = uuid4()
+    meta = {
+        "preview_status": "running",
+        "preview_container": preview_container_name(project_id),
+        "preview_type": "docker",
+        "unrelated": "keep",
+    }
+    snapshot = snapshot_preview_meta(meta)
+    meta["preview_status"] = "failed"
+    meta.pop("preview_container", None)
+    restore_preview_meta(meta, snapshot)
+    assert meta["preview_status"] == "running"
+    assert meta["preview_container"] == preview_container_name(project_id)
+    assert meta["unrelated"] == "keep"
 
 
 def test_runtime_image_constant_matches_spec():

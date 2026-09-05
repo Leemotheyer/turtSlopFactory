@@ -38,6 +38,10 @@ def preview_container_name(project_id: UUID) -> str:
     return f"factory-live-{str(project_id)[:8]}"
 
 
+def preview_staging_container_name(project_id: UUID) -> str:
+    return f"{preview_container_name(project_id)}-next"
+
+
 def dev_preview_image_tag(project_id: UUID) -> str:
     """Legacy project-specific preview image tag (cleaned up if still present)."""
     return f"factory-preview-dev-{str(project_id)[:8]}"
@@ -94,6 +98,19 @@ async def _run_docker(*args: str, stdin: bytes | None = None, log_path: Path | N
 
 async def _remove_container(name: str) -> None:
     await _run_docker("rm", "-f", name)
+
+
+async def _rename_container(old_name: str, new_name: str) -> bool:
+    await _remove_container(new_name)
+    code, _ = await _run_docker("rename", old_name, new_name)
+    return code == 0
+
+
+async def promote_preview_container(project_id: UUID, staging_name: str) -> bool:
+    """Replace the canonical preview container with a healthy staging container."""
+    canonical = preview_container_name(project_id)
+    await stop_preview(project_id, container_name=canonical)
+    return await _rename_container(staging_name, canonical)
 
 
 async def _remove_image(image_ref: str) -> None:
@@ -344,6 +361,8 @@ async def start_dev_preview(
     log_path: Path,
     *,
     env_vars: dict[str, str] | None = None,
+    container_name: str | None = None,
+    stop_before_start: bool = True,
 ) -> PreviewLaunch:
     """Run the project from source in a factory-owned runtime. Agents never start this."""
     if not docker_available():
@@ -364,8 +383,13 @@ async def start_dev_preview(
         )
 
     spec = load_preview_spec(repo_path)
-    name = preview_container_name(project_id)
-    await stop_preview(project_id, ephemeral_image=dev_preview_image_tag(project_id))
+    name = container_name or preview_container_name(project_id)
+    if stop_before_start:
+        await stop_preview(
+            project_id,
+            container_name=name,
+            ephemeral_image=dev_preview_image_tag(project_id),
+        )
 
     image = await ensure_runtime_image(log_path)
     app_module = detect_app_module(repo_path)
@@ -445,6 +469,8 @@ async def start_docker_preview(
     env_vars: dict[str, str] | None = None,
     repo_path: Path | None = None,
     log_path: Path | None = None,
+    container_name: str | None = None,
+    stop_before_start: bool = True,
 ) -> PreviewLaunch:
     """Run a built project image on the preview network (staging / production image)."""
     if not docker_available():
@@ -456,8 +482,9 @@ async def start_docker_preview(
         )
 
     spec = load_preview_spec(repo_path) if repo_path else PreviewHealthSpec()
-    name = preview_container_name(project_id)
-    await stop_preview(project_id, container_name=name)
+    name = container_name or preview_container_name(project_id)
+    if stop_before_start:
+        await stop_preview(project_id, container_name=name)
 
     created, create_msg, container_id = await _create_preview_container(
         project_id=project_id,

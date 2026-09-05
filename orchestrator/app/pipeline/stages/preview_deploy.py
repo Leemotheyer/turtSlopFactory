@@ -14,10 +14,15 @@ from app.services.preview import (
     build_preview_url,
     preview_path,
     preview_upstream,
+    restore_preview_meta,
+    snapshot_preview_meta,
     update_preview_metadata,
 )
 from app.services.preview_manager import (
+    container_is_running,
     preview_container_name,
+    preview_staging_container_name,
+    promote_preview_container,
     start_dev_preview,
     start_docker_preview,
     stop_preview,
@@ -50,11 +55,27 @@ async def deploy_live_preview(
     repo = ex.workspace.repo_dir(project.id)
     spec = load_preview_spec(repo)
 
-    await stop_preview(
-        project.id,
-        container_name=meta.get("preview_container"),
-        ephemeral_image=meta.get("preview_ephemeral_image"),
+    canonical = preview_container_name(project.id)
+    preview_snapshot = snapshot_preview_meta(meta)
+    keep_live = (
+        meta.get("preview_status") == "running"
+        and await container_is_running(canonical)
     )
+    target_name = preview_staging_container_name(project.id) if keep_live else canonical
+
+    if keep_live:
+        await stop_preview(project.id, container_name=target_name)
+    else:
+        await stop_preview(
+            project.id,
+            container_name=meta.get("preview_container"),
+            ephemeral_image=meta.get("preview_ephemeral_image"),
+        )
+
+    launch_kwargs = {
+        "container_name": target_name,
+        "stop_before_start": not keep_live,
+    }
 
     launch = PreviewLaunch(
         success=False,
@@ -71,6 +92,7 @@ async def deploy_live_preview(
                 repo,
                 log_path,
                 env_vars=runtime_env,
+                **launch_kwargs,
             )
         else:
             launch = PreviewLaunch(
@@ -95,6 +117,7 @@ async def deploy_live_preview(
                 env_vars=runtime_env,
                 repo_path=repo,
                 log_path=log_path,
+                **launch_kwargs,
             )
     else:
         launch = PreviewLaunch(
@@ -107,8 +130,36 @@ async def deploy_live_preview(
     output = launch.message
     container_id = launch.container_id
     container_name = launch.container_name or (
-        preview_container_name(project.id) if launch.backend == "docker" and success else None
+        canonical if launch.backend == "docker" and success else None
     )
+
+    if success and keep_live:
+        promoted = await promote_preview_container(project.id, target_name)
+        if not promoted:
+            await stop_preview(project.id, container_name=target_name)
+            success = False
+            output = "Could not promote staged preview container"
+            launch = PreviewLaunch(
+                success=False,
+                message=output,
+                backend=launch.backend,
+                failure_kind="infra",
+            )
+        else:
+            container_name = canonical
+
+    if not success and keep_live:
+        restore_preview_meta(meta, preview_snapshot)
+        ex.workspace.save_metadata(project.id, meta)
+        context["preview_status"] = meta.get("preview_status")
+        context["preview_upstream"] = preview_upstream(project.id, meta)
+        ex.workspace.append_log(
+            project.id,
+            "pipeline.log",
+            f"[preview] kept existing live preview running after failed update: {output[:300]}",
+        )
+        return False
+
     backend = launch.backend
     context["preview_backend"] = backend if success else None
     context["preview_container"] = container_name

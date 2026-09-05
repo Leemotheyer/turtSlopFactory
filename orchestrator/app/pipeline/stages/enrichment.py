@@ -25,6 +25,41 @@ if TYPE_CHECKING:
     from app.pipeline.executor import PipelineExecutor
 
 
+async def _post_production_preview_is_live(ex, project) -> bool:
+    meta = ex.workspace.load_metadata(project.id)
+    if meta.get("preview_status") != "running":
+        return False
+    from app.services.preview_manager import container_is_running, preview_container_name
+
+    return await container_is_running(preview_container_name(project.id))
+
+
+async def _ensure_enrichment_preview(
+    ex: "PipelineExecutor",
+    session,
+    project,
+    context: dict,
+    *,
+    log_prefix: str,
+) -> None:
+    await ex._refresh_context(session, project, context)
+    if log_prefix == "post-production" and await _post_production_preview_is_live(ex, project):
+        from app.services.preview_manager import resolve_preview_upstream
+
+        meta = ex.workspace.load_metadata(project.id)
+        upstream = await resolve_preview_upstream(project.id, meta)
+        if upstream:
+            context["preview_upstream"] = upstream
+            context["preview_status"] = "running"
+        ex.workspace.append_log(
+            project.id,
+            "pipeline.log",
+            "[post-production] Keeping live preview running for this improvement cycle",
+        )
+        return
+    await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
+
+
 async def run_enrichment_passes(
     ex: "PipelineExecutor",
     session,
@@ -44,8 +79,7 @@ async def run_enrichment_passes(
     if context.get(completion_key):
         return True
 
-    await ex._refresh_context(session, project, context)
-    await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
+    await _ensure_enrichment_preview(ex, session, project, context, log_prefix=log_prefix)
 
     passes_done = int(context.get(passes_completed_key) or 0)
     completed_slugs: set[str] = set(context.get(completed_slugs_key) or [])
@@ -263,7 +297,8 @@ async def run_enrichment_passes(
             # no product-qa.json (common on rich intake specs that ship complete).
             passes_done += 1
             context[passes_completed_key] = passes_done
-            await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
+            if log_prefix != "post-production" or not await _post_production_preview_is_live(ex, project):
+                await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
             audit = await audit_live_preview(context)
             context["preview_audit"] = audit
             qa_task = await ex.create_task(

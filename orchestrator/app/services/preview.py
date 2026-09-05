@@ -8,6 +8,24 @@ from app.services.deployment_urls import build_public_origin
 
 logger = logging.getLogger(__name__)
 
+_PREVIEW_META_KEYS = (
+    "preview_url",
+    "staging_url",
+    "preview_type",
+    "preview_status",
+    "preview_backend",
+    "preview_container",
+    "preview_container_id",
+    "preview_ephemeral_image",
+    "preview_health_path",
+    "preview_app_port",
+    "preview_internal_port",
+    "preview_port",
+    "staging_port",
+    "preview_failure_kind",
+    "preview_process_id",
+)
+
 _port_counter = settings.preview_internal_port_start
 _port_lock = asyncio.Lock()
 
@@ -66,6 +84,30 @@ async def allocate_preview_port(meta: dict[str, Any]) -> int:
         if _port_counter > settings.preview_internal_port_end:
             _port_counter = settings.preview_internal_port_start
         return port
+
+
+def snapshot_preview_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    return {key: meta[key] for key in _PREVIEW_META_KEYS if key in meta}
+
+
+def restore_preview_meta(meta: dict[str, Any], snapshot: dict[str, Any]) -> None:
+    for key in _PREVIEW_META_KEYS:
+        if key in snapshot:
+            meta[key] = snapshot[key]
+        else:
+            meta.pop(key, None)
+
+
+def snapshot_preview_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    return {key: meta[key] for key in _PREVIEW_META_KEYS if key in meta}
+
+
+def restore_preview_meta(meta: dict[str, Any], snapshot: dict[str, Any]) -> None:
+    for key in _PREVIEW_META_KEYS:
+        if key in snapshot:
+            meta[key] = snapshot[key]
+        else:
+            meta.pop(key, None)
 
 
 def update_preview_metadata(
