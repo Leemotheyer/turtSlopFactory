@@ -9,6 +9,7 @@ from app.services.preview_manager import (
     dev_preview_image_tag,
     preview_container_name,
     preview_staging_container_name,
+    project_image_repository,
     promote_preview_container,
     start_dev_preview,
     start_docker_preview,
@@ -55,6 +56,76 @@ def test_snapshot_preview_meta_preserves_running_state():
     assert meta["preview_status"] == "running"
     assert meta["preview_container"] == preview_container_name(project_id)
     assert meta["unrelated"] == "keep"
+
+
+def test_project_image_repository():
+    assert project_image_repository("Clicker Idle Game") == "factory/clicker-idle-game"
+
+
+@pytest.mark.asyncio
+async def test_prune_stale_project_build_images_keeps_current_tag():
+    from app.services.preview_manager import prune_stale_project_build_images
+
+    with patch("app.services.preview_manager.docker_available", return_value=True), patch(
+        "app.services.preview_manager._run_docker",
+        new_callable=AsyncMock,
+    ) as run_docker, patch(
+        "app.services.preview_manager.images_referenced_by_containers",
+        new_callable=AsyncMock,
+        return_value=set(),
+    ), patch(
+        "app.services.preview_manager._remove_image", new_callable=AsyncMock
+    ) as remove:
+        run_docker.side_effect = [
+            (0, "build-old\nbuild-new\n"),
+            (0, ""),
+        ]
+        removed = await prune_stale_project_build_images(
+            "demo-app",
+            keep_tags={"build-new"},
+        )
+    assert removed == ["factory/demo-app:build-old"]
+    remove.assert_awaited_once_with("factory/demo-app:build-old")
+
+
+@pytest.mark.asyncio
+async def test_prune_stale_project_build_images_skips_referenced():
+    from app.services.preview_manager import prune_stale_project_build_images
+
+    with patch("app.services.preview_manager.docker_available", return_value=True), patch(
+        "app.services.preview_manager._run_docker",
+        new_callable=AsyncMock,
+        return_value=(0, "build-old\n"),
+    ), patch(
+        "app.services.preview_manager.images_referenced_by_containers",
+        new_callable=AsyncMock,
+        return_value={"factory/demo-app:build-old"},
+    ), patch(
+        "app.services.preview_manager._remove_image", new_callable=AsyncMock
+    ) as remove:
+        removed = await prune_stale_project_build_images("demo-app", keep_tags=set())
+    assert removed == []
+    remove.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_prune_unused_factory_build_images():
+    from app.services.preview_manager import prune_unused_factory_build_images
+
+    with patch("app.services.preview_manager.docker_available", return_value=True), patch(
+        "app.services.preview_manager.images_referenced_by_containers",
+        new_callable=AsyncMock,
+        return_value={"factory-preview-runtime:1"},
+    ), patch(
+        "app.services.preview_manager._run_docker",
+        new_callable=AsyncMock,
+        return_value=(0, "factory/app:build-1\nfactory/app:build-2\n"),
+    ), patch(
+        "app.services.preview_manager._remove_image", new_callable=AsyncMock
+    ) as remove:
+        removed = await prune_unused_factory_build_images()
+    assert len(removed) == 2
+    assert remove.await_count == 2
 
 
 def test_runtime_image_constant_matches_spec():

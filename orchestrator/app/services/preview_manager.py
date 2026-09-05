@@ -47,6 +47,11 @@ def dev_preview_image_tag(project_id: UUID) -> str:
     return f"factory-preview-dev-{str(project_id)[:8]}"
 
 
+def project_image_repository(project_name: str) -> str:
+    """Docker repository name for a project's built images (factory/<slug>)."""
+    return f"factory/{project_name.lower().replace(' ', '-')}"
+
+
 def docker_available() -> bool:
     if settings.disable_docker:
         return False
@@ -113,12 +118,80 @@ async def promote_preview_container(project_id: UUID, staging_name: str) -> bool
     return await _rename_container(staging_name, canonical)
 
 
+async def remove_docker_image(image_ref: str) -> None:
+    """Remove a Docker image if it is not a protected factory runtime image."""
+    await _remove_image(image_ref)
+
+
 async def _remove_image(image_ref: str) -> None:
     if not image_ref:
         return
     if image_ref in {PREVIEW_RUNTIME_IMAGE, _FALLBACK_RUNTIME_IMAGE}:
         return
     await _run_docker("rmi", "-f", image_ref)
+
+
+async def images_referenced_by_containers() -> set[str]:
+    """Image refs (repo:tag or id) referenced by any container on the host."""
+    code, output = await _run_docker("ps", "-a", "--format", "{{.Image}}")
+    if code != 0:
+        return set()
+    return {line.strip() for line in output.splitlines() if line.strip()}
+
+
+async def prune_stale_project_build_images(
+    project_name: str,
+    *,
+    keep_tags: set[str],
+) -> list[str]:
+    """Remove old factory build images for one project, keeping named tags."""
+    if not docker_available():
+        return []
+    repo = project_image_repository(project_name)
+    code, output = await _run_docker("images", repo, "--format", "{{.Tag}}")
+    if code != 0:
+        return []
+
+    referenced = await images_referenced_by_containers()
+    removed: list[str] = []
+    for tag in output.splitlines():
+        tag = tag.strip()
+        if not tag or tag == "<none>" or tag in keep_tags:
+            continue
+        full = f"{repo}:{tag}"
+        if full in referenced:
+            continue
+        await _remove_image(full)
+        removed.append(full)
+    return removed
+
+
+async def prune_unused_factory_build_images() -> list[str]:
+    """Drop labeled project build images that no container references."""
+    if not docker_available():
+        return []
+
+    protected = {PREVIEW_RUNTIME_IMAGE, _FALLBACK_RUNTIME_IMAGE}
+    protected |= await images_referenced_by_containers()
+
+    code, output = await _run_docker(
+        "images",
+        "--filter",
+        "label=factory.build=1",
+        "--format",
+        "{{.Repository}}:{{.Tag}}",
+    )
+    if code != 0:
+        return []
+
+    removed: list[str] = []
+    for line in output.splitlines():
+        ref = line.strip()
+        if not ref or ref.endswith(":<none>") or ref in protected:
+            continue
+        await _remove_image(ref)
+        removed.append(ref)
+    return removed
 
 
 async def stop_preview(
@@ -568,7 +641,13 @@ async def cleanup_orphan_preview_resources() -> dict[str, int]:
     for iid in image_ids:
         await _run_docker("rmi", "-f", iid)
 
-    return {"containers": len(container_ids), "images": len(image_ids)}
+    pruned_builds = await prune_unused_factory_build_images()
+
+    return {
+        "containers": len(container_ids),
+        "images": len(image_ids),
+        "build_images": len(pruned_builds),
+    }
 
 
 async def warmup_preview_runtime() -> None:

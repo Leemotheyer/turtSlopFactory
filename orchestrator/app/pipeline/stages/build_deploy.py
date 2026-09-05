@@ -176,6 +176,20 @@ async def verify_deployment(
             "pipeline.log",
             f"[deploy] Verified {image_tag} over {settings.deploy_observation_seconds}s window",
         )
+        from app.services.preview_manager import prune_stale_project_build_images
+
+        if image_tag and image_tag not in ("dev", "none"):
+            keep_tag = image_tag.split(":", 1)[-1] if ":" in image_tag else image_tag
+            removed = await prune_stale_project_build_images(
+                project.name,
+                keep_tags={keep_tag},
+            )
+            if removed:
+                ex.workspace.append_log(
+                    project.id,
+                    "pipeline.log",
+                    f"[deploy] Removed {len(removed)} old preview image(s) after verification",
+                )
         return True
 
     # Regression: roll back to the previous running tag when one exists.
@@ -196,6 +210,15 @@ async def verify_deployment(
             preview_type="docker",
             image_tag=previous_tag,
         )
+        from app.services.preview_manager import remove_docker_image
+
+        if image_tag and image_tag not in ("dev", "none"):
+            await remove_docker_image(image_tag)
+            ex.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[deploy] Removed failed image {image_tag}",
+            )
         await create_notification(
             session,
             project.id,

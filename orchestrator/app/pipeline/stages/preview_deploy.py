@@ -23,6 +23,7 @@ from app.services.preview_manager import (
     preview_container_name,
     preview_staging_container_name,
     promote_preview_container,
+    prune_stale_project_build_images,
     start_dev_preview,
     start_docker_preview,
     stop_preview,
@@ -237,6 +238,21 @@ async def deploy_live_preview(
             f"Open {preview_url} ({preview_type})",
             output[:200] if output else None,
         )
+        if preview_type != "dev" and backend == "docker":
+            tag_to_keep = image_tag or project.image_tag
+            if tag_to_keep and tag_to_keep not in ("dev", "none"):
+                keep_tag = tag_to_keep.split(":", 1)[-1] if ":" in tag_to_keep else tag_to_keep
+                removed = await prune_stale_project_build_images(
+                    project.name,
+                    keep_tags={keep_tag},
+                )
+                if removed:
+                    ex.workspace.append_log(
+                        project.id,
+                        "pipeline.log",
+                        f"[preview] Removed {len(removed)} old image(s): {', '.join(removed[:5])}"
+                        + (f" (+{len(removed) - 5} more)" if len(removed) > 5 else ""),
+                    )
     elif launch.failure_kind == "app":
         context["last_failure"] = (
             "Factory live preview failed to start the app. "
