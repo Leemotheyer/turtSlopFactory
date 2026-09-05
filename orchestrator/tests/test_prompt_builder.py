@@ -16,7 +16,7 @@ def test_enrichment_prompt_excludes_greenfield_planning():
         },
     )
     assert "enrichment-plan.json" in prompt
-    assert "substantial" in prompt.lower()
+    assert "milestone" in prompt.lower()
     assert "Product vision" in prompt
     assert "Architect rules" in prompt
     assert "NOT** write requirements.md" in prompt or "NOT write requirements.md" in prompt

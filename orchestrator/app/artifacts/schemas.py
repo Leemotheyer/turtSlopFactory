@@ -20,6 +20,13 @@ class EnrichmentFeature(_Artifact):
     description: str = ""
     scope: str = "in_scope"  # in_scope | uncertain | out_of_scope
     priority: str = "medium"
+    tier: str = "polish"  # milestone | polish
+
+    @field_validator("tier", mode="before")
+    @classmethod
+    def _normalize_tier(cls, value):
+        value = str(value or "polish").lower()
+        return value if value in ("milestone", "polish") else "polish"
 
 
 class EnrichmentPlan(_Artifact):

@@ -242,6 +242,8 @@ async def run_developer_units(
             }
             if command.startswith("enrichment_"):
                 unit_context["enrichment_command"] = command
+                if unit.tier:
+                    unit_context["enrichment_tier"] = unit.tier
             run = await ex.runner.run(
                 AgentRole.DEVELOPER,
                 project.id,

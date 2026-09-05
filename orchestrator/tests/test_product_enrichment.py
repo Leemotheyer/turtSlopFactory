@@ -61,14 +61,56 @@ def test_features_to_work_units_includes_approved_uncertain():
 
 def test_features_to_work_units_batches_multiple_features():
     features = [
-        {"id": f"feat-{i}", "title": f"Feature {i}", "description": "Do substantial work " * 5, "scope": "in_scope"}
+        {
+            "id": f"feat-{i}",
+            "title": f"Feature {i}",
+            "description": "Do substantial work " * 5,
+            "scope": "in_scope",
+            "tier": "polish",
+        }
         for i in range(6)
     ]
+    features[0]["tier"] = "milestone"
     units = features_to_work_units(features)
     batch_size = max(2, settings.enrichment_features_per_agent)
-    expected_batches = (len(features) + batch_size - 1) // batch_size
-    assert len(units) == expected_batches
-    assert "Implement **all**" in (units[0].feature_content or "")
+    expected_batches = (len(features) - 1 + batch_size - 1) // batch_size
+    assert len(units) == 1 + expected_batches
+    assert units[0].tier == "milestone"
+    assert "Implement **all**" in (units[1].feature_content or "")
+
+
+def test_features_to_work_units_promotes_first_when_no_milestone():
+    features = [
+        {"id": "a", "title": "Alpha", "description": "First substantial work " * 5, "scope": "in_scope"},
+        {"id": "b", "title": "Beta", "description": "Second substantial work " * 5, "scope": "in_scope"},
+    ]
+    units = features_to_work_units(features)
+    assert len(units) == 2
+    assert units[0].tier == "milestone"
+    assert units[0].title.startswith("Milestone:")
+
+
+def test_features_to_work_units_milestone_is_solo_unit():
+    features = [
+        {
+            "id": "big-idea",
+            "title": "Export library",
+            "description": "Add full export workflow with formats and progress UI",
+            "scope": "in_scope",
+            "tier": "milestone",
+        },
+        {
+            "id": "polish-1",
+            "title": "Loading states",
+            "description": "Add skeleton loaders on list pages",
+            "scope": "in_scope",
+            "tier": "polish",
+        },
+    ]
+    units = features_to_work_units(features)
+    assert len(units) == 2
+    assert units[0].tier == "milestone"
+    assert "milestone expansion" in (units[0].feature_content or "").lower()
 
 
 def test_features_to_work_units_skips_completed_slugs():
@@ -96,7 +138,7 @@ def test_enrichment_change_summary_lists_deliverables():
 def test_enrichment_pass_theme_hint_includes_pass_number():
     hint = enrichment_pass_theme_hint(1)
     assert "Pass 1" in hint
-    assert "core" in hint.lower() or "journey" in hint.lower()
+    assert "milestone" in hint.lower()
 
 
 def test_local_enrichment_plan_uses_pass_themes():
@@ -110,6 +152,9 @@ def test_local_enrichment_plan_uses_pass_themes():
     ids1 = {f["id"] for f in plan1["features"]}
     ids2 = {f["id"] for f in plan2["features"]}
     assert ids1 != ids2
+    milestones = [f for f in plan1["features"] if f.get("tier") == "milestone"]
+    assert milestones
+    assert milestones[0]["id"] == "core-flows"
 
 
 def test_local_enrichment_plan_skips_completed():

@@ -11,6 +11,7 @@ class WorkUnit:
     description: str
     feature_id: str | None = None
     feature_content: str | None = None
+    tier: str | None = None  # milestone | polish (enrichment only)
 
 
 def _slugify(text: str) -> str:
@@ -180,11 +181,17 @@ def plan_from_enrichment_features(
     *,
     completed_slugs: set[str] | None = None,
     intake: dict | None = None,
+    max_features: int | None = None,
 ) -> list[WorkUnit]:
     from app.services.product_enrichment import features_to_work_units
 
     return features_to_work_units(
-        features, notes, input_responses, completed_slugs=completed_slugs, intake=intake
+        features,
+        notes,
+        input_responses,
+        completed_slugs=completed_slugs,
+        intake=intake,
+        max_features=max_features,
     )
 
 

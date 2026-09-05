@@ -249,6 +249,7 @@ async def run_enrichment_passes(
             context.get("input_responses", []),
             completed_slugs=completed_slugs,
             intake=intake,
+            max_features=context.get("max_features_per_pass"),
         )
         if not units:
             reason = plan.get("stop_reason") or "no in-scope improvements"

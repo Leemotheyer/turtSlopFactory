@@ -170,6 +170,7 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
     if enrichment_pass:
         audit = context.get("preview_audit") or {}
         max_features = context.get("max_features_per_pass", 8)
+        max_polish = max(0, int(max_features) - 1)
         theme_hint = enrichment_pass_theme_hint(int(enrichment_pass))
         sections.append(
             "\n"
@@ -183,6 +184,7 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
                 audit_has_html_ui=audit.get("has_html_ui", False),
                 audit_issues=", ".join(audit.get("issues") or []) or "none recorded",
                 max_features=max_features,
+                max_polish=max_polish,
             )
         )
         from app.services.intake_contract import intake_capability_lines
@@ -246,7 +248,10 @@ Extend the current implementation. **Do not rebuild** working routes, models, or
             enrichment_cmd = context.get("enrichment_command")
             enrichment_block = ""
             if enrichment_cmd:
-                enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_block")
+                if context.get("enrichment_tier") == "milestone":
+                    enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_milestone_block")
+                else:
+                    enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_block")
             sections.append(
                 "\n"
                 + _render(

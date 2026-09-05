@@ -219,6 +219,27 @@ def _expand_feature_description(title: str, description: str) -> str:
     )
 
 
+def _expand_milestone_description(title: str, description: str) -> str:
+    """Scope text for the one big-idea feature per enrichment pass."""
+    desc = description.strip()
+    if len(desc) >= 180 and "milestone" in desc.lower():
+        return desc
+    return (
+        f"{desc}\n\n"
+        f"**Milestone — {title}**\n"
+        "Primary expansion for this enrichment pass. Deliver a substantial new capability "
+        "or feature area users will notice immediately:\n"
+        "- Complete user journeys with API, persistence, validation, and UI\n"
+        "- Meaningful new functionality — not cosmetic polish or tiny tweaks\n"
+        "- Pytest coverage for new behavior and verification through the live preview"
+    )
+
+
+def _normalize_feature_tier(item: dict) -> str:
+    tier = str(item.get("tier") or "polish").lower()
+    return tier if tier == "milestone" else "polish"
+
+
 def _batch_feature_dicts(features: list[dict], batch_size: int) -> list[list[dict]]:
     if not features:
         return []
@@ -228,6 +249,26 @@ def _batch_feature_dicts(features: list[dict], batch_size: int) -> list[list[dic
     for index in range(0, len(features), batch_size):
         batches.append(features[index : index + batch_size])
     return batches
+
+
+def _milestone_to_work_unit(item: dict) -> WorkUnit:
+    title = str(item.get("title") or item.get("id") or "Milestone").strip()
+    description = str(item.get("description") or title).strip()
+    expanded = _expand_milestone_description(title, description)
+    content = (
+        "Implement this **milestone expansion** for the enrichment pass — a substantial new "
+        "capability or feature area, not polish:\n\n"
+        f"### {title}\n{expanded}"
+    ).strip()
+    feature_id = _slugify(str(item.get("id") or title))
+    return WorkUnit(
+        stream="feature",
+        title=f"Milestone: {title[:56]}",
+        description=content,
+        feature_id=feature_id[:48],
+        feature_content=content,
+        tier="milestone",
+    )
 
 
 def _batch_to_work_unit(batch: list[dict], batch_index: int) -> WorkUnit:
@@ -260,6 +301,7 @@ def _batch_to_work_unit(batch: list[dict], batch_index: int) -> WorkUnit:
         description=content,
         feature_id=feature_id[:48],
         feature_content=content,
+        tier="polish",
     )
 
 
@@ -270,10 +312,14 @@ def features_to_work_units(
     *,
     completed_slugs: set[str] | None = None,
     intake: dict | None = None,
+    max_features: int | None = None,
 ) -> list[WorkUnit]:
     notes = notes or []
     completed_slugs = completed_slugs or set()
-    in_scope: list[dict] = []
+    cap = max_features if max_features is not None else settings.max_features_per_enrichment_pass
+    polish_cap = max(0, cap - 1)
+    milestones: list[dict] = []
+    polish: list[dict] = []
     seen: set[str] = set()
 
     for item in features:
@@ -296,13 +342,30 @@ def features_to_work_units(
         if slug in seen or slug in completed_slugs:
             continue
         seen.add(slug)
-        in_scope.append({**item, "title": title, "description": description, "id": slug})
-        if len(in_scope) >= settings.max_features_per_enrichment_pass:
-            break
+        normalized = {
+            **item,
+            "title": title,
+            "description": description,
+            "id": slug,
+            "tier": _normalize_feature_tier(item),
+        }
+        if normalized["tier"] == "milestone":
+            milestones.append(normalized)
+        else:
+            polish.append(normalized)
 
+    if not milestones and polish:
+        milestones.append({**polish.pop(0), "tier": "milestone"})
+
+    units: list[WorkUnit] = []
+    if milestones:
+        units.append(_milestone_to_work_unit(milestones[0]))
+
+    polish = polish[:polish_cap]
     batch_size = max(2, settings.enrichment_features_per_agent)
-    batches = _batch_feature_dicts(in_scope, batch_size)
-    return [_batch_to_work_unit(batch, index) for index, batch in enumerate(batches)]
+    batches = _batch_feature_dicts(polish, batch_size)
+    units.extend(_batch_to_work_unit(batch, index) for index, batch in enumerate(batches))
+    return units
 
 
 def local_enrichment_plan(
@@ -327,11 +390,18 @@ def local_enrichment_plan(
     )
     features: list[dict] = []
 
-    for fid, title, desc in theme:
+    for index, (fid, title, desc) in enumerate(theme):
         if fid in completed_slugs:
             continue
         features.append(
-            {"id": fid, "title": title, "description": desc, "scope": "in_scope", "priority": "high"}
+            {
+                "id": fid,
+                "title": title,
+                "description": desc,
+                "scope": "in_scope",
+                "priority": "high",
+                "tier": "milestone" if index == 0 else "polish",
+            }
         )
 
     endpoints = audit.get("endpoints") or []
@@ -347,6 +417,7 @@ def local_enrichment_plan(
                 ),
                 "scope": "in_scope",
                 "priority": "high",
+                "tier": "milestone",
             },
         )
     elif not any("/api/" in e.get("path", "") for e in endpoints if e.get("ok")):
@@ -361,6 +432,7 @@ def local_enrichment_plan(
                 ),
                 "scope": "in_scope",
                 "priority": "high",
+                "tier": "milestone",
             },
         )
 
@@ -372,6 +444,7 @@ def local_enrichment_plan(
                 "description": f"Resolve audit issue: {issue}. Include tests where applicable.",
                 "scope": "in_scope",
                 "priority": "high",
+                "tier": "polish",
             }
         )
 
@@ -397,6 +470,7 @@ def local_enrichment_plan(
                     ),
                     "scope": "in_scope",
                     "priority": "high",
+                    "tier": "milestone",
                 }
             )
             if len(features) >= settings.max_features_per_enrichment_pass:
@@ -419,6 +493,7 @@ def local_enrichment_plan(
                 ),
                 "scope": "in_scope",
                 "priority": "medium",
+                "tier": "polish",
             }
         )
         if len(features) >= settings.max_features_per_enrichment_pass:
@@ -451,10 +526,17 @@ def enrichment_pass_theme_hint(pass_number: int) -> str:
         ((pass_number - 1) % max(_ENRICHMENT_PASS_THEMES)) + 1, []
     )
     if not theme:
-        return "Ship substantial, user-visible improvements across backend and frontend."
-    lines = [f"Pass {pass_number} focus areas (each should be a real milestone, not a nit):"]
-    for _fid, title, desc in theme:
-        lines.append(f"- **{title}**: {desc[:160]}{'…' if len(desc) > 160 else ''}")
+        return (
+            "Ship one milestone expansion plus polish improvements. "
+            "Milestone = substantial new capability; polish = smaller UX and quality fixes."
+        )
+    lines = [
+        f"Pass {pass_number}: propose **one milestone** (big new capability) plus polish items.",
+        "Milestone ideas for this pass:",
+    ]
+    for index, (_fid, title, desc) in enumerate(theme):
+        prefix = "★ Milestone candidate" if index == 0 else "Polish"
+        lines.append(f"- {prefix} — **{title}**: {desc[:160]}{'…' if len(desc) > 160 else ''}")
     return "\n".join(lines)
 
 
