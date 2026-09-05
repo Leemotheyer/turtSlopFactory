@@ -145,6 +145,65 @@ def test_disable_self_propelling_cancels_pending_cycles(monkeypatch):
     assert "post_production_pending" not in meta_store
 
 
+def test_stop_after_cycle_blocks_scheduling_but_keeps_enabled(monkeypatch):
+    meta_store: dict = {}
+
+    def load_metadata(_pid):
+        return dict(meta_store)
+
+    def save_metadata(_pid, meta):
+        meta_store.clear()
+        meta_store.update(meta)
+
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    ws.load_metadata = load_metadata
+    ws.save_metadata = save_metadata
+
+    project_id = uuid4()
+    save_self_propelling_settings(project_id, enabled=True, rapid_iterations=True, workspace=ws)
+    with patch("app.pipeline.executor.pipeline_executor") as executor:
+        executor.is_running.return_value = False
+        save_self_propelling_settings(project_id, stop_after_cycle=True, workspace=ws)
+
+    settings = get_self_propelling_settings(project_id, ws)
+    assert settings["enabled"] is True
+    assert settings["stop_after_cycle"] is True
+    assert is_self_propelling_enabled(project_id, ws) is False
+    assert "rapid_next_cycle_pending" not in meta_store["self_propelling"]
+
+
+def test_mark_cycle_completed_finalizes_stop_after_cycle(monkeypatch):
+    meta_store = {
+        "self_propelling": {
+            "enabled": True,
+            "stop_after_cycle": True,
+            "rapid_iterations": True,
+            "rapid_next_cycle_pending": True,
+        }
+    }
+
+    def load_metadata(_pid):
+        return dict(meta_store)
+
+    def save_metadata(_pid, meta):
+        meta_store.clear()
+        meta_store.update(meta)
+
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    ws.load_metadata = load_metadata
+    ws.save_metadata = save_metadata
+
+    project_id = uuid4()
+    mark_cycle_completed(project_id, ws)
+    cfg = meta_store["self_propelling"]
+    assert cfg["enabled"] is False
+    assert "stop_after_cycle" not in cfg
+    assert "rapid_next_cycle_pending" not in cfg
+    assert cfg["cycles_completed"] == 1
+
+
 def test_mark_cycle_completed_does_not_arm_when_disabled(monkeypatch):
     meta_store = {
         "self_propelling": {

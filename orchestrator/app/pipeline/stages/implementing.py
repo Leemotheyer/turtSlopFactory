@@ -14,7 +14,7 @@ from app.services.agent_concurrency import (
     resolve_concurrency_budget,
     wait_for_cursor_capacity,
 )
-from app.services.change_stats import capture_repo_baseline, record_change_stats
+from app.services.change_stats import capture_repo_baseline, compute_change_stats, record_change_stats
 from app.services.completed_work import mark_work_unit_complete
 from app.services.factory_settings import get_agent_backend
 from app.services.work_planner import optimize_work_units
@@ -272,6 +272,22 @@ async def run_developer_units(
             all_ok = False
 
     combined = "; ".join(outputs)
+    stats = compute_change_stats(ex.workspace.repo_dir(project.id), baseline)
+    if command.startswith("enrichment_"):
+        has_milestone = any(getattr(u, "tier", None) == "milestone" for u in units)
+        min_lines = 8 if has_milestone else 3
+        if stats["files_changed"] < 1 or stats["lines_changed"] < min_lines:
+            all_ok = False
+            combined = (
+                f"No meaningful code changes detected ({stats['files_changed']} files, "
+                f"{stats['lines_changed']} lines). Developers must edit source files — "
+                f"JSON plans or chat replies do not count. {combined}"
+            )
+            ex.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[enrichment] {combined[:400]}",
+            )
     await record_change_stats(
         ex,
         session,

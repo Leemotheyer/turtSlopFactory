@@ -4,3 +4,4 @@ This task covers **polish improvements** batched for this pass. Implement **all*
 - Add or update pytest tests for new/changed API behavior.
 - Wire the UI with loading, error, and empty states — verify through the factory live preview.
 - Do **not** stop after cosmetic-only changes; each item should be a visible capability or flow.
+- **Never** reply with JSON feature lists, enrichment plans, or markdown specs — modify real source files in the repo.

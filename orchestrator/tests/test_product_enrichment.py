@@ -157,6 +157,28 @@ def test_local_enrichment_plan_uses_pass_themes():
     assert milestones[0]["id"] == "core-flows"
 
 
+def test_local_enrichment_plan_pass_two_within_max_passes():
+    audit = {
+        "health_ok": True,
+        "has_html_ui": True,
+        "endpoints": [{"method": "GET", "path": "/api/items", "ok": True}],
+    }
+    plan = local_enrichment_plan(audit, pass_number=2, max_passes=2)
+    assert plan["features"]
+    assert plan.get("stop_reason") is None
+
+
+def test_local_enrichment_plan_rotates_themes_across_cycles():
+    audit = {
+        "health_ok": True,
+        "has_html_ui": True,
+        "endpoints": [{"method": "GET", "path": "/api/items", "ok": True}],
+    }
+    cycle1 = {f["id"] for f in local_enrichment_plan(audit, pass_number=1, cycle_number=1)["features"]}
+    cycle2 = {f["id"] for f in local_enrichment_plan(audit, pass_number=1, cycle_number=2)["features"]}
+    assert cycle1 != cycle2
+
+
 def test_local_enrichment_plan_skips_completed():
     audit = {"health_ok": True, "has_html_ui": True, "endpoints": [{"path": "/api/items", "ok": True}]}
     plan = local_enrichment_plan(audit, pass_number=1, completed_slugs={"core-flows", "navigation-shell"})

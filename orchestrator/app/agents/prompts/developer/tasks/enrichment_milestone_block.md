@@ -6,3 +6,4 @@ This is the **one big idea** for this enrichment iteration. Implement a substant
 - Touch backend and frontend together — wire full journeys with persistence, validation, and tests.
 - Include pytest coverage for new API behavior and verify the feature works through the live preview.
 - Do **not** stop at scaffolding or a thin slice — ship something a user could actually use end-to-end.
+- **Never** reply with JSON feature lists, enrichment plans, or markdown specs — modify real source files in the repo.

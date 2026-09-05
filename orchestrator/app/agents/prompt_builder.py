@@ -171,7 +171,10 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
         audit = context.get("preview_audit") or {}
         max_features = context.get("max_features_per_pass", 8)
         max_polish = max(0, int(max_features) - 1)
-        theme_hint = enrichment_pass_theme_hint(int(enrichment_pass))
+        theme_hint = enrichment_pass_theme_hint(
+            int(enrichment_pass),
+            int(context.get("improvement_cycle_number") or 1),
+        )
         sections.append(
             "\n"
             + _render(

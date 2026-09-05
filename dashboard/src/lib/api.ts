@@ -110,6 +110,7 @@ export interface ProjectDetail extends Project {
   post_production_cycle_active?: boolean;
   self_propelling?: {
     enabled: boolean;
+    stop_after_cycle?: boolean;
     rapid_iterations?: boolean;
     post_production_passes?: number | null;
     interval_hours?: number | null;
@@ -737,6 +738,7 @@ export async function updateSelfPropelling(
   projectId: string,
   params: {
     enabled?: boolean;
+    stop_after_cycle?: boolean;
     rapid_iterations?: boolean;
     post_production_passes?: number | null;
     interval_hours?: number | null;

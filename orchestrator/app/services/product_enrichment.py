@@ -120,6 +120,12 @@ _ENRICHMENT_PASS_THEMES: dict[int, list[tuple[str, str, str]]] = {
 }
 
 
+def _theme_key_for_pass(pass_number: int, cycle_number: int = 1) -> int:
+    """Map pass + improvement cycle to a theme bucket so cycles don't repeat the same plan."""
+    theme_count = len(_ENRICHMENT_PASS_THEMES) or 1
+    return ((max(1, int(pass_number)) - 1 + max(1, int(cycle_number)) - 1) % theme_count) + 1
+
+
 def classify_scope(
     title: str,
     description: str,
@@ -377,15 +383,17 @@ def local_enrichment_plan(
     completed_slugs: set[str] | None = None,
     intake: dict | None = None,
     ux_backlog: list[dict] | None = None,
+    cycle_number: int = 1,
 ) -> dict:
     """Deterministic fallback when Cursor architect is unavailable."""
     notes = notes or []
     completed_slugs = completed_slugs or set()
     cap = max_passes if max_passes is not None else settings.max_enrichment_passes
-    if pass_number >= cap:
+    if pass_number > cap:
         return {"features": [], "quality_issues": [], "stop_reason": "max passes"}
 
-    theme = _ENRICHMENT_PASS_THEMES.get(pass_number) or _ENRICHMENT_PASS_THEMES.get(
+    theme_key = _theme_key_for_pass(pass_number, cycle_number)
+    theme = _ENRICHMENT_PASS_THEMES.get(theme_key) or _ENRICHMENT_PASS_THEMES.get(
         ((pass_number - 1) % max(_ENRICHMENT_PASS_THEMES)) + 1, []
     )
     features: list[dict] = []
@@ -520,9 +528,10 @@ def local_enrichment_plan(
     }
 
 
-def enrichment_pass_theme_hint(pass_number: int) -> str:
+def enrichment_pass_theme_hint(pass_number: int, cycle_number: int = 1) -> str:
     """Short architect guidance for what this pass should focus on."""
-    theme = _ENRICHMENT_PASS_THEMES.get(pass_number) or _ENRICHMENT_PASS_THEMES.get(
+    theme_key = _theme_key_for_pass(pass_number, cycle_number)
+    theme = _ENRICHMENT_PASS_THEMES.get(theme_key) or _ENRICHMENT_PASS_THEMES.get(
         ((pass_number - 1) % max(_ENRICHMENT_PASS_THEMES)) + 1, []
     )
     if not theme:

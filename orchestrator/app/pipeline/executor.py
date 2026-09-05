@@ -1027,33 +1027,60 @@ class PipelineExecutor:
                 if parse_project_state(project.state) == ProjectState.PRODUCTION and meta.get(
                     "post_production_pending"
                 ):
-                    context["post_production"] = True
-                    context.pop("post_production_enrichment_complete", None)
-                    context.pop("post_production_tests_complete", None)
-                    context.pop("post_production_redeploy_complete", None)
-                    context.pop("post_production_passes_completed", None)
-                    cycle_tokens = None
-                    try:
-                        from app.services.cursor_connection import fetch_usage
+                    from app.services.self_propelling import (
+                        cancel_scheduled_post_production_cycles,
+                        get_self_propelling_settings,
+                        is_self_propelling_enabled,
+                    )
 
-                        usage = await fetch_usage(session)
-                        if usage.get("connected"):
-                            cycle_tokens = (usage.get("tokens") or {}).get("total_tokens")
-                    except Exception:
-                        pass
-                    mark_cycle_started(project_id, self.workspace, cycle_start_tokens=cycle_tokens)
-                    self.workspace.append_log(
-                        project_id,
-                        "pipeline.log",
-                        "[post-production] Starting self-propelling improvement cycle",
-                    )
-                    await self._log_progress(
-                        session,
-                        project_id,
-                        "post_production",
-                        "Self-propelling cycle started",
-                        "Auditing production preview and planning improvements",
-                    )
+                    if not is_self_propelling_enabled(project_id, self.workspace):
+                        cancel_scheduled_post_production_cycles(
+                            project_id, self.workspace, clear_pending_flag=True
+                        )
+                        meta = self.workspace.load_metadata(project_id)
+                        self.workspace.append_log(
+                            project_id,
+                            "pipeline.log",
+                            "[post-production] Self-propelling disabled — skipping improvement cycle",
+                        )
+                    else:
+                        sp = get_self_propelling_settings(project_id, self.workspace)
+                        context["post_production"] = True
+                        context["improvement_cycle_number"] = int(sp.get("cycles_completed") or 0) + 1
+                        context["post_production_completed"] = list(
+                            meta.get("post_production_completed") or []
+                        )
+                        context.pop("post_production_enrichment_complete", None)
+                        context.pop("post_production_tests_complete", None)
+                        context.pop("post_production_redeploy_complete", None)
+                        context.pop("post_production_passes_completed", None)
+                        cycle_tokens = None
+                        try:
+                            from app.services.cursor_connection import fetch_usage
+
+                            usage = await fetch_usage(session)
+                            if usage.get("connected"):
+                                cycle_tokens = (usage.get("tokens") or {}).get("total_tokens")
+                        except Exception:
+                            pass
+                        mark_cycle_started(project_id, self.workspace, cycle_start_tokens=cycle_tokens)
+                        self.workspace.append_log(
+                            project_id,
+                            "pipeline.log",
+                            "[post-production] Starting self-propelling improvement cycle",
+                        )
+                        await self._log_progress(
+                            session,
+                            project_id,
+                            "post_production",
+                            "Self-propelling cycle started",
+                            "Auditing production preview and planning improvements",
+                        )
+
+                meta = self.workspace.load_metadata(project_id)
+                if context.get("post_production") and not meta.get("post_production_pending"):
+                    # Cycle was cancelled while the pipeline was starting.
+                    context.pop("post_production", None)
 
                 async def request_input(**kwargs):
                     return await create_input_request(session, project_id, **kwargs)
@@ -1158,9 +1185,13 @@ class PipelineExecutor:
             if not stopped:
                 try:
                     async with SessionLocal() as session:
-                        from app.services.self_propelling import maybe_schedule_rapid_next_cycle
+                        from app.services.self_propelling import (
+                            is_self_propelling_enabled,
+                            maybe_schedule_rapid_next_cycle,
+                        )
 
-                        await maybe_schedule_rapid_next_cycle(session, project_id)
+                        if is_self_propelling_enabled(project_id, self.workspace):
+                            await maybe_schedule_rapid_next_cycle(session, project_id)
                 except Exception:
                     logger.exception(
                         "Could not schedule rapid post-production cycle for %s", project_id

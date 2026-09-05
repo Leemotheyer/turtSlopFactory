@@ -730,9 +730,22 @@ export default function DashboardPage() {
     ) {
       return;
     }
-    setSelfPropellingEnabled(false);
     setRapidIterations(false);
-    await persistSelfPropelling({ enabled: false, rapid_iterations: false });
+    setSelfPropellingError(null);
+    setSelfPropellingSaving(true);
+    try {
+      await updateSelfPropelling(selectedId!, {
+        stop_after_cycle: true,
+        rapid_iterations: false,
+      });
+      await refresh();
+    } catch (err) {
+      setSelfPropellingError(
+        err instanceof Error ? err.message : "Failed to update self-propelling settings"
+      );
+    } finally {
+      setSelfPropellingSaving(false);
+    }
   }
 
   async function handleSelfPropellingEnabledChange(checked: boolean) {
@@ -2470,22 +2483,31 @@ export default function DashboardPage() {
                   {detail.self_propelling?.enabled && (
                     <div className={styles.selfPropellingBanner}>
                       <p>
-                        <strong>Self-propelling is on</strong>
-                        {detail.self_propelling.rapid_iterations
-                          ? " (rapid mode — cycles chain back-to-back)."
-                          : "."}
-                        {detail.pipeline_running || detail.post_production_cycle_active
-                          ? " The current improvement cycle will finish; use Stop to prevent the next one."
-                          : " Next cycle is scheduled automatically."}
+                        <strong>
+                          {detail.self_propelling.stop_after_cycle
+                            ? "Self-propelling stops after this cycle"
+                            : "Self-propelling is on"}
+                        </strong>
+                        {detail.self_propelling.stop_after_cycle
+                          ? " — finishing the current improvement cycle, then turning off."
+                          : detail.self_propelling.rapid_iterations
+                            ? " (rapid mode — cycles chain back-to-back)."
+                            : "."}
+                        {!detail.self_propelling.stop_after_cycle &&
+                          (detail.pipeline_running || detail.post_production_cycle_active
+                            ? " The current improvement cycle will finish; use Stop to prevent the next one."
+                            : " Next cycle is scheduled automatically.")}
                       </p>
-                      <button
-                        type="button"
-                        className={styles.btnSecondary}
-                        onClick={handleStopSelfPropelling}
-                        disabled={selfPropellingSaving || loading}
-                      >
-                        {selfPropellingSaving ? "Saving…" : "Stop after this cycle"}
-                      </button>
+                      {!detail.self_propelling.stop_after_cycle && (
+                        <button
+                          type="button"
+                          className={styles.btnSecondary}
+                          onClick={handleStopSelfPropelling}
+                          disabled={selfPropellingSaving || loading}
+                        >
+                          {selfPropellingSaving ? "Saving…" : "Stop after this cycle"}
+                        </button>
+                      )}
                     </div>
                   )}
 

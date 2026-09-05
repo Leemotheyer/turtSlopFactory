@@ -183,6 +183,7 @@ async def update_self_propelling(
         raise HTTPException(status_code=404, detail="Project not found")
 
     enabled = body.get("enabled")
+    stop_after_cycle = body.get("stop_after_cycle")
     rapid_iterations = body.get("rapid_iterations")
     post_production_passes = body.get("post_production_passes")
     interval_hours = body.get("interval_hours")
@@ -209,6 +210,7 @@ async def update_self_propelling(
     sp_settings = save_self_propelling_settings(
         project_id,
         enabled=enabled if enabled is not None else None,
+        stop_after_cycle=stop_after_cycle if stop_after_cycle is not None else None,
         rapid_iterations=rapid_iterations if rapid_iterations is not None else None,
         post_production_passes=post_production_passes,
         interval_hours=interval_hours,
@@ -217,7 +219,7 @@ async def update_self_propelling(
     )
 
     if row.state == ProjectState.PRODUCTION.value and sp_settings.get("enabled"):
-        if enabled or rapid_iterations:
+        if (enabled or rapid_iterations) and not sp_settings.get("stop_after_cycle"):
             await maybe_schedule_post_production(db, project_id, force=True)
 
     return sp_settings

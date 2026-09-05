@@ -25,6 +25,18 @@ if TYPE_CHECKING:
     from app.pipeline.executor import PipelineExecutor
 
 
+def _persist_completed_slugs(
+    ex: "PipelineExecutor",
+    project_id,
+    completed_slugs_key: str,
+    completed_slugs: set[str],
+) -> None:
+    if completed_slugs_key == "post_production_completed":
+        meta = ex.workspace.load_metadata(project_id)
+        meta["post_production_completed"] = sorted(completed_slugs)
+        ex.workspace.save_metadata(project_id, meta)
+
+
 async def _post_production_preview_is_live(ex, project) -> bool:
     meta = ex.workspace.load_metadata(project.id)
     if meta.get("preview_status") != "running":
@@ -114,6 +126,7 @@ async def run_enrichment_passes(
                 break
 
         context["enrichment_pass"] = pass_number
+        cycle_number = int(context.get("improvement_cycle_number") or 1)
         ex._save_pipeline_substage(
             project.id,
             {
@@ -165,33 +178,49 @@ async def run_enrichment_passes(
         ideation_context = {
             **context,
             "enrichment_pass": pass_number,
+            "improvement_cycle_number": cycle_number,
             "incremental": True,
         }
         plan_raw = None
         used_fallback = False
-        if skip_unchanged_audit and should_skip_architect(project.id, audit, ex.workspace):
-            plan = local_enrichment_plan(
-                audit,
-                pass_number,
-                context.get("notes", []),
-                max_passes=max_passes,
-                completed_slugs=completed_slugs,
-                intake=context.get("intake"),
-                ux_backlog=context.get("ux_improvement_backlog"),
-            )
+        plan: dict = {"features": []}
+        local_plan = local_enrichment_plan(
+            audit,
+            pass_number,
+            context.get("notes", []),
+            max_passes=max_passes,
+            completed_slugs=completed_slugs,
+            intake=context.get("intake"),
+            ux_backlog=context.get("ux_improvement_backlog"),
+            cycle_number=cycle_number,
+        )
+        skip_architect = (
+            skip_unchanged_audit
+            and should_skip_architect(project.id, audit, ex.workspace)
+            and bool(local_plan.get("features"))
+        )
+        if skip_architect:
+            plan = local_plan
             ex.workspace.write_artifact(
                 project.id,
                 "enrichment-plan.json",
                 json.dumps(plan, indent=2),
             )
             used_fallback = True
-            ideation_success = True
             ideation_output = (
                 f"[factory] Skipped architect — preview audit unchanged; "
                 f"using local plan ({len(plan.get('features') or [])} feature(s))."
             )
-            await ex.complete_task(session, task, ideation_success, ideation_output)
+            await ex.complete_task(session, task, True, ideation_output)
+            if skip_unchanged_audit:
+                record_audit_fingerprint(project.id, audit, ex.workspace)
         else:
+            if skip_unchanged_audit and should_skip_architect(project.id, audit, ex.workspace):
+                ex.workspace.append_log(
+                    project.id,
+                    "pipeline.log",
+                    f"[{log_prefix}] Preview audit unchanged but local plan empty — running architect",
+                )
             run = await ex.runner.run(
                 AgentRole.ARCHITECT,
                 project.id,
@@ -214,6 +243,7 @@ async def run_enrichment_passes(
                     completed_slugs=completed_slugs,
                     intake=context.get("intake"),
                     ux_backlog=context.get("ux_improvement_backlog"),
+                    cycle_number=cycle_number,
                 )
                 ex.workspace.write_artifact(
                     project.id,
@@ -429,6 +459,7 @@ async def run_enrichment_passes(
             if unit.feature_id:
                 completed_slugs.add(unit.feature_id)
         context[completed_slugs_key] = sorted(completed_slugs)
+        _persist_completed_slugs(ex, project.id, completed_slugs_key, completed_slugs)
         ex._save_enrichment_progress(
             project.id,
             {

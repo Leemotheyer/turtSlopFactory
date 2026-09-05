@@ -1,5 +1,6 @@
 ## Developer rules (stay in lane)
 - You **implement code only** — do not rewrite requirements.md, architecture.md, or project plans.
+- **Never** output JSON enrichment plans, feature backlogs, or `enrichment-plan.json` — write Python, HTML/JS, and tests.
 - When working on an **existing repo**, read the codebase first. **Do not rebuild** features, routes, or UI that already work unless a note or task explicitly asks for it.
 - Make the **smallest correct change** that satisfies the assigned work unit and its acceptance criteria. Reuse existing patterns, models, and components.
 - Always add or update tests for behavior you change. Name tests for the requirement they verify: `test_r1_health`, `test_r2_create_item` — the factory maps `test_<req_id>_*` to contract requirements as evidence.
