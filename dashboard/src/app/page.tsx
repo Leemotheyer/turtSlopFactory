@@ -251,6 +251,7 @@ export default function DashboardPage() {
   const [editCycleInterval, setEditCycleInterval] = useState("");
   const [editTokenBudget, setEditTokenBudget] = useState("");
   const [selfPropellingError, setSelfPropellingError] = useState<string | null>(null);
+  const [selfPropellingSaving, setSelfPropellingSaving] = useState(false);
   const [githubRepos, setGithubRepos] = useState<GithubRepository[]>([]);
   const [repoLoading, setRepoLoading] = useState(false);
   const [repoNote, setRepoNote] = useState<string | null>(null);
@@ -675,6 +676,81 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function persistSelfPropelling(
+    overrides: Partial<{
+      enabled: boolean;
+      rapid_iterations: boolean;
+    }> = {}
+  ) {
+    if (!selectedId) return;
+    const enabled = overrides.enabled ?? selfPropellingEnabled;
+    const rapid = overrides.rapid_iterations ?? (enabled ? rapidIterations : false);
+    setSelfPropellingSaving(true);
+    setSelfPropellingError(null);
+    try {
+      await updateSelfPropelling(selectedId, {
+        enabled,
+        rapid_iterations: rapid,
+        post_production_passes:
+          editPostProdPasses.trim() === ""
+            ? null
+            : Math.max(0, Math.min(10, parseInt(editPostProdPasses, 10) || 0)),
+        interval_hours:
+          editCycleInterval.trim() === ""
+            ? null
+            : Math.max(1, Math.min(168, parseInt(editCycleInterval, 10) || 24)),
+        token_budget_per_cycle:
+          editTokenBudget.trim() === ""
+            ? null
+            : Math.max(0, parseInt(editTokenBudget, 10) || 0) || null,
+      });
+      setSelfPropellingEnabled(enabled);
+      setRapidIterations(rapid);
+      await refresh();
+    } catch (err) {
+      setSelfPropellingError(
+        err instanceof Error ? err.message : "Failed to update self-propelling settings"
+      );
+      if (detail?.self_propelling) {
+        setSelfPropellingEnabled(Boolean(detail.self_propelling.enabled));
+        setRapidIterations(Boolean(detail.self_propelling.rapid_iterations));
+      }
+    } finally {
+      setSelfPropellingSaving(false);
+    }
+  }
+
+  async function handleStopSelfPropelling() {
+    if (
+      !confirmAction(
+        "Stop self-propelling after the current cycle finishes? The factory will not start another improvement cycle."
+      )
+    ) {
+      return;
+    }
+    setSelfPropellingEnabled(false);
+    setRapidIterations(false);
+    await persistSelfPropelling({ enabled: false, rapid_iterations: false });
+  }
+
+  async function handleSelfPropellingEnabledChange(checked: boolean) {
+    setSelfPropellingEnabled(checked);
+    if (!checked) {
+      setRapidIterations(false);
+    }
+    setSelfPropellingError(null);
+    await persistSelfPropelling({
+      enabled: checked,
+      rapid_iterations: checked ? rapidIterations : false,
+    });
+  }
+
+  async function handleRapidIterationsChange(checked: boolean) {
+    setRapidIterations(checked);
+    setSelfPropellingError(null);
+    await persistSelfPropelling({ rapid_iterations: checked });
   }
 
   async function handleSaveRepo(e: React.FormEvent) {
@@ -2391,6 +2467,28 @@ export default function DashboardPage() {
 
               {tab === "journey" && (
                 <div className={styles.journeyStack}>
+                  {detail.self_propelling?.enabled && (
+                    <div className={styles.selfPropellingBanner}>
+                      <p>
+                        <strong>Self-propelling is on</strong>
+                        {detail.self_propelling.rapid_iterations
+                          ? " (rapid mode — cycles chain back-to-back)."
+                          : "."}
+                        {detail.pipeline_running || detail.post_production_cycle_active
+                          ? " The current improvement cycle will finish; use Stop to prevent the next one."
+                          : " Next cycle is scheduled automatically."}
+                      </p>
+                      <button
+                        type="button"
+                        className={styles.btnSecondary}
+                        onClick={handleStopSelfPropelling}
+                        disabled={selfPropellingSaving || loading}
+                      >
+                        {selfPropellingSaving ? "Saving…" : "Stop after this cycle"}
+                      </button>
+                    </div>
+                  )}
+
                   {stepFocus && (
                     <StepFocusCard
                       focus={stepFocus}
@@ -2959,10 +3057,8 @@ export default function DashboardPage() {
                         <input
                           type="checkbox"
                           checked={selfPropellingEnabled}
-                          onChange={(e) => {
-                            setSelfPropellingEnabled(e.target.checked);
-                            setSelfPropellingError(null);
-                          }}
+                          onChange={(e) => handleSelfPropellingEnabledChange(e.target.checked)}
+                          disabled={selfPropellingSaving}
                         />
                         Enable automatic post-production improvement cycles
                       </label>
@@ -2974,11 +3070,8 @@ export default function DashboardPage() {
                         <input
                           type="checkbox"
                           checked={rapidIterations}
-                          onChange={(e) => {
-                            setRapidIterations(e.target.checked);
-                            setSelfPropellingError(null);
-                          }}
-                          disabled={!selfPropellingEnabled}
+                          onChange={(e) => handleRapidIterationsChange(e.target.checked)}
+                          disabled={!selfPropellingEnabled || selfPropellingSaving}
                         />
                         Rapid iterations — run the next cycle as soon as the factory is free
                       </label>

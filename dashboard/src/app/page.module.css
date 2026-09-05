@@ -1220,6 +1220,27 @@
   color: var(--accent);
 }
 
+.selfPropellingBanner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: rgba(245, 166, 35, 0.1);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.selfPropellingBanner p {
+  margin: 0;
+  flex: 1 1 16rem;
+}
+
 .apiKeyBanner {
   margin: 0 1.5rem 1rem;
   padding: 0.75rem 1rem;

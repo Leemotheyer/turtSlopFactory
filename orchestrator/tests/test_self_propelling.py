@@ -75,14 +75,6 @@ def test_self_propelling_settings_roundtrip(monkeypatch):
     assert resolve_post_production_passes(project_id, ws) == 3
 
 
-def test_is_due_when_no_next_cycle(monkeypatch):
-    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
-    ws = WorkspaceManager()
-    project_id = uuid4()
-    ws.load_metadata = MagicMock(return_value={"self_propelling": {"enabled": True}})
-    assert is_due_for_post_production(project_id, ws) is True
-
-
 def test_rapid_iterations_arms_immediate_next_cycle(monkeypatch):
     meta_store: dict = {}
 
@@ -110,6 +102,105 @@ def test_rapid_iterations_arms_immediate_next_cycle(monkeypatch):
     assert settings["rapid_iterations"] is True
     assert settings["next_cycle_at"]
     assert is_due_for_post_production(project_id, ws) is True
+
+
+def test_is_due_when_no_next_cycle(monkeypatch):
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    project_id = uuid4()
+    ws.load_metadata = MagicMock(return_value={"self_propelling": {"enabled": True}})
+    assert is_due_for_post_production(project_id, ws) is True
+
+
+def test_disable_self_propelling_cancels_pending_cycles(monkeypatch):
+    meta_store = {
+        "self_propelling": {
+            "enabled": True,
+            "rapid_iterations": True,
+            "rapid_next_cycle_pending": True,
+        },
+        "post_production_pending": True,
+    }
+
+    def load_metadata(_pid):
+        return dict(meta_store)
+
+    def save_metadata(_pid, meta):
+        meta_store.clear()
+        meta_store.update(meta)
+
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    ws.load_metadata = load_metadata
+    ws.save_metadata = save_metadata
+
+    project_id = uuid4()
+    with patch("app.pipeline.executor.pipeline_executor") as executor:
+        executor.is_running.return_value = False
+        save_self_propelling_settings(project_id, enabled=False, workspace=ws)
+
+    assert meta_store["self_propelling"]["enabled"] is False
+    assert meta_store["self_propelling"]["rapid_iterations"] is False
+    assert "rapid_next_cycle_pending" not in meta_store["self_propelling"]
+    assert "post_production_pending" not in meta_store
+
+
+def test_mark_cycle_completed_does_not_arm_when_disabled(monkeypatch):
+    meta_store = {
+        "self_propelling": {
+            "enabled": False,
+            "rapid_iterations": True,
+        }
+    }
+
+    def load_metadata(_pid):
+        return dict(meta_store)
+
+    def save_metadata(_pid, meta):
+        meta_store.clear()
+        meta_store.update(meta)
+
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    ws.load_metadata = load_metadata
+    ws.save_metadata = save_metadata
+
+    project_id = uuid4()
+    mark_cycle_completed(project_id, ws)
+    cfg = meta_store["self_propelling"]
+    assert "rapid_next_cycle_pending" not in cfg
+    assert "next_cycle_at" not in cfg
+
+
+@pytest.mark.asyncio
+async def test_maybe_schedule_rapid_next_cycle_skips_when_disabled(monkeypatch):
+    from app.services.self_propelling import maybe_schedule_rapid_next_cycle
+
+    meta_store = {
+        "self_propelling": {
+            "enabled": False,
+            "rapid_iterations": True,
+            "rapid_next_cycle_pending": True,
+        }
+    }
+
+    monkeypatch.setattr(WorkspaceManager, "__init__", lambda self: None)
+    ws = WorkspaceManager()
+    ws.load_metadata = MagicMock(return_value=meta_store)
+    ws.save_metadata = MagicMock()
+
+    project_id = uuid4()
+    session = AsyncMock()
+
+    with patch(
+        "app.services.self_propelling.WorkspaceManager",
+        return_value=ws,
+    ), patch(
+        "app.services.self_propelling.maybe_schedule_post_production",
+        new_callable=AsyncMock,
+    ) as schedule:
+        assert await maybe_schedule_rapid_next_cycle(session, project_id) is False
+        schedule.assert_not_awaited()
 
 
 @pytest.mark.asyncio

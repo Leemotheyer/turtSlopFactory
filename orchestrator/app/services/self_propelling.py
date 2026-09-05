@@ -79,10 +79,18 @@ def save_self_propelling_settings(
 
     if enabled is not None:
         cfg["enabled"] = enabled
+        if not enabled:
+            cfg["rapid_iterations"] = False
     if rapid_iterations is not None:
-        cfg["rapid_iterations"] = rapid_iterations
-        if rapid_iterations:
-            arm_immediate_next_cycle(cfg)
+        if cfg.get("enabled"):
+            cfg["rapid_iterations"] = rapid_iterations
+            if rapid_iterations:
+                arm_immediate_next_cycle(cfg)
+            else:
+                cfg.pop("rapid_next_cycle_pending", None)
+        else:
+            cfg["rapid_iterations"] = False
+            cfg.pop("rapid_next_cycle_pending", None)
     if post_production_passes is not None:
         cfg["post_production_passes"] = post_production_passes
     if interval_hours is not None:
@@ -92,6 +100,12 @@ def save_self_propelling_settings(
 
     meta["self_propelling"] = cfg
     ws.save_metadata(project_id, meta)
+    if enabled is False or rapid_iterations is False:
+        cancel_scheduled_post_production_cycles(
+            project_id,
+            ws,
+            clear_pending_flag=enabled is False,
+        )
     return get_self_propelling_settings(project_id, ws)
 
 
@@ -127,12 +141,34 @@ def arm_immediate_next_cycle(cfg: dict[str, Any]) -> None:
     cfg["rapid_next_cycle_pending"] = True
 
 
+def cancel_scheduled_post_production_cycles(
+    project_id: UUID,
+    workspace: WorkspaceManager | None = None,
+    *,
+    clear_pending_flag: bool = True,
+) -> None:
+    """Cancel queued rapid cycles. Optionally clear post_production_pending when idle."""
+    from app.pipeline.executor import pipeline_executor
+
+    ws = workspace or WorkspaceManager()
+    meta = ws.load_metadata(project_id)
+    cfg = _config(meta)
+    cfg.pop("rapid_next_cycle_pending", None)
+    if clear_pending_flag and not pipeline_executor.is_running(project_id):
+        meta.pop("post_production_pending", None)
+    meta["self_propelling"] = cfg
+    ws.save_metadata(project_id, meta)
+
+
 def mark_cycle_completed(project_id: UUID, workspace: WorkspaceManager) -> None:
     meta = workspace.load_metadata(project_id)
     cfg = _config(meta)
     cfg["cycles_completed"] = int(cfg.get("cycles_completed") or 0) + 1
     cfg["last_cycle_at"] = datetime.utcnow().isoformat()
-    if cfg.get("rapid_iterations"):
+    if not cfg.get("enabled"):
+        cfg.pop("rapid_next_cycle_pending", None)
+        cfg.pop("next_cycle_at", None)
+    elif cfg.get("rapid_iterations"):
         arm_immediate_next_cycle(cfg)
     else:
         interval = resolve_interval_hours(project_id, workspace)
@@ -150,6 +186,8 @@ async def maybe_schedule_rapid_next_cycle(
 ) -> bool:
     """After a post-production run finishes, chain the next cycle when rapid mode is on."""
     workspace = WorkspaceManager()
+    if not is_self_propelling_enabled(project_id, workspace):
+        return False
     meta = workspace.load_metadata(project_id)
     cfg = _config(meta)
     if not cfg.get("rapid_iterations") or not cfg.get("rapid_next_cycle_pending"):
