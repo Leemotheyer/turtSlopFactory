@@ -26,6 +26,7 @@ SUBSTAGE_ACCEPTANCE = "acceptance"
 SUBSTAGE_USER_JOURNEY = "user_journey"
 SUBSTAGE_REVIEW = "review"
 SUBSTAGE_TESTING = "testing"
+SUBSTAGE_REDEPLOY = "redeploy"
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ POST_PRODUCTION_STAGES: tuple[StageSpec, ...] = (
     ),
     StageSpec(
         ProjectState.PRODUCTION,
-        None,
+        SUBSTAGE_REDEPLOY,
         "_stage_post_production_redeploy",
         requires="post_production_tests_complete",
         completes="post_production_redeploy_complete",

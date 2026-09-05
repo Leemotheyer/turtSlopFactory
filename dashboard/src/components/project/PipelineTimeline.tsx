@@ -6,6 +6,7 @@ type Props = {
   currentState: string;
   failedGate?: string | null;
   activeSubstage?: string | null;
+  substateLabel?: string | null;
 };
 
 function phaseStatus(
@@ -29,7 +30,7 @@ function phaseStatus(
   return "upcoming";
 }
 
-export function PipelineTimeline({ currentState, failedGate, activeSubstage }: Props) {
+export function PipelineTimeline({ currentState, failedGate, activeSubstage, substateLabel }: Props) {
   return (
     <div className={styles.track} role="list" aria-label="Project journey">
       {PIPELINE_PHASES.map((phase, index) => {
@@ -59,9 +60,10 @@ export function PipelineTimeline({ currentState, failedGate, activeSubstage }: P
               <span className={styles.label}>{phase.label}</span>
               {status === "active" && (
                 <span className={styles.substate}>
-                  {currentState === "SMOKE_TESTING" && activeSubstage
-                    ? verificationSubstageLabel(activeSubstage)
-                    : currentState.replace(/_/g, " ")}
+                  {substateLabel ??
+                    (currentState === "SMOKE_TESTING" && activeSubstage
+                      ? verificationSubstageLabel(activeSubstage)
+                      : currentState.replace(/_/g, " "))}
                 </span>
               )}
             </div>

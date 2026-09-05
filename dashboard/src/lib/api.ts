@@ -107,6 +107,7 @@ export interface ProjectDetail extends Project {
     passes_completed?: number;
     status?: string;
   } | null;
+  post_production_cycle_active?: boolean;
   self_propelling?: {
     enabled: boolean;
     rapid_iterations?: boolean;

@@ -104,8 +104,9 @@ import {
   type DeepTab,
   type ProjectTab,
 } from "@/lib/constants";
-import { BUILD_SUBSTAGES, VERIFICATION_SUBSTAGES } from "@/lib/pipelineSubstages";
+import { BUILD_SUBSTAGES, POST_PRODUCTION_SUBSTAGES, VERIFICATION_SUBSTAGES } from "@/lib/pipelineSubstages";
 import { formatEvent } from "@/lib/formatEvent";
+import { getJourneyDisplay } from "@/lib/journeyDisplay";
 import { getStepFocus } from "@/lib/stepFocus";
 
 function confirmAction(message: string): boolean {
@@ -936,6 +937,7 @@ export default function DashboardPage() {
 
   const enrichmentProgress = detail?.enrichment_progress;
   const pipelineSubstage = detail?.pipeline_substage;
+  const journeyDisplay = detail ? getJourneyDisplay(detail) : null;
   const enrichmentProgressLines =
     progress?.summary_lines.filter((line) => /enrichment pass/i.test(line)) ?? [];
 
@@ -959,7 +961,11 @@ export default function DashboardPage() {
       : detail?.state === "SMOKE_TESTING"
         ? "smoke_testing"
         : null;
-  const verificationComplete = detail?.state === "REVIEW" || detail?.state === "PRODUCTION";
+  const verificationComplete =
+    (detail?.state === "REVIEW" || detail?.state === "PRODUCTION") &&
+    !journeyDisplay?.postProductionCycle;
+  const showPostProductionSubstages = Boolean(journeyDisplay?.postProductionCycle);
+  const postProductionActiveStep = journeyDisplay?.postProductionStep ?? null;
   const adversaryEnabled =
     detail?.effective_adversary_enabled ?? detail?.factory_defaults?.adversary_enabled ?? true;
   const userJourneyEnabled =
@@ -2395,12 +2401,31 @@ export default function DashboardPage() {
                   )}
 
                   <PipelineTimeline
-                    currentState={detail.state}
+                    currentState={journeyDisplay?.state ?? detail.state}
                     failedGate={detail.failed_gate}
                     activeSubstage={
                       pipelineSubstage?.gate === "SMOKE_TESTING" ? pipelineSubstage.step : null
                     }
+                    substateLabel={journeyDisplay?.substateLabel}
                   />
+
+                  {showPostProductionSubstages && (
+                    <SubstageTrack
+                      title="Improvement cycle"
+                      steps={POST_PRODUCTION_SUBSTAGES}
+                      activeStep={postProductionActiveStep}
+                      stepMeta={(step) => {
+                        if (
+                          step.id === "enrichment" &&
+                          journeyDisplay?.postProductionStep === "enrichment" &&
+                          pipelineSubstage?.max_passes != null
+                        ) {
+                          return `Pass ${pipelineSubstage.current_pass ?? 0}/${pipelineSubstage.max_passes}`;
+                        }
+                        return null;
+                      }}
+                    />
+                  )}
 
                   {showBuildSubstages && (
                     <SubstageTrack

@@ -1,5 +1,6 @@
 import type { AgentActivity, ProgressDigest, ProjectDetail } from "@/lib/api";
 import { AUTO_START_PIPELINE_STATES } from "@/lib/constants";
+import { isPostProductionCycleActive } from "@/lib/journeyDisplay";
 
 export type StepFocus = {
   title: string;
@@ -42,6 +43,23 @@ export function getStepFocus(
   }
 
   if (detail.pipeline_running || agentActivity?.stop_requested) {
+    if (detail.state === "PRODUCTION" && isPostProductionCycleActive(detail)) {
+      const step = detail.pipeline_substage?.step;
+      const rapid = detail.self_propelling?.rapid_iterations;
+      return {
+        title: rapid ? "Rapid improvement cycle" : "Self-propelling improvement cycle",
+        body:
+          latest ??
+          (step === "enrichment"
+            ? "Auditing the live preview and implementing improvements."
+            : step === "testing"
+              ? "Running integration, mobile, and product QA on the improved build."
+              : step === "redeploy"
+                ? "Building and redeploying the updated production preview."
+                : "Starting the next improvement cycle."),
+        tone: "neutral",
+      };
+    }
     if (state === "SMOKE_TESTING" && detail.pipeline_substage?.step) {
       const step = detail.pipeline_substage.step;
       const stepLabel = step.replace(/_/g, " ");
@@ -135,6 +153,17 @@ export function getStepFocus(
   }
 
   if (state === "PRODUCTION") {
+    if (
+      detail.self_propelling?.rapid_iterations &&
+      !detail.pipeline_running &&
+      detail.post_production_cycle_active
+    ) {
+      return {
+        title: "Rapid cycle queued",
+        body: "The next improvement cycle will start as soon as the factory is free.",
+        tone: "neutral",
+      };
+    }
     return {
       title: "Live in production",
       body: livePreviewUrl

@@ -133,6 +133,7 @@ async def stage_post_production_redeploy(ex: "PipelineExecutor", session, projec
     meta = ex.workspace.load_metadata(project.id)
     meta["production_url"] = True
     meta.pop("post_production_pending", None)
+    meta.pop("pipeline_substage", None)
     ex.workspace.save_metadata(project.id, meta)
     mark_cycle_completed(project.id, ex.workspace)
     context["post_production_redeploy_complete"] = True

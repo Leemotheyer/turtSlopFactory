@@ -102,6 +102,7 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         ),
         "pipeline_substage": meta.get("pipeline_substage"),
         "enrichment_progress": meta.get("enrichment"),
+        "post_production_cycle_active": bool(meta.get("post_production_pending")),
         "self_propelling": get_self_propelling_settings(project_id, workspace),
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",

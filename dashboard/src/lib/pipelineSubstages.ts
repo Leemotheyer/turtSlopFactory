@@ -20,6 +20,12 @@ export const VERIFICATION_SUBSTAGES: SubstageStep[] = [
   { id: "review", label: "Code review" },
 ];
 
+export const POST_PRODUCTION_SUBSTAGES: SubstageStep[] = [
+  { id: "enrichment", label: "Improve" },
+  { id: "testing", label: "Test" },
+  { id: "redeploy", label: "Redeploy" },
+];
+
 export type SubstageStatus = "done" | "active" | "upcoming" | "failed" | "skipped";
 
 export function substageStatus(
