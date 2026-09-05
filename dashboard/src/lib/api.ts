@@ -124,6 +124,31 @@ export interface ProjectDetail extends Project {
       token_budget_per_cycle?: number | null;
     };
   };
+  stats?: ProjectStats;
+}
+
+export interface ProjectStats {
+  development_seconds: number;
+  development_active: boolean;
+  pipeline_runs_total: number;
+  pipeline_runs_completed: number;
+  pipeline_runs_blocked: number;
+  pipeline_runs_stopped: number;
+  build_cycles: number;
+  feedback_iterations: number;
+  improvement_cycles: number;
+  post_production_runs: number;
+  total_cycles: number;
+  mean_cycle_seconds: number | null;
+  mean_improvement_cycle_seconds: number | null;
+  total_fix_attempts: number;
+  total_human_interventions: number;
+  tasks_completed: number;
+  deployments: number;
+  success_rate: number | null;
+  waiting_for_production: boolean;
+  first_activity_at: string | null;
+  last_activity_at: string | null;
 }
 
 export type IntakeFieldType = "text" | "textarea" | "select" | "multiselect";

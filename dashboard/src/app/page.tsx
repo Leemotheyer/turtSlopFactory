@@ -92,6 +92,7 @@ import { ContractPanel } from "@/components/project/ContractPanel";
 import { RequirementsPanel } from "@/components/project/RequirementsPanel";
 import { FactoryMetricsPanel } from "@/components/ui/FactoryMetricsPanel";
 import { PipelineTimeline } from "@/components/project/PipelineTimeline";
+import { ProjectStatsPanel } from "@/components/project/ProjectStatsPanel";
 import { SubstageTrack } from "@/components/project/SubstageTrack";
 import { ProjectNav } from "@/components/project/ProjectNav";
 import { StepFocusCard } from "@/components/project/StepFocusCard";
@@ -2510,6 +2511,8 @@ export default function DashboardPage() {
                       )}
                     </div>
                   )}
+
+                  {detail.stats && <ProjectStatsPanel stats={detail.stats} />}
 
                   {stepFocus && (
                     <StepFocusCard

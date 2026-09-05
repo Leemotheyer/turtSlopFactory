@@ -24,6 +24,7 @@ from app.services.self_propelling import (
     save_self_propelling_settings,
 )
 from app.services.project_settings import project_settings_payload
+from app.services.project_stats import compute_project_stats
 from app.workspace.manager import WorkspaceManager
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
@@ -107,6 +108,9 @@ async def get_project_detail(project_id: UUID, request: Request, db: AsyncSessio
         "discovery_status": discovery.status.value if discovery else None,
         "intake_ready": discovery is not None and discovery.status.value == "awaiting_user",
         "repo_analysis": _load_repo_analysis_summary(project_id),
+        "stats": await compute_project_stats(
+            db, project_id, project_state=row.state, workspace=workspace
+        ),
         "agent_rules": row.agent_rules or "",
         **project_settings_payload(
             row, review_ever_approved=bool(meta.get("review_ever_approved"))
