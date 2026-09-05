@@ -113,6 +113,36 @@ def test_features_to_work_units_milestone_is_solo_unit():
     assert "milestone expansion" in (units[0].feature_content or "").lower()
 
 
+def test_features_to_work_units_supports_multiple_milestones():
+    features = [
+        {
+            "id": "big-idea-a",
+            "title": "Achievement system",
+            "description": "Add achievements, badges, and progress tracking across the app",
+            "scope": "in_scope",
+            "tier": "milestone",
+        },
+        {
+            "id": "big-idea-b",
+            "title": "Leaderboard",
+            "description": "Add competitive leaderboard with rankings and history",
+            "scope": "in_scope",
+            "tier": "milestone",
+        },
+        {
+            "id": "polish-1",
+            "title": "Loading states",
+            "description": "Add skeleton loaders on list pages",
+            "scope": "in_scope",
+            "tier": "polish",
+        },
+    ]
+    units = features_to_work_units(features, max_milestones=2, max_features=8)
+    milestone_units = [u for u in units if u.tier == "milestone"]
+    assert len(milestone_units) == 2
+    assert len(units) == 3
+
+
 def test_features_to_work_units_skips_completed_slugs():
     features = [
         {"id": "core-flows", "title": "Core flows", "description": "Build CRUD", "scope": "in_scope"},

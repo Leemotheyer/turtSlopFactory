@@ -170,7 +170,25 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
     if enrichment_pass:
         audit = context.get("preview_audit") or {}
         max_features = context.get("max_features_per_pass", 8)
-        max_polish = max(0, int(max_features) - 1)
+        max_milestones = int(context.get("max_milestones_per_pass") or 1)
+        max_polish = max(0, int(max_features) - max_milestones)
+        if max_milestones > 1:
+            milestone_rule = (
+                f"Include **one or two** `tier: \"milestone\"` features — each a substantial "
+                "new capability or major expansion users will notice immediately."
+            )
+            milestone_count_rule = (
+                f"Propose **one or two milestones** plus up to **{max_polish}** polish features"
+            )
+        else:
+            milestone_rule = (
+                "Include **exactly one** `tier: \"milestone\"` feature — a substantial "
+                "new capability, major feature area, or meaningful product expansion users "
+                "will notice immediately."
+            )
+            milestone_count_rule = (
+                f"Propose **exactly one milestone** plus up to **{max_polish}** polish features"
+            )
         theme_hint = enrichment_pass_theme_hint(
             int(enrichment_pass),
             int(context.get("improvement_cycle_number") or 1),
@@ -188,6 +206,8 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
                 audit_issues=", ".join(audit.get("issues") or []) or "none recorded",
                 max_features=max_features,
                 max_polish=max_polish,
+                milestone_rule=milestone_rule,
+                milestone_count_rule=milestone_count_rule,
             )
         )
         from app.services.intake_contract import intake_capability_lines
@@ -251,10 +271,17 @@ Extend the current implementation. **Do not rebuild** working routes, models, or
             enrichment_cmd = context.get("enrichment_command")
             enrichment_block = ""
             if enrichment_cmd:
+                enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_developer_mode") + "\n"
+                if context.get("enrichment_require_substantial_changes"):
+                    enrichment_block += (
+                        "\n## Previous attempt was too shallow\n"
+                        "The last run made no meaningful code changes. Implement real files "
+                        "now — backend, frontend, and tests — not a JSON plan or chat summary.\n"
+                    )
                 if context.get("enrichment_tier") == "milestone":
-                    enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_milestone_block")
+                    enrichment_block += _render(AgentRole.DEVELOPER, "enrichment_milestone_block")
                 else:
-                    enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_block")
+                    enrichment_block += _render(AgentRole.DEVELOPER, "enrichment_block")
             sections.append(
                 "\n"
                 + _render(

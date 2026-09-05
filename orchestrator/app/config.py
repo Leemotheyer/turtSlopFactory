@@ -11,10 +11,11 @@ class Settings(BaseSettings):
     max_fix_attempts: int = 5
     max_enrichment_passes: int = 4
     max_features_per_enrichment_pass: int = 8
-    enrichment_features_per_agent: int = 3
+    enrichment_features_per_agent: int = 4
     enrichment_fix_attempts_per_pass: int = 3
-    post_production_enrichment_passes: int = 2
-    post_production_features_per_pass: int = 4
+    post_production_enrichment_passes: int = 3
+    post_production_features_per_pass: int = 8
+    post_production_milestones_per_pass: int = 2
     post_production_interval_hours: int = 24
     default_token_budget_per_cycle: int = 500_000
     workspace_root: str = "/data/workspaces"

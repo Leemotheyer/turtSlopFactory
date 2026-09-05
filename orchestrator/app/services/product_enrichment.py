@@ -233,10 +233,11 @@ def _expand_milestone_description(title: str, description: str) -> str:
     return (
         f"{desc}\n\n"
         f"**Milestone — {title}**\n"
-        "Primary expansion for this enrichment pass. Deliver a substantial new capability "
-        "or feature area users will notice immediately:\n"
+        "Primary expansion for this enrichment pass. Be **bold and creative** — ship a "
+        "substantial new capability or feature area users will notice immediately:\n"
         "- Complete user journeys with API, persistence, validation, and UI\n"
-        "- Meaningful new functionality — not cosmetic polish or tiny tweaks\n"
+        "- Add real new functionality (new screens, flows, data models, integrations) — not nits\n"
+        "- Aim for a meaningful diff: multiple files across backend and frontend\n"
         "- Pytest coverage for new behavior and verification through the live preview"
     )
 
@@ -319,11 +320,13 @@ def features_to_work_units(
     completed_slugs: set[str] | None = None,
     intake: dict | None = None,
     max_features: int | None = None,
+    max_milestones: int = 1,
 ) -> list[WorkUnit]:
     notes = notes or []
     completed_slugs = completed_slugs or set()
     cap = max_features if max_features is not None else settings.max_features_per_enrichment_pass
-    polish_cap = max(0, cap - 1)
+    milestone_slots = max(1, min(int(max_milestones), 3))
+    polish_cap = max(0, cap - milestone_slots)
     milestones: list[dict] = []
     polish: list[dict] = []
     seen: set[str] = set()
@@ -364,8 +367,8 @@ def features_to_work_units(
         milestones.append({**polish.pop(0), "tier": "milestone"})
 
     units: list[WorkUnit] = []
-    if milestones:
-        units.append(_milestone_to_work_unit(milestones[0]))
+    for milestone in milestones[:milestone_slots]:
+        units.append(_milestone_to_work_unit(milestone))
 
     polish = polish[:polish_cap]
     batch_size = max(2, settings.enrichment_features_per_agent)
@@ -540,7 +543,7 @@ def enrichment_pass_theme_hint(pass_number: int, cycle_number: int = 1) -> str:
             "Milestone = substantial new capability; polish = smaller UX and quality fixes."
         )
     lines = [
-        f"Pass {pass_number}: propose **one milestone** (big new capability) plus polish items.",
+        f"Pass {pass_number}: propose **bold milestone expansion(s)** (big new capabilities) plus polish items.",
         "Milestone ideas for this pass:",
     ]
     for index, (_fid, title, desc) in enumerate(theme):

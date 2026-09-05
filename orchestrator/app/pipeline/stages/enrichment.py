@@ -98,8 +98,10 @@ async def run_enrichment_passes(
     context["max_enrichment_passes"] = max_passes
     if log_prefix == "post-production":
         context["max_features_per_pass"] = settings.post_production_features_per_pass
+        context["max_milestones_per_pass"] = settings.post_production_milestones_per_pass
     else:
         context["max_features_per_pass"] = settings.max_features_per_enrichment_pass
+        context["max_milestones_per_pass"] = 1
 
     if max_passes <= 0:
         context[completion_key] = True
@@ -127,6 +129,7 @@ async def run_enrichment_passes(
 
         context["enrichment_pass"] = pass_number
         cycle_number = int(context.get("improvement_cycle_number") or 1)
+        context.pop("enrichment_require_substantial_changes", None)
         ex._save_pipeline_substage(
             project.id,
             {
@@ -180,6 +183,7 @@ async def run_enrichment_passes(
             "enrichment_pass": pass_number,
             "improvement_cycle_number": cycle_number,
             "incremental": True,
+            "max_milestones_per_pass": context.get("max_milestones_per_pass", 1),
         }
         plan_raw = None
         used_fallback = False
@@ -195,7 +199,8 @@ async def run_enrichment_passes(
             cycle_number=cycle_number,
         )
         skip_architect = (
-            skip_unchanged_audit
+            log_prefix != "post-production"
+            and skip_unchanged_audit
             and should_skip_architect(project.id, audit, ex.workspace)
             and bool(local_plan.get("features"))
         )
@@ -314,6 +319,7 @@ async def run_enrichment_passes(
             completed_slugs=completed_slugs,
             intake=intake,
             max_features=context.get("max_features_per_pass"),
+            max_milestones=int(context.get("max_milestones_per_pass") or 1),
         )
         if not units:
             reason = plan.get("stop_reason") or "no in-scope improvements"
@@ -392,6 +398,8 @@ async def run_enrichment_passes(
         )
         if not success:
             context["last_failure"] = output
+            if "No meaningful code changes" in output:
+                context["enrichment_require_substantial_changes"] = True
             for _ in range(settings.enrichment_fix_attempts_per_pass):
                 fixed = await stage_fix_from_failure(ex, session, project, context)
                 if not fixed:

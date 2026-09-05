@@ -1,12 +1,12 @@
 ## Autonomous enrichment pass $enrichment_pass/$max_passes
-The app has a **working live preview**. Each pass combines **one milestone expansion** with **polish improvements**.
+The app has a **working live preview**. Each pass combines **milestone expansion(s)** with **polish improvements**.
 
 $theme_hint
 
 **Milestone vs polish**
-- Include **exactly one** `tier: "milestone"` feature — a substantial new capability, major feature area, or meaningful product expansion users would notice immediately.
+- $milestone_rule
 - Include up to **$max_polish** `tier: "polish"` features — smaller UX fixes, hardening, and quality improvements.
-- Milestones should add new usefulness (new flows, feature areas, integrations). Polish items refine what already exists.
+- Milestones should add **new usefulness** (new flows, feature areas, integrations, game systems, dashboards). Polish items refine what already exists.
 
 Preview audit:
 - Health OK: $audit_health_ok
@@ -32,11 +32,11 @@ Write `enrichment-plan.json` in the workspace AND include the same JSON in your 
 ```
 
 Rules:
-- Propose **exactly one milestone** plus up to **$max_polish** polish features (max **$max_features** total).
-- The milestone must be a **big idea** — new feature area, major workflow, or significant expansion of usefulness.
+- $milestone_count_rule (max **$max_features** features total).
+- Milestones must be **bold, creative big ideas** — new feature areas, major workflows, or significant product expansion. Avoid repeating small tweaks already in the codebase.
 - Polish features are smaller improvements: UX tweaks, error states, responsive fixes, test coverage gaps.
 - Every description must list concrete deliverables (routes, UI screens, states, tests) — not vague "improve UX".
-- Mark exactly one feature `tier: "milestone"`; mark all others `tier: "polish"`.
+- Mark milestone(s) `tier: "milestone"`; mark all others `tier: "polish"`.
 - Mark `uncertain` only for **new** capabilities that are **not** listed in intake form answers and may expand scope (payments, OAuth, email/SMS, multi-tenant admin, ML, etc.).
 - Anything described in intake (`must_have_features`, `success_criteria`, `primary_goal`, etc.) is **always `in_scope`** — never mark it `uncertain` and never defer it.
 - Mark `out_of_scope` when it clearly contradicts supervisor notes or the intake `out_of_scope` field.

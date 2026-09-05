@@ -275,8 +275,9 @@ async def run_developer_units(
     stats = compute_change_stats(ex.workspace.repo_dir(project.id), baseline)
     if command.startswith("enrichment_"):
         has_milestone = any(getattr(u, "tier", None) == "milestone" for u in units)
-        min_lines = 8 if has_milestone else 3
-        if stats["files_changed"] < 1 or stats["lines_changed"] < min_lines:
+        min_lines = 15 if has_milestone else 5
+        min_files = 2 if has_milestone else 1
+        if stats["files_changed"] < min_files or stats["lines_changed"] < min_lines:
             all_ok = False
             combined = (
                 f"No meaningful code changes detected ({stats['files_changed']} files, "

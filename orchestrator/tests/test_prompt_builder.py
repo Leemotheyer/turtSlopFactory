@@ -23,6 +23,22 @@ def test_enrichment_prompt_excludes_greenfield_planning():
     assert "Create project requirements and architecture" not in prompt
 
 
+def test_enrichment_prompt_allows_two_milestones_in_post_production():
+    prompt = build_role_prompt(
+        AgentRole.ARCHITECT,
+        {
+            "name": "Clicker",
+            "description": "Idle game",
+            "enrichment_pass": 1,
+            "max_enrichment_passes": 3,
+            "max_features_per_pass": 8,
+            "max_milestones_per_pass": 2,
+            "preview_audit": {"health_ok": True, "has_html_ui": True, "issues": []},
+        },
+    )
+    assert "one or two" in prompt.lower()
+
+
 def test_architect_prompt_includes_original_description():
     prompt = build_role_prompt(
         AgentRole.ARCHITECT,

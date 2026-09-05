@@ -182,6 +182,7 @@ def plan_from_enrichment_features(
     completed_slugs: set[str] | None = None,
     intake: dict | None = None,
     max_features: int | None = None,
+    max_milestones: int = 1,
 ) -> list[WorkUnit]:
     from app.services.product_enrichment import features_to_work_units
 
@@ -192,6 +193,7 @@ def plan_from_enrichment_features(
         completed_slugs=completed_slugs,
         intake=intake,
         max_features=max_features,
+        max_milestones=max_milestones,
     )
 
 
