@@ -9,6 +9,7 @@ from app.config import settings
 from app.models import AgentRole
 from app.services.product_enrichment import (
     audit_live_preview,
+    defer_polish_features_to_backlog,
     enrichment_change_summary,
     format_product_qa_fix_brief,
     infer_product_qa_fix_focus,
@@ -452,7 +453,7 @@ async def run_enrichment_passes(
                 )
 
         await ex._refresh_context(session, project, context)
-        units = plan_from_enrichment_features(
+        units, deferred_polish = plan_from_enrichment_features(
             plan.get("features") or [],
             context.get("notes", []),
             context.get("input_responses", []),
@@ -461,6 +462,19 @@ async def run_enrichment_passes(
             max_features=context.get("max_features_per_pass"),
             max_milestones=int(context.get("max_milestones_per_pass") or 1),
         )
+        deferred_count = defer_polish_features_to_backlog(
+            ex.workspace,
+            project.id,
+            deferred_polish,
+            quality_issues=plan.get("quality_issues"),
+            cycle_number=int(context.get("improvement_cycle_number") or 0),
+        )
+        if deferred_count:
+            ex.workspace.append_log(
+                project.id,
+                "pipeline.log",
+                f"[{log_prefix}] Deferred {deferred_count} polish item(s) to next-cycle backlog",
+            )
         if not units:
             reason = plan.get("stop_reason") or "no in-scope improvements"
             ex.workspace.append_log(

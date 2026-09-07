@@ -1,4 +1,5 @@
 import pytest
+from uuid import uuid4
 
 from app.config import settings
 from app.services.product_enrichment import (
@@ -7,6 +8,7 @@ from app.services.product_enrichment import (
     enrichment_change_summary,
     enrichment_pass_theme_hint,
     features_to_work_units,
+    defer_polish_features_to_backlog,
     format_product_qa_fix_brief,
     infer_product_qa_fix_focus,
     load_product_qa_feedback,
@@ -43,7 +45,7 @@ def test_resolve_feature_scope_overrides_architect_uncertain_with_intake():
 def test_features_to_work_units_includes_intake_specified_oauth_without_approval():
     intake = {"must_have_features": "OAuth login with Google"}
     features = [{"title": "OAuth login", "description": "Google sign-in", "scope": "uncertain"}]
-    units = features_to_work_units(features, intake=intake)
+    units, _deferred = features_to_work_units(features, intake=intake)
     assert len(units) == 1
 
 
@@ -55,17 +57,17 @@ def test_parse_enrichment_plan_json_block():
 
 def test_features_to_work_units_skips_uncertain():
     features = [{"title": "OAuth login", "description": "Google sign-in", "scope": "uncertain"}]
-    assert features_to_work_units(features) == []
+    assert features_to_work_units(features) == ([], [])
 
 
 def test_features_to_work_units_includes_approved_uncertain():
     features = [{"title": "OAuth login", "description": "Google sign-in", "scope": "uncertain"}]
     responses = [{"question": "Implement OAuth login?", "resolved_decision": "Yes, implement it"}]
-    units = features_to_work_units(features, input_responses=responses)
+    units, _deferred = features_to_work_units(features, input_responses=responses)
     assert len(units) == 1
 
 
-def test_features_to_work_units_batches_multiple_features():
+def test_features_to_work_units_defers_polish_batches():
     features = [
         {
             "id": f"feat-{i}",
@@ -77,23 +79,20 @@ def test_features_to_work_units_batches_multiple_features():
         for i in range(6)
     ]
     features[0]["tier"] = "milestone"
-    units = features_to_work_units(features)
-    batch_size = max(2, settings.enrichment_features_per_agent)
-    expected_batches = (len(features) - 1 + batch_size - 1) // batch_size
-    assert len(units) == 1 + expected_batches
+    units, deferred = features_to_work_units(features)
+    assert len(units) == 1
     assert units[0].tier == "milestone"
-    assert "Implement **all**" in (units[1].feature_content or "")
+    assert len(deferred) == 5
 
 
-def test_features_to_work_units_promotes_first_when_no_milestone():
+def test_features_to_work_units_defers_polish_only_features():
     features = [
-        {"id": "a", "title": "Alpha", "description": "First substantial work " * 5, "scope": "in_scope"},
-        {"id": "b", "title": "Beta", "description": "Second substantial work " * 5, "scope": "in_scope"},
+        {"id": "a", "title": "Alpha", "description": "First substantial work " * 5, "scope": "in_scope", "tier": "polish"},
+        {"id": "b", "title": "Beta", "description": "Second substantial work " * 5, "scope": "in_scope", "tier": "polish"},
     ]
-    units = features_to_work_units(features)
-    assert len(units) == 2
-    assert units[0].tier == "milestone"
-    assert units[0].title.startswith("Milestone:")
+    units, deferred = features_to_work_units(features)
+    assert units == []
+    assert len(deferred) == 2
 
 
 def test_features_to_work_units_milestone_is_solo_unit():
@@ -113,10 +112,10 @@ def test_features_to_work_units_milestone_is_solo_unit():
             "tier": "polish",
         },
     ]
-    units = features_to_work_units(features)
-    assert len(units) == 2
+    units, deferred = features_to_work_units(features)
+    assert len(units) == 1
+    assert len(deferred) == 1
     assert units[0].tier == "milestone"
-    assert "milestone expansion" in (units[0].feature_content or "").lower()
 
 
 def test_features_to_work_units_supports_multiple_milestones():
@@ -143,10 +142,11 @@ def test_features_to_work_units_supports_multiple_milestones():
             "tier": "polish",
         },
     ]
-    units = features_to_work_units(features, max_milestones=2, max_features=8)
+    units, deferred = features_to_work_units(features, max_milestones=2, max_features=8)
     milestone_units = [u for u in units if u.tier == "milestone"]
     assert len(milestone_units) == 2
-    assert len(units) == 3
+    assert len(units) == 2
+    assert len(deferred) == 1
 
 
 def test_features_to_work_units_skips_completed_slugs():
@@ -154,9 +154,31 @@ def test_features_to_work_units_skips_completed_slugs():
         {"id": "core-flows", "title": "Core flows", "description": "Build CRUD", "scope": "in_scope"},
         {"id": "search", "title": "Search", "description": "Add search UI", "scope": "in_scope"},
     ]
-    units = features_to_work_units(features, completed_slugs={"core-flows"})
+    units, _deferred = features_to_work_units(features, completed_slugs={"core-flows"})
     assert len(units) == 1
     assert "Search" in units[0].title or "search" in (units[0].feature_content or "").lower()
+
+
+def test_defer_polish_features_to_backlog(monkeypatch, tmp_path):
+    from app.workspace.manager import WorkspaceManager
+
+    ws_root = tmp_path / "ws"
+    ws_root.mkdir()
+    monkeypatch.setattr("app.config.settings.workspace_root", str(ws_root))
+    ws = WorkspaceManager()
+    project_id = uuid4()
+
+    count = defer_polish_features_to_backlog(
+        ws,
+        project_id,
+        [{"title": "Loading states", "description": "Add skeleton loaders", "tier": "polish"}],
+        quality_issues=["Button hover contrast is low"],
+        cycle_number=1,
+    )
+    assert count == 2
+    raw = ws.read_artifact(project_id, "cycle-improvement-backlog.json")
+    assert "Loading states" in raw
+    assert "hover contrast" in raw
 
 
 def test_enrichment_change_summary_lists_deliverables():
@@ -165,7 +187,7 @@ def test_enrichment_change_summary_lists_deliverables():
         {"id": "b", "title": "Beta", "description": "Second", "scope": "in_scope"},
         {"id": "c", "title": "Gamma", "description": "Third", "scope": "in_scope"},
     ]
-    units = features_to_work_units(features)
+    units, _deferred = features_to_work_units(features)
     summary = enrichment_change_summary(units)
     assert summary
     assert any("Alpha" in line or "•" in line for line in summary)

@@ -1,12 +1,12 @@
 ## Autonomous enrichment pass $enrichment_pass/$max_passes
-The app has a **working live preview**. Each pass combines **milestone expansion(s)** with **polish improvements**.
+The app has a **working live preview**. Each pass ships **milestone expansion(s)** only — substantial new capabilities.
 
 $theme_hint
 
-**Milestone vs polish**
+**Milestone vs polish (important)**
 - $milestone_rule
-- Include up to **$max_polish** `tier: "polish"` features — smaller UX fixes, hardening, and quality improvements.
-- Milestones should add **new usefulness** (new flows, feature areas, integrations, game systems, dashboards). Polish items refine what already exists.
+- Mark smaller UX fixes, hardening, and quality tweaks as `tier: "polish"` — they are **recorded for the next improvement cycle** and are **not implemented in this pass** (same as user review suggestions).
+- Only `tier: "milestone"` features are built now.
 
 Preview audit:
 - Health OK: $audit_health_ok
@@ -26,17 +26,17 @@ Write `enrichment-plan.json` in the workspace AND include the same JSON in your 
       "tier": "milestone | polish"
     }
   ],
-  "quality_issues": ["list of UX or reliability problems observed"],
+  "quality_issues": ["list of UX or reliability problems observed — deferred to next cycle"],
   "stop_reason": null
 }
 ```
 
 Rules:
-- $milestone_count_rule (max **$max_features** features total).
-- Milestones must be **bold, creative big ideas** — new feature areas, major workflows, or significant product expansion. Avoid repeating small tweaks already in the codebase.
-- Polish features are smaller improvements: UX tweaks, error states, responsive fixes, test coverage gaps.
+- $milestone_count_rule (max **$max_features** features in the plan; only milestones are implemented now).
+- Milestones must be **bold, creative big ideas** — new feature areas, major workflows, or significant product expansion.
+- Polish features capture UX tweaks, error states, responsive fixes, and test gaps for the **next** cycle backlog — do not expect them to be coded this pass.
 - Every description must list concrete deliverables (routes, UI screens, states, tests) — not vague "improve UX".
-- Mark milestone(s) `tier: "milestone"`; mark all others `tier: "polish"`.
+- Mark milestone(s) `tier: "milestone"`; mark polish-only items `tier: "polish"`.
 - Mark `uncertain` only for **new** capabilities that are **not** listed in intake form answers and may expand scope (payments, OAuth, email/SMS, multi-tenant admin, ML, etc.).
 - Anything described in intake (`must_have_features`, `success_criteria`, `primary_goal`, etc.) is **always `in_scope`** — never mark it `uncertain` and never defer it.
 - Mark `out_of_scope` when it clearly contradicts supervisor notes or the intake `out_of_scope` field.

@@ -211,7 +211,7 @@ def plan_from_enrichment_features(
     intake: dict | None = None,
     max_features: int | None = None,
     max_milestones: int = 1,
-) -> list[WorkUnit]:
+) -> tuple[list[WorkUnit], list[dict]]:
     from app.services.product_enrichment import features_to_work_units
 
     return features_to_work_units(

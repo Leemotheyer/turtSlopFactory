@@ -243,8 +243,8 @@ def _expand_milestone_description(title: str, description: str) -> str:
 
 
 def _normalize_feature_tier(item: dict) -> str:
-    tier = str(item.get("tier") or "polish").lower()
-    return tier if tier == "milestone" else "polish"
+    tier = str(item.get("tier") or "milestone").lower()
+    return "milestone" if tier == "milestone" else "polish"
 
 
 def _batch_feature_dicts(features: list[dict], batch_size: int) -> list[list[dict]]:
@@ -321,7 +321,8 @@ def features_to_work_units(
     intake: dict | None = None,
     max_features: int | None = None,
     max_milestones: int = 1,
-) -> list[WorkUnit]:
+) -> tuple[list[WorkUnit], list[dict]]:
+    """Split enrichment features into milestone work units vs polish deferred to next cycle."""
     notes = notes or []
     completed_slugs = completed_slugs or set()
     cap = max_features if max_features is not None else settings.max_features_per_enrichment_pass
@@ -363,18 +364,11 @@ def features_to_work_units(
         else:
             polish.append(normalized)
 
-    if not milestones and polish:
-        milestones.append({**polish.pop(0), "tier": "milestone"})
-
     units: list[WorkUnit] = []
     for milestone in milestones[:milestone_slots]:
         units.append(_milestone_to_work_unit(milestone))
 
-    polish = polish[:polish_cap]
-    batch_size = max(2, settings.enrichment_features_per_agent)
-    batches = _batch_feature_dicts(polish, batch_size)
-    units.extend(_batch_to_work_unit(batch, index) for index, batch in enumerate(batches))
-    return units
+    return units, polish[:polish_cap]
 
 
 def load_product_qa_feedback(workspace, project_id) -> dict[str, Any]:
@@ -429,6 +423,62 @@ def persist_product_qa_to_improvement_backlog(workspace, project_id) -> None:
         "cycle-improvement-backlog.json",
         json.dumps(backlog, indent=2),
     )
+
+
+def defer_polish_features_to_backlog(
+    workspace,
+    project_id,
+    features: list[dict],
+    *,
+    quality_issues: list[str] | None = None,
+    cycle_number: int = 0,
+) -> int:
+    """Queue polish-tier enrichment ideas for the next improvement cycle (no dev work now)."""
+    from app.artifacts.schemas import CycleImprovementSuggestion
+    from app.services.user_perspective_review import merge_cycle_improvement_backlog
+
+    suggestions: list[CycleImprovementSuggestion] = []
+    for item in features:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or item.get("id") or "Polish").strip()
+        description = str(item.get("description") or title).strip()
+        if not title:
+            continue
+        priority = str(item.get("priority") or "medium").lower()
+        suggestions.append(
+            CycleImprovementSuggestion(
+                title=title[:72],
+                description=description[:500],
+                category="ui",
+                priority=priority if priority in ("high", "medium", "low") else "medium",
+            )
+        )
+    for issue in quality_issues or []:
+        text = str(issue).strip()
+        if len(text) < 4:
+            continue
+        suggestions.append(
+            CycleImprovementSuggestion(
+                title=text[:72],
+                description=text[:500],
+                category="ui",
+                priority="low",
+            )
+        )
+    if not suggestions:
+        return 0
+
+    existing = None
+    if "cycle-improvement-backlog.json" in workspace.list_artifacts(project_id):
+        existing = workspace.read_artifact(project_id, "cycle-improvement-backlog.json")
+    backlog = merge_cycle_improvement_backlog(existing, suggestions, cycle_number=cycle_number)
+    workspace.write_artifact(
+        project_id,
+        "cycle-improvement-backlog.json",
+        json.dumps(backlog, indent=2),
+    )
+    return len(suggestions)
 
 
 _FIX_FOCUS_HINTS: dict[str, str] = {
@@ -724,15 +774,16 @@ def enrichment_pass_theme_hint(pass_number: int, cycle_number: int = 1) -> str:
     )
     if not theme:
         return (
-            "Ship one milestone expansion plus polish improvements. "
-            "Milestone = substantial new capability; polish = smaller UX and quality fixes."
+            "Ship one milestone expansion this pass. Record polish/UX tweaks as "
+            '`tier: "polish"` — they are queued for the next improvement cycle, not built now.'
         )
     lines = [
-        f"Pass {pass_number}: propose **bold milestone expansion(s)** (big new capabilities) plus polish items.",
+        f"Pass {pass_number}: propose **bold milestone expansion(s)** this pass only.",
+        "Polish/UX items use `tier: \"polish\"` and are deferred to the next cycle backlog.",
         "Milestone ideas for this pass:",
     ]
     for index, (_fid, title, desc) in enumerate(theme):
-        prefix = "★ Milestone candidate" if index == 0 else "Polish"
+        prefix = "★ Milestone candidate" if index == 0 else "Defer as polish"
         lines.append(f"- {prefix} — **{title}**: {desc[:160]}{'…' if len(desc) > 160 else ''}")
     return "\n".join(lines)
 

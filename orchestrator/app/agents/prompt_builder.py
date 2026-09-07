@@ -254,10 +254,16 @@ def _append_enrichment_architect(sections: list[str], context: dict, intake: dic
         milestone_rule = (
             'Include **one or two** `tier: "milestone"` features — substantial new capabilities.'
         )
-        milestone_count_rule = f"Propose **one or two milestones** plus up to **{max_polish}** polish"
+        milestone_count_rule = (
+            f"Propose **one or two milestones** for this pass; optional `tier: \"polish\"` items "
+            f"are backlog-only (up to {max_polish})"
+        )
     else:
         milestone_rule = 'Include **exactly one** `tier: "milestone"` feature — a major expansion.'
-        milestone_count_rule = f"Propose **one milestone** plus up to **{max_polish}** polish"
+        milestone_count_rule = (
+            f"Propose **one milestone** for this pass; optional `tier: \"polish\"` items "
+            f"are backlog-only (up to {max_polish})"
+        )
     theme_hint = enrichment_pass_theme_hint(
         int(enrichment_pass),
         int(context.get("improvement_cycle_number") or 1),
