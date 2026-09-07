@@ -24,6 +24,7 @@ SUBSTAGE_ENRICHMENT = "enrichment"
 SUBSTAGE_ADVERSARY = "adversary"
 SUBSTAGE_ACCEPTANCE = "acceptance"
 SUBSTAGE_USER_JOURNEY = "user_journey"
+SUBSTAGE_USER_PERSPECTIVE_REVIEW = "user_perspective_review"
 SUBSTAGE_REVIEW = "review"
 SUBSTAGE_TESTING = "testing"
 SUBSTAGE_REDEPLOY = "redeploy"
@@ -101,9 +102,16 @@ BUILD_STAGES: tuple[StageSpec, ...] = (
     ),
     StageSpec(
         ProjectState.SMOKE_TESTING,
+        SUBSTAGE_USER_PERSPECTIVE_REVIEW,
+        "_stage_user_perspective_review",
+        requires="user_journey_complete",
+        completes="user_perspective_review_complete",
+    ),
+    StageSpec(
+        ProjectState.SMOKE_TESTING,
         SUBSTAGE_REVIEW,
         "_stage_review",
-        requires="user_journey_complete",
+        requires="user_perspective_review_complete",
     ),
 )
 
@@ -123,9 +131,16 @@ POST_PRODUCTION_STAGES: tuple[StageSpec, ...] = (
     ),
     StageSpec(
         ProjectState.PRODUCTION,
+        SUBSTAGE_USER_PERSPECTIVE_REVIEW,
+        "_stage_user_perspective_review",
+        requires="post_production_tests_complete",
+        completes="user_perspective_review_complete",
+    ),
+    StageSpec(
+        ProjectState.PRODUCTION,
         SUBSTAGE_REDEPLOY,
         "_stage_post_production_redeploy",
-        requires="post_production_tests_complete",
+        requires="user_perspective_review_complete",
         completes="post_production_redeploy_complete",
     ),
 )

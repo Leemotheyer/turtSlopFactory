@@ -55,6 +55,46 @@ def test_architect_prompt_includes_original_description():
     assert "Global user rules" in prompt
 
 
+def test_user_perspective_review_prompt_includes_cycle_label():
+    prompt = build_role_prompt(
+        AgentRole.TESTER,
+        {
+            "name": "App",
+            "description": "Todo app",
+            "test_stage": "user_perspective_review",
+            "cycle_label": "improvement cycle 2",
+            "preview_upstream": "http://preview:8080",
+            "preview_audit": {"health_ok": True, "has_html_ui": True},
+        },
+    )
+    assert "user-perspective-review.json" in prompt
+    assert "improvement cycle 2" in prompt
+    assert "suggestions" in prompt.lower()
+
+
+def test_enrichment_prompt_includes_improvement_backlog():
+    prompt = build_role_prompt(
+        AgentRole.ARCHITECT,
+        {
+            "name": "App",
+            "description": "App",
+            "enrichment_pass": 1,
+            "max_enrichment_passes": 4,
+            "max_features_per_pass": 8,
+            "preview_audit": {"health_ok": True, "has_html_ui": True, "issues": []},
+            "improvement_backlog": [
+                {
+                    "title": "Add dark mode",
+                    "description": "Theme toggle in settings",
+                    "category": "ui",
+                }
+            ],
+        },
+    )
+    assert "dark mode" in prompt.lower()
+    assert "user reviews" in prompt.lower()
+
+
 def test_planning_architect_prompt_includes_requirements():
     prompt = build_role_prompt(
         AgentRole.ARCHITECT,

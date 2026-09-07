@@ -81,6 +81,7 @@ export interface ProjectDetail extends Project {
   effective_max_fix_attempts?: number;
   effective_adversary_enabled?: boolean;
   effective_user_journey_enabled?: boolean;
+  effective_user_perspective_review_enabled?: boolean;
   change_budget_enforced?: boolean;
   change_budget_unlimited?: boolean;
   factory_defaults?: {
@@ -90,6 +91,7 @@ export interface ProjectDetail extends Project {
     max_fix_attempts?: number;
     adversary_enabled?: boolean;
     user_journey_testing_enabled?: boolean;
+    user_perspective_review_enabled?: boolean;
     enforce_change_budget?: boolean;
   };
   pipeline_substage?: {

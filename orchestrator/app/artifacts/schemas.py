@@ -100,6 +100,32 @@ class UserJourneyReport(_Artifact):
     notes: str = ""
 
 
+class CycleImprovementSuggestion(_Artifact):
+    title: str = ""
+    description: str = ""
+    category: str = "other"  # bug_fix | feature | cleanup | ui | expansion | other
+    priority: str = "medium"  # high | medium | low
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _normalize_category(cls, value):
+        value = str(value or "other").lower()
+        return value if value in ("bug_fix", "feature", "cleanup", "ui", "expansion", "other") else "other"
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _normalize_priority(cls, value):
+        value = str(value or "medium").lower()
+        return value if value in ("high", "medium", "low") else "medium"
+
+
+class UserPerspectiveReviewReport(_Artifact):
+    passed: bool = True
+    summary: str = ""
+    suggestions: list[CycleImprovementSuggestion] = Field(default_factory=list)
+    notes: str = ""
+
+
 class ContractRequirementDraft(_Artifact):
     id: str = ""
     description: str = ""

@@ -495,16 +495,18 @@ def local_enrichment_plan(
         slug = _slugify(title[:48])
         if slug in completed_slugs:
             continue
+        category = str(item.get("category") or "other").lower()
+        priority = str(item.get("priority") or "medium").lower()
+        source = str(item.get("source") or "user_review")
+        tier = "milestone" if category in ("feature", "expansion") and priority == "high" else "polish"
         features.append(
             {
                 "id": slug,
                 "title": title[:72],
-                "description": (
-                    f"UX improvement from user-journey testing (non-blocking): {desc}"
-                ),
+                "description": f"Improvement from {source}: {desc}",
                 "scope": "in_scope",
-                "priority": "medium",
-                "tier": "polish",
+                "priority": priority if priority in ("high", "medium", "low") else "medium",
+                "tier": tier,
             }
         )
         if len(features) >= settings.max_features_per_enrichment_pass:
