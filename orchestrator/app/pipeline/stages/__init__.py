@@ -74,16 +74,9 @@ BUILD_STAGES: tuple[StageSpec, ...] = (
     ),
     StageSpec(
         ProjectState.SMOKE_TESTING,
-        SUBSTAGE_ENRICHMENT,
-        "_stage_post_smoke_enrichment",
-        requires="smoke_testing_complete",
-        completes="post_smoke_enrichment_complete",
-    ),
-    StageSpec(
-        ProjectState.SMOKE_TESTING,
         SUBSTAGE_ADVERSARY,
         "_stage_adversary",
-        requires="post_smoke_enrichment_complete",
+        requires="smoke_testing_complete",
         completes="adversary_complete",
     ),
     StageSpec(

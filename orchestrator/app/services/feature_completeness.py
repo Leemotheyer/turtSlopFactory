@@ -87,8 +87,6 @@ def evaluate_feature_completeness(
         passes_done = int(context.get("enrichment_passes_completed") or 0)
         if context.get("enrichment_complete"):
             passes_done = max(passes_done, 1)
-        if context.get("post_smoke_enrichment_complete"):
-            passes_done = max(passes_done, passes_done + 1)
         if min_passes > 0 and passes_done < min_passes:
             issues.append(
                 f"Enrichment incomplete ({passes_done}/{min_passes} required passes) — "

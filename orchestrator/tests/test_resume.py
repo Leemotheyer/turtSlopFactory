@@ -117,15 +117,20 @@ def test_stages_from_failure_slices_from_failed_substage():
     assert all(spec.gate == ProjectState.SMOKE_TESTING for spec in smoke_only)
 
     enrichment_only = stages_from_failure(
-        BUILD_STAGES, gate=ProjectState.SMOKE_TESTING, substage=SUBSTAGE_ENRICHMENT
+        BUILD_STAGES, gate=ProjectState.SMOKE_TESTING, substage=SUBSTAGE_ADVERSARY
     )
-    assert enrichment_only[0].method == "_stage_post_smoke_enrichment"
-    assert enrichment_only[0].substage == SUBSTAGE_ENRICHMENT
+    assert enrichment_only[0].method == "_stage_adversary"
+    assert enrichment_only[0].substage == SUBSTAGE_ADVERSARY
 
     implementing_enrichment = stages_from_failure(
         BUILD_STAGES, gate=ProjectState.IMPLEMENTING, substage=SUBSTAGE_ENRICHMENT
     )
     assert implementing_enrichment[0].method == "_stage_autonomous_enrichment"
+
+    legacy_polish = stages_from_failure(
+        BUILD_STAGES, gate=ProjectState.SMOKE_TESTING, substage=SUBSTAGE_ENRICHMENT
+    )
+    assert legacy_polish[0].method == "_stage_adversary"
 
 
 def test_format_acceptance_fix_brief_structured():

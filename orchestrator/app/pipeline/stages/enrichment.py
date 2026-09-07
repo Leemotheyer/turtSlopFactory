@@ -1,4 +1,4 @@
-"""Autonomous enrichment passes (pre-integration, pre-review, post-production)."""
+"""Autonomous enrichment passes (pre-integration, post-production)."""
 
 from __future__ import annotations
 
@@ -632,20 +632,4 @@ async def stage_autonomous_enrichment(ex: "PipelineExecutor", session, project, 
     )
     if ok:
         context["enrichment_complete"] = True
-    return ok
-
-
-async def stage_post_smoke_enrichment(ex: "PipelineExecutor", session, project, context) -> bool:
-    ok = await run_enrichment_passes(
-        ex,
-        session,
-        project,
-        context,
-        max_passes=1,
-        completion_key="post_smoke_enrichment_complete",
-        log_prefix="pre-review",
-        skip_unchanged_audit=True,
-    )
-    if ok:
-        context["post_smoke_enrichment_complete"] = True
     return ok

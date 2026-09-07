@@ -2911,7 +2911,9 @@ export default function DashboardPage() {
                       <h4>Enrichment progress</h4>
                       {enrichmentProgress && (
                         <p className={styles.enrichmentStatus}>
-                          {enrichmentProgress.phase === "pre-review" ? "Pre-review polish" : "Autonomous enrichment"}
+                          {enrichmentProgress.phase === "pre-review"
+                            ? "Polish deferred to next cycle"
+                            : "Autonomous enrichment"}
                           {" — "}
                           pass {enrichmentProgress.current_pass ?? enrichmentProgress.passes_completed ?? 0}
                           {" of "}

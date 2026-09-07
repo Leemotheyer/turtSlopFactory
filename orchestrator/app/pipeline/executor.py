@@ -198,14 +198,18 @@ class PipelineExecutor:
             raw = meta.get("failed_gate")
         if not substage:
             substage = meta.get("failed_substage")
-        if substage:
-            context["failed_substage"] = substage
         if not raw:
             return None
         try:
-            return parse_project_state(raw)
+            gate = parse_project_state(raw)
         except ValueError:
             return None
+        if gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_ENRICHMENT:
+            substage = SUBSTAGE_ADVERSARY
+            context["smoke_testing_complete"] = True
+        if substage:
+            context["failed_substage"] = substage
+        return gate
 
     def _save_failed_gate(
         self,
@@ -828,9 +832,6 @@ class PipelineExecutor:
     async def _stage_smoke_testing(self, session, project, context) -> bool:
         return await testing_stage.stage_smoke_testing(self, session, project, context)
 
-    async def _stage_post_smoke_enrichment(self, session, project, context) -> bool:
-        return await enrichment_stage.stage_post_smoke_enrichment(self, session, project, context)
-
     async def _stage_adversary(self, session, project, context) -> bool:
         return await adversary_stage.stage_adversary(self, session, project, context)
 
@@ -1289,6 +1290,11 @@ class PipelineExecutor:
         failed_at: ProjectState,
         failed_substage: str | None = None,
     ) -> None:
+        if failed_at == ProjectState.SMOKE_TESTING and failed_substage == SUBSTAGE_ENRICHMENT:
+            # Legacy pre-review polish removed — treat as adversary-stage failure.
+            failed_substage = SUBSTAGE_ADVERSARY
+            context["smoke_testing_complete"] = True
+
         context["failed_gate"] = failed_at.value
         if failed_substage:
             context["failed_substage"] = failed_substage

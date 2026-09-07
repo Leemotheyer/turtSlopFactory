@@ -72,6 +72,9 @@ def stages_from_failure(
     substage: str | None,
 ) -> tuple[StageSpec, ...]:
     """Return only the stages that should re-run after a fix (from failure point forward)."""
+    # Pre-review polish enrichment was removed from smoke testing — resume at adversary.
+    if gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_ENRICHMENT:
+        substage = SUBSTAGE_ADVERSARY
     start: int | None = None
     for index, spec in enumerate(specs):
         if spec.gate != gate:

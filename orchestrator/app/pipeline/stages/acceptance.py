@@ -106,7 +106,7 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
 
     from app.services.feature_completeness import evaluate_feature_completeness
     from app.services.intake_contract import intake_has_product_scope
-    from app.services.product_enrichment import audit_live_preview
+    from app.services.product_enrichment import audit_live_preview, persist_product_qa_to_improvement_backlog
 
     if intake_has_product_scope(context.get("intake")) and not context.get("product_qa_passed"):
         await ex._deploy_live_preview(
@@ -118,6 +118,7 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
         )
         context["product_qa_passed"] = qa_ok
         if not qa_ok:
+            persist_product_qa_to_improvement_backlog(ex.workspace, project.id)
             context["prompt_focus"] = "fix"
             context["fix_brief"] = format_acceptance_fix_brief(report)
             context["last_failure"] = (
