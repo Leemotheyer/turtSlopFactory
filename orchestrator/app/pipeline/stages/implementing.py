@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db_models import ProjectRow, TaskRow
 from app.models import AgentRole, EventType
 from app.pipeline.stages import SUBSTAGE_IMPLEMENTING, SUBSTAGE_UNIT_TESTING, SUBSTAGE_ENRICHMENT
+from app.pipeline.stages import SUBSTAGE_ACCEPTANCE, SUBSTAGE_ADVERSARY, SUBSTAGE_USER_JOURNEY
 from app.services.agent_concurrency import (
     resolve_concurrency_budget,
     wait_for_cursor_capacity,
@@ -59,7 +60,15 @@ async def stage_fix_from_failure(
         return False
 
     substage = context.get("failed_substage")
-    if substage in (SUBSTAGE_UNIT_TESTING, SUBSTAGE_IMPLEMENTING, SUBSTAGE_ENRICHMENT, None):
+    if substage in (
+        SUBSTAGE_UNIT_TESTING,
+        SUBSTAGE_IMPLEMENTING,
+        SUBSTAGE_ENRICHMENT,
+        SUBSTAGE_ACCEPTANCE,
+        SUBSTAGE_ADVERSARY,
+        SUBSTAGE_USER_JOURNEY,
+        None,
+    ):
         # The developer fix succeeded — clear the stale failure before the
         # preview refresh so an infra-only preview problem (e.g. no docker)
         # does not masquerade as a failed code fix. App-level preview

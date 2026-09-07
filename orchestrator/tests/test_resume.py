@@ -3,11 +3,18 @@
 from app.models import ProjectState
 from app.pipeline.resume import (
     clear_completion_from_gate,
+    clear_smoke_fix_substage,
     gate_needs_preview_refresh,
     is_review_policy_failure,
     preview_type_for_context,
 )
-from app.pipeline.stages import SUBSTAGE_REVIEW
+from app.pipeline.stages import (
+    SUBSTAGE_ACCEPTANCE,
+    SUBSTAGE_ADVERSARY,
+    SUBSTAGE_REVIEW,
+    SUBSTAGE_USER_JOURNEY,
+)
+from app.pipeline.stages.acceptance import format_acceptance_fix_brief
 from app.services.diagnosis import diagnose_failure
 
 
@@ -50,3 +57,66 @@ def test_diagnose_dead_preview_as_infra():
 
     result = diagnose_failure("No factory live preview is running")
     assert result["error_class"] == "infra"
+
+
+def test_clear_smoke_fix_substage_clears_downstream_flags():
+    context = {
+        "adversary_complete": True,
+        "acceptance_complete": True,
+        "user_journey_complete": True,
+        "user_perspective_review_complete": True,
+    }
+    clear_smoke_fix_substage(context, SUBSTAGE_ACCEPTANCE)
+    assert "acceptance_complete" not in context
+    assert "user_journey_complete" not in context
+    assert "user_perspective_review_complete" not in context
+    assert context["adversary_complete"] is True
+
+    context = {
+        "adversary_complete": True,
+        "acceptance_complete": True,
+        "user_journey_complete": True,
+        "user_perspective_review_complete": True,
+    }
+    clear_smoke_fix_substage(context, SUBSTAGE_ADVERSARY)
+    assert "adversary_complete" not in context
+    assert "acceptance_complete" not in context
+    assert "user_journey_complete" not in context
+    assert "user_perspective_review_complete" not in context
+
+
+def test_clear_smoke_fix_substage_user_journey_preserves_acceptance():
+    context = {
+        "acceptance_complete": True,
+        "user_journey_complete": True,
+        "user_perspective_review_complete": True,
+    }
+    clear_smoke_fix_substage(context, SUBSTAGE_USER_JOURNEY)
+    assert context.get("acceptance_complete") is True
+    assert "user_journey_complete" not in context
+    assert "user_perspective_review_complete" not in context
+
+
+def test_format_acceptance_fix_brief_structured():
+    report = {
+        "requirements": {
+            "R1": {
+                "status": "failed",
+                "description": "Search endpoint",
+                "acceptance": ["GET /api/search returns results"],
+                "evidence_summary": "no passing test",
+            },
+            "R2": {"status": "verified", "description": "Health"},
+        }
+    }
+    brief = format_acceptance_fix_brief(
+        report,
+        feature_report={"issues": ["Missing download flow"]},
+        regression_gaps=[{"expected_test": "test_fix_abc.py", "summary": "crash on empty query"}],
+    )
+    assert "R1 [failed]" in brief
+    assert "Search endpoint" in brief
+    assert "Feature completeness" in brief
+    assert "test_fix_abc.py" in brief
+    assert "R2" not in brief
+    assert len(brief) < 2000

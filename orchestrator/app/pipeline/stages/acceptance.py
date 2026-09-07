@@ -19,6 +19,43 @@ if TYPE_CHECKING:
     from app.pipeline.executor import PipelineExecutor
 
 
+def format_acceptance_fix_brief(
+    report: dict,
+    *,
+    feature_report: dict | None = None,
+    regression_gaps: list | None = None,
+    tests_output: str = "",
+) -> str:
+    """Compact fix brief for developer agents when acceptance evaluation fails."""
+    lines = ["Acceptance evaluation failed — implement fixes and add passing evidence:"]
+    if tests_output:
+        lines.append("\nTest suite output (summary):")
+        lines.append(tests_output[:800])
+    for req_id, entry in (report.get("requirements") or {}).items():
+        status = entry.get("status")
+        if status not in ("failed", "unverified"):
+            continue
+        lines.append(
+            f"- {req_id} [{status}] {str(entry.get('description', ''))[:120]}"
+        )
+        criteria = entry.get("acceptance") or []
+        if criteria:
+            lines.append(f"  accept: {criteria[0][:120]}")
+        evidence = entry.get("evidence_summary")
+        if evidence:
+            lines.append(f"  evidence: {str(evidence)[:120]}")
+    for gap in regression_gaps or []:
+        lines.append(
+            f"- Add tests/regression/{gap.get('expected_test')}: {str(gap.get('summary', ''))[:120]}"
+        )
+    for issue in (feature_report or {}).get("issues") or []:
+        lines.append(f"- Feature completeness: {issue}")
+    lines.append(
+        "\nAdd or fix pytest tests named test_<req_id>_* and ensure they pass."
+    )
+    return "\n".join(lines)[:2000]
+
+
 async def stage_acceptance(ex: "PipelineExecutor", session, project, context) -> bool:
     from app.services.contracts import get_latest_contract
     from app.services.evidence import evaluate_acceptance, sync_requirements_from_contract
@@ -57,10 +94,12 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
     await record_test_results_evidence(session, ex.workspace, project.id, stage="acceptance_full")
     if not tests_ok:
         await ex.complete_task(session, task, False, tests_output[:1000])
-        context["last_failure"] = (
-            "Acceptance test refresh failed — the current code does not pass its "
-            f"test suite:\n\n{tests_output[:3000]}"
+        context["prompt_focus"] = "fix"
+        context["fix_brief"] = format_acceptance_fix_brief(
+            {},
+            tests_output=tests_output,
         )
+        context["last_failure"] = context["fix_brief"]
         return False
 
     report = await evaluate_acceptance(session, project.id, contract)
@@ -79,8 +118,11 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
         )
         context["product_qa_passed"] = qa_ok
         if not qa_ok:
+            context["prompt_focus"] = "fix"
+            context["fix_brief"] = format_acceptance_fix_brief(report)
             context["last_failure"] = (
-                "Product QA failed before acceptance sign-off.\n\n" f"{qa_output[:3000]}"
+                "Product QA failed before acceptance sign-off.\n\n"
+                f"{qa_output[:1200]}"
             )
             await ex.complete_task(session, task, False, qa_output[:1000])
             return False
@@ -134,26 +176,11 @@ async def stage_acceptance(ex: "PipelineExecutor", session, project, context) ->
         context["acceptance_complete"] = True
         return True
 
-    problems: list[str] = []
-    for req_id, entry in (report.get("requirements") or {}).items():
-        status = entry.get("status")
-        if status in ("failed", "unverified"):
-            problems.append(
-                f"- {req_id} [{status}] {entry.get('description', '')[:160]}\n"
-                f"  acceptance: {'; '.join(entry.get('acceptance') or [])[:300]}\n"
-                f"  evidence: {entry.get('evidence_summary') or 'none recorded'}"
-            )
-    for gap in regression_gaps:
-        problems.append(
-            f"- Missing regression test for fixed failure `{gap['failure_id']}`: "
-            f"add tests/regression/{gap['expected_test']} covering: {gap['summary'][:200]}"
-        )
-    for issue in feature_report.get("issues") or []:
-        problems.append(f"- Feature completeness: {issue}")
-
-    context["last_failure"] = (
-        "Acceptance evaluation failed. Every contract requirement needs verifiable "
-        "evidence (a passing test named test_<req_id>_* or a recorded probe).\n\n"
-        + "\n".join(problems[:12])
+    context["prompt_focus"] = "fix"
+    context["fix_brief"] = format_acceptance_fix_brief(
+        report,
+        feature_report=feature_report,
+        regression_gaps=regression_gaps,
     )
+    context["last_failure"] = context["fix_brief"]
     return False

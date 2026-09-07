@@ -25,17 +25,29 @@ from app.models import AgentRole, EventType, FactoryEvent, NotificationType, Pro
 from app.pipeline.stages import (
     BUILD_STAGES,
     POST_PRODUCTION_STAGES,
+    SUBSTAGE_ACCEPTANCE,
+    SUBSTAGE_ADVERSARY,
     SUBSTAGE_ENRICHMENT,
     SUBSTAGE_IMPLEMENTING,
     SUBSTAGE_REVIEW,
     SUBSTAGE_UNIT_TESTING,
+    SUBSTAGE_USER_JOURNEY,
     StageSpec,
 )
 from app.pipeline.resume import (
     clear_completion_from_gate,
+    clear_smoke_fix_substage,
     gate_needs_preview_refresh,
     is_review_policy_failure,
     preview_type_for_context,
+)
+# Smoke-test substages that need a developer fix before retrying (not bare re-run).
+_SMOKE_FIX_SUBSTAGES = frozenset(
+    {
+        SUBSTAGE_ADVERSARY,
+        SUBSTAGE_ACCEPTANCE,
+        SUBSTAGE_USER_JOURNEY,
+    }
 )
 from app.pipeline.stages import (
     acceptance as acceptance_stage,
@@ -981,7 +993,10 @@ class PipelineExecutor:
                             preview_type=preview_type_for_context(context),
                             notify=False,
                         )
-                    if failed_substage in (SUBSTAGE_UNIT_TESTING, SUBSTAGE_ENRICHMENT):
+                    if failed_substage in (SUBSTAGE_UNIT_TESTING, SUBSTAGE_ENRICHMENT) or (
+                        failed_substage in _SMOKE_FIX_SUBSTAGES
+                        and resume_gate == ProjectState.SMOKE_TESTING
+                    ):
                         await self._ensure_runnable_app(project, context)
                         await self._stage_fix_from_failure(session, project, context)
                         await self._deploy_live_preview(
@@ -992,6 +1007,8 @@ class PipelineExecutor:
                         )
                         if failed_substage == SUBSTAGE_UNIT_TESTING:
                             context["implementation_complete"] = True
+                        elif failed_substage in _SMOKE_FIX_SUBSTAGES:
+                            clear_smoke_fix_substage(context, failed_substage)
                     self.workspace.append_log(
                         project_id,
                         "pipeline.log",
@@ -1413,6 +1430,25 @@ class PipelineExecutor:
                 return
             context["implementation_complete"] = True
         elif failed_substage == SUBSTAGE_ENRICHMENT:
+            fixed = await self._stage_fix_from_failure(session, project, context)
+            if not fixed:
+                await self._handle_failure(
+                    session,
+                    project,
+                    context,
+                    failed_at=failed_at,
+                    failed_substage=failed_substage,
+                )
+                return
+            await self._deploy_live_preview(
+                session,
+                project,
+                context,
+                preview_type=preview_type_for_context(context),
+                notify=False,
+            )
+        elif failed_substage in _SMOKE_FIX_SUBSTAGES:
+            clear_smoke_fix_substage(context, failed_substage)
             fixed = await self._stage_fix_from_failure(session, project, context)
             if not fixed:
                 await self._handle_failure(

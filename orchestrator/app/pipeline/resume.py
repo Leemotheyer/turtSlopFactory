@@ -54,7 +54,6 @@ def clear_completion_from_gate(
         context.pop("acceptance_complete", None)
     elif gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_USER_JOURNEY:
         context.pop("user_journey_complete", None)
-        context.pop("acceptance_complete", None)
     elif gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_ACCEPTANCE:
         context.pop("acceptance_complete", None)
     elif gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_ADVERSARY:
@@ -62,6 +61,28 @@ def clear_completion_from_gate(
             context.pop(key, None)
     elif gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_ENRICHMENT:
         for key in _SMOKE_GATE_FLAGS[1:]:
+            context.pop(key, None)
+
+
+def clear_smoke_fix_substage(context: dict, substage: str | None) -> None:
+    """Clear completion flags from a failed smoke-test substage forward (for fix loops)."""
+    if substage == SUBSTAGE_ADVERSARY:
+        for key in (
+            "adversary_complete",
+            "acceptance_complete",
+            "user_journey_complete",
+            "user_perspective_review_complete",
+        ):
+            context.pop(key, None)
+    elif substage == SUBSTAGE_ACCEPTANCE:
+        for key in (
+            "acceptance_complete",
+            "user_journey_complete",
+            "user_perspective_review_complete",
+        ):
+            context.pop(key, None)
+    elif substage == SUBSTAGE_USER_JOURNEY:
+        for key in ("user_journey_complete", "user_perspective_review_complete"):
             context.pop(key, None)
 
 
