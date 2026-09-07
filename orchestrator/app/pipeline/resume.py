@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.models import ProjectState
 from app.pipeline.stages import (
+    StageSpec,
     SUBSTAGE_ACCEPTANCE,
     SUBSTAGE_ADVERSARY,
     SUBSTAGE_ENRICHMENT,
@@ -62,6 +63,28 @@ def clear_completion_from_gate(
     elif gate == ProjectState.SMOKE_TESTING and substage == SUBSTAGE_ENRICHMENT:
         for key in _SMOKE_GATE_FLAGS[1:]:
             context.pop(key, None)
+
+
+def stages_from_failure(
+    specs: tuple[StageSpec, ...],
+    *,
+    gate: ProjectState,
+    substage: str | None,
+) -> tuple[StageSpec, ...]:
+    """Return only the stages that should re-run after a fix (from failure point forward)."""
+    start: int | None = None
+    for index, spec in enumerate(specs):
+        if spec.gate != gate:
+            continue
+        if substage is None and spec.substage is None:
+            start = index
+            break
+        if substage is not None and spec.substage == substage:
+            start = index
+            break
+    if start is None:
+        return specs
+    return specs[start:]
 
 
 def clear_smoke_fix_substage(context: dict, substage: str | None) -> None:

@@ -1,13 +1,15 @@
 from uuid import uuid4
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.db_models import ProjectRow
 from app.pipeline.executor import PipelineExecutor, _STAGE_UNIT_TESTING
 from app.models import ProjectState
 from app.pipeline.stages import SUBSTAGE_ACCEPTANCE
+from app.pipeline.stages.implementing import stage_fix_from_failure
 from app.services.repo_analysis import analyze_repo
+from app.agents.base import AgentRun
 
 
 def test_load_failed_gate_does_not_skip_implementation_on_unit_test_failure():
@@ -121,3 +123,31 @@ async def test_handle_failure_acceptance_calls_fix_before_retry(workspace):
     deploy_mock.assert_awaited_once()
     assert "acceptance_complete" not in context
     run_sequence_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stage_fix_from_failure_rejects_empty_code_changes(workspace):
+    executor = PipelineExecutor()
+    executor.workspace = workspace
+    project_id = uuid4()
+    project = ProjectRow(id=project_id, name="No-op fix", description="Test")
+    repo = workspace.repo_dir(project_id)
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / "app").mkdir()
+    (repo / "app" / "main.py").write_text("print('ok')\n")
+
+    context = {"last_failure": "Smoke test failed on /health"}
+
+    async def fake_run(*_args, **_kwargs):
+        return AgentRun(success=True, output="I fixed it in chat only")
+
+    with (
+        patch.object(executor.runner, "run", new=fake_run),
+        patch.object(executor, "create_task", new_callable=AsyncMock, return_value=MagicMock()),
+        patch.object(executor, "complete_task", new_callable=AsyncMock),
+        patch.object(executor, "_ensure_runnable_app", new_callable=AsyncMock),
+    ):
+        fixed = await stage_fix_from_failure(executor, None, project, context)
+
+    assert fixed is False
+    assert "No meaningful code changes" in context["last_failure"]

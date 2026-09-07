@@ -37,6 +37,8 @@ async def stage_fix_from_failure(
         context["fix_brief"] = str(failure)[:2000]
 
     await ex._ensure_runnable_app(project, context)
+    repo = ex.workspace.repo_dir(project.id)
+    baseline = capture_repo_baseline(repo)
     task = await ex.create_task(
         session,
         project.id,
@@ -48,14 +50,25 @@ async def stage_fix_from_failure(
         AgentRole.DEVELOPER,
         project.id,
         task.id,
-        str(ex.workspace.repo_dir(project.id)),
+        str(repo),
         context,
     )
+    stats = compute_change_stats(repo, baseline)
+    output = run.output
+    success = run.success
+    if run.success and stats["files_changed"] < 1 and stats["lines_changed"] < 1:
+        success = False
+        output = (
+            f"No meaningful code changes detected ({stats['files_changed']} files, "
+            f"{stats['lines_changed']} lines). Developers must edit source files — "
+            f"JSON plans or chat replies do not count. {output}"
+        )
+        ex.workspace.append_log(project.id, "pipeline.log", f"[fix] {output[:400]}")
     await ex.complete_task(
-        session, task, run.success, run.output, agent_id=run.agent_id or None, cursor_url=run.cursor_url
+        session, task, success, output, agent_id=run.agent_id or None, cursor_url=run.cursor_url
     )
-    if not run.success:
-        context["last_failure"] = run.output
+    if not success:
+        context["last_failure"] = output
         ex._persist_last_failure(project.id, context)
         return False
 

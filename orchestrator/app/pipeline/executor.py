@@ -40,6 +40,7 @@ from app.pipeline.resume import (
     gate_needs_preview_refresh,
     is_review_policy_failure,
     preview_type_for_context,
+    stages_from_failure,
 )
 # Smoke-test substages that need a developer fix before retrying (not bare re-run).
 _SMOKE_FIX_SUBSTAGES = frozenset(
@@ -1393,8 +1394,8 @@ class PipelineExecutor:
                     )
                 await self.transition(session, project, ProjectState.FIXING)
                 await self.transition(session, project, failed_at)
-                specs = (
-                    POST_PRODUCTION_STAGES if context.get("post_production") else BUILD_STAGES
+                specs = self._retry_stage_specs(
+                    context, failed_at=failed_at, failed_substage=failed_substage
                 )
                 await self._run_stage_sequence(session, project, context, specs)
                 return
@@ -1479,8 +1480,22 @@ class PipelineExecutor:
                 return
             context.pop("smoke_testing_complete", None)
 
-        specs = POST_PRODUCTION_STAGES if context.get("post_production") else BUILD_STAGES
+        specs = self._retry_stage_specs(
+            context, failed_at=failed_at, failed_substage=failed_substage
+        )
         await self._run_stage_sequence(session, project, context, specs)
+
+    def _retry_stage_specs(
+        self,
+        context: dict,
+        *,
+        failed_at: ProjectState,
+        failed_substage: str | None,
+    ) -> tuple[StageSpec, ...]:
+        specs = POST_PRODUCTION_STAGES if context.get("post_production") else BUILD_STAGES
+        return stages_from_failure(
+            specs, gate=failed_at, substage=failed_substage
+        )
 
     def _pipeline_log_tail(self, project_id: UUID, lines: int = 40) -> str:
         try:

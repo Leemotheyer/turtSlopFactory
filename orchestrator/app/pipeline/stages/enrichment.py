@@ -30,6 +30,11 @@ if TYPE_CHECKING:
     from app.pipeline.executor import PipelineExecutor
 
 
+def _stash_enrichment_retry_plan(context: dict, pass_number: int, plan: dict) -> None:
+    """Keep the current pass plan so a fix loop can retry without re-ideation."""
+    context["enrichment_retry_plan"] = {"pass_number": pass_number, "plan": plan}
+
+
 def _persist_completed_slugs(
     ex: "PipelineExecutor",
     project_id,
@@ -265,113 +270,124 @@ async def run_enrichment_passes(
             "Audit the live preview and propose substantial improvements",
             AgentRole.ARCHITECT,
         )
-        ideation_context = {
-            **context,
-            "enrichment_pass": pass_number,
-            "improvement_cycle_number": cycle_number,
-            "incremental": True,
-            "max_milestones_per_pass": context.get("max_milestones_per_pass", 1),
-            "product_qa_feedback": product_qa_feedback,
-        }
-        plan_raw = None
-        used_fallback = False
-        plan: dict = {"features": []}
-        local_plan = local_enrichment_plan(
-            audit,
-            pass_number,
-            context.get("notes", []),
-            max_passes=max_passes,
-            completed_slugs=completed_slugs,
-            intake=context.get("intake"),
-            ux_backlog=context.get("ux_improvement_backlog"),
-            cycle_number=cycle_number,
-            product_qa_feedback=product_qa_feedback,
-        )
-        audit_unchanged = skip_unchanged_audit and should_skip_architect(project.id, audit, ex.workspace)
-        use_local_only, local_reason = should_use_local_enrichment_plan_only(
-            local_plan,
-            product_qa_feedback,
-        )
-        skip_architect = use_local_only or (
-            audit_unchanged and bool(local_plan.get("features"))
-        )
-        if skip_architect:
-            plan = local_plan
-            ex.workspace.write_artifact(
-                project.id,
-                "enrichment-plan.json",
-                json.dumps(plan, indent=2),
-            )
+        retry_plan = context.pop("enrichment_retry_plan", None)
+        if retry_plan and int(retry_plan.get("pass_number", 0)) == pass_number:
+            plan = retry_plan["plan"]
             used_fallback = True
-            ideation_output = (
-                f"[factory] Skipped architect — {local_reason}; "
-                f"using local plan ({len(plan.get('features') or [])} feature(s))."
+            await ex.complete_task(
+                session,
+                task,
+                True,
+                f"[factory] Retrying pass {pass_number} with existing plan — skipping re-ideation",
             )
-            await ex.complete_task(session, task, True, ideation_output)
-            if skip_unchanged_audit:
-                record_audit_fingerprint(project.id, audit, ex.workspace)
         else:
-            if skip_unchanged_audit and should_skip_architect(project.id, audit, ex.workspace):
-                ex.workspace.append_log(
-                    project.id,
-                    "pipeline.log",
-                    f"[{log_prefix}] Preview audit unchanged but local plan empty — running architect",
-                )
-            run = await ex.runner.run(
-                AgentRole.ARCHITECT,
-                project.id,
-                task.id,
-                str(ex.workspace.repo_dir(project.id)),
-                ideation_context,
+            ideation_context = {
+                **context,
+                "enrichment_pass": pass_number,
+                "improvement_cycle_number": cycle_number,
+                "incremental": True,
+                "max_milestones_per_pass": context.get("max_milestones_per_pass", 1),
+                "product_qa_feedback": product_qa_feedback,
+            }
+            plan_raw = None
+            used_fallback = False
+            plan = {"features": []}
+            local_plan = local_enrichment_plan(
+                audit,
+                pass_number,
+                context.get("notes", []),
+                max_passes=max_passes,
+                completed_slugs=completed_slugs,
+                intake=context.get("intake"),
+                ux_backlog=context.get("ux_improvement_backlog"),
+                cycle_number=cycle_number,
+                product_qa_feedback=product_qa_feedback,
             )
-            repo_plan = ex.workspace.repo_dir(project.id) / "enrichment-plan.json"
-            if repo_plan.is_file():
-                plan_raw = repo_plan.read_text(encoding="utf-8")
-            elif "enrichment-plan.json" in ex.workspace.list_artifacts(project.id):
-                plan_raw = ex.workspace.read_artifact(project.id, "enrichment-plan.json")
-            plan = parse_enrichment_plan(plan_raw or run.output)
-            if not plan.get("features"):
-                plan = local_enrichment_plan(
-                    audit,
-                    pass_number,
-                    context.get("notes", []),
-                    max_passes=max_passes,
-                    completed_slugs=completed_slugs,
-                    intake=context.get("intake"),
-                    ux_backlog=context.get("ux_improvement_backlog"),
-                    cycle_number=cycle_number,
-                    product_qa_feedback=product_qa_feedback,
-                )
+            audit_unchanged = skip_unchanged_audit and should_skip_architect(project.id, audit, ex.workspace)
+            use_local_only, local_reason = should_use_local_enrichment_plan_only(
+                local_plan,
+                product_qa_feedback,
+            )
+            skip_architect = use_local_only or (
+                audit_unchanged and bool(local_plan.get("features"))
+            )
+            if skip_architect:
+                plan = local_plan
                 ex.workspace.write_artifact(
                     project.id,
                     "enrichment-plan.json",
                     json.dumps(plan, indent=2),
                 )
                 used_fallback = True
-
-            ideation_success = run.success or used_fallback
-            ideation_output = run.output
-            if used_fallback and not run.success:
                 ideation_output = (
-                    f"{run.output}\n\n[factory] Applied local enrichment plan from preview audit "
-                    f"({len(plan.get('features') or [])} feature(s))."
-                ).strip()
-            elif used_fallback:
-                ideation_output = (
-                    f"{run.output}\n\n[factory] Cloud reply had no parseable plan — used audit fallback "
-                    f"({len(plan.get('features') or [])} feature(s))."
-                ).strip()
+                    f"[factory] Skipped architect — {local_reason}; "
+                    f"using local plan ({len(plan.get('features') or [])} feature(s))."
+                )
+                await ex.complete_task(session, task, True, ideation_output)
+                if skip_unchanged_audit:
+                    record_audit_fingerprint(project.id, audit, ex.workspace)
+            else:
+                if skip_unchanged_audit and should_skip_architect(project.id, audit, ex.workspace):
+                    ex.workspace.append_log(
+                        project.id,
+                        "pipeline.log",
+                        f"[{log_prefix}] Preview audit unchanged but local plan empty — running architect",
+                    )
+                run = await ex.runner.run(
+                    AgentRole.ARCHITECT,
+                    project.id,
+                    task.id,
+                    str(ex.workspace.repo_dir(project.id)),
+                    ideation_context,
+                )
+                repo_plan = ex.workspace.repo_dir(project.id) / "enrichment-plan.json"
+                if repo_plan.is_file():
+                    plan_raw = repo_plan.read_text(encoding="utf-8")
+                elif "enrichment-plan.json" in ex.workspace.list_artifacts(project.id):
+                    plan_raw = ex.workspace.read_artifact(project.id, "enrichment-plan.json")
+                plan = parse_enrichment_plan(plan_raw or run.output)
+                if not plan.get("features"):
+                    plan = local_enrichment_plan(
+                        audit,
+                        pass_number,
+                        context.get("notes", []),
+                        max_passes=max_passes,
+                        completed_slugs=completed_slugs,
+                        intake=context.get("intake"),
+                        ux_backlog=context.get("ux_improvement_backlog"),
+                        cycle_number=cycle_number,
+                        product_qa_feedback=product_qa_feedback,
+                    )
+                    ex.workspace.write_artifact(
+                        project.id,
+                        "enrichment-plan.json",
+                        json.dumps(plan, indent=2),
+                    )
+                    used_fallback = True
 
-            await ex.complete_task(
-                session,
-                task,
-                ideation_success,
-                ideation_output,
-                agent_id=run.agent_id or None,
-                cursor_url=run.cursor_url,
-            )
-            if skip_unchanged_audit:
-                record_audit_fingerprint(project.id, audit, ex.workspace)
+                ideation_success = run.success or used_fallback
+                ideation_output = run.output
+                if used_fallback and not run.success:
+                    ideation_output = (
+                        f"{run.output}\n\n[factory] Applied local enrichment plan from preview audit "
+                        f"({len(plan.get('features') or [])} feature(s))."
+                    ).strip()
+                elif used_fallback:
+                    ideation_output = (
+                        f"{run.output}\n\n[factory] Cloud reply had no parseable plan — used audit fallback "
+                        f"({len(plan.get('features') or [])} feature(s))."
+                    ).strip()
+
+                await ex.complete_task(
+                    session,
+                    task,
+                    ideation_success,
+                    ideation_output,
+                    agent_id=run.agent_id or None,
+                    cursor_url=run.cursor_url,
+                )
+                if skip_unchanged_audit:
+                    record_audit_fingerprint(project.id, audit, ex.workspace)
 
         request_input = context.get("request_input")
         intake = context.get("intake") or {}
@@ -440,6 +456,7 @@ async def run_enrichment_passes(
             from app.services.intake_contract import intake_has_product_scope
 
             if not qa_ok and intake_has_product_scope(context.get("intake")):
+                _stash_enrichment_retry_plan(context, pass_number, plan)
                 return False
             break
 
@@ -493,6 +510,7 @@ async def run_enrichment_passes(
                     break
             if not success:
                 context["last_failure"] = output
+                _stash_enrichment_retry_plan(context, pass_number, plan)
                 return False
 
         test_task = await ex.create_task(
@@ -508,6 +526,7 @@ async def run_enrichment_passes(
         await ex.complete_task(session, test_task, test_ok, test_output)
         if not test_ok:
             context["last_failure"] = test_output
+            _stash_enrichment_retry_plan(context, pass_number, plan)
             return False
 
         await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
@@ -526,6 +545,7 @@ async def run_enrichment_passes(
         from app.services.intake_contract import intake_has_product_scope
 
         if not qa_ok and intake_has_product_scope(context.get("intake")):
+            _stash_enrichment_retry_plan(context, pass_number, plan)
             return False
 
         passes_done += 1

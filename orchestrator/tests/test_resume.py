@@ -7,10 +7,13 @@ from app.pipeline.resume import (
     gate_needs_preview_refresh,
     is_review_policy_failure,
     preview_type_for_context,
+    stages_from_failure,
 )
 from app.pipeline.stages import (
+    BUILD_STAGES,
     SUBSTAGE_ACCEPTANCE,
     SUBSTAGE_ADVERSARY,
+    SUBSTAGE_ENRICHMENT,
     SUBSTAGE_REVIEW,
     SUBSTAGE_USER_JOURNEY,
 )
@@ -95,6 +98,25 @@ def test_clear_smoke_fix_substage_user_journey_preserves_acceptance():
     assert context.get("acceptance_complete") is True
     assert "user_journey_complete" not in context
     assert "user_perspective_review_complete" not in context
+
+
+def test_stages_from_failure_slices_from_failed_substage():
+    smoke_only = stages_from_failure(
+        BUILD_STAGES, gate=ProjectState.SMOKE_TESTING, substage=None
+    )
+    assert smoke_only[0].method == "_stage_smoke_testing"
+    assert all(spec.gate == ProjectState.SMOKE_TESTING for spec in smoke_only)
+
+    enrichment_only = stages_from_failure(
+        BUILD_STAGES, gate=ProjectState.SMOKE_TESTING, substage=SUBSTAGE_ENRICHMENT
+    )
+    assert enrichment_only[0].method == "_stage_post_smoke_enrichment"
+    assert enrichment_only[0].substage == SUBSTAGE_ENRICHMENT
+
+    implementing_enrichment = stages_from_failure(
+        BUILD_STAGES, gate=ProjectState.IMPLEMENTING, substage=SUBSTAGE_ENRICHMENT
+    )
+    assert implementing_enrichment[0].method == "_stage_autonomous_enrichment"
 
 
 def test_format_acceptance_fix_brief_structured():
