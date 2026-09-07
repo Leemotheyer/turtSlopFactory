@@ -166,6 +166,7 @@ export default function DashboardPage() {
   const [deepTab, setDeepTab] = useState<DeepTab>("tasks");
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [deletingProject, setDeletingProject] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [logLoading, setLogLoading] = useState(false);
@@ -618,12 +619,17 @@ export default function DashboardPage() {
   }, [refresh]);
 
   async function handleDeleteProject() {
-    if (!selectedId || !detail) return;
+    if (!selectedId || !detail || deletingProject) return;
+    if (detail.pipeline_running) {
+      setError("Stop the pipeline before deleting this project.");
+      return;
+    }
     const message = detail.repo_url
       ? "Delete this project from the factory? Local files will be removed but the GitHub repository will not be deleted."
       : "Delete this project and all local files? This cannot be undone.";
     if (!window.confirm(message)) return;
-    setLoading(true);
+    setDeletingProject(true);
+    setError(null);
     try {
       await deleteProject(selectedId);
       discoveryKickoff.current = null;
@@ -635,7 +641,7 @@ export default function DashboardPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete project");
     } finally {
-      setLoading(false);
+      setDeletingProject(false);
     }
   }
 
@@ -2460,14 +2466,22 @@ export default function DashboardPage() {
                     type="button"
                     className={styles.btnDanger}
                     onClick={handleDeleteProject}
-                    disabled={loading || detail.pipeline_running}
+                    disabled={loading || deletingProject || detail.pipeline_running}
                     title={
-                      detail.repo_url
-                        ? "Remove from factory (GitHub repo is kept)"
-                        : "Delete project and local files"
+                      detail.pipeline_running
+                        ? "Stop the pipeline before deleting"
+                        : detail.repo_url
+                          ? "Remove from factory (GitHub repo is kept)"
+                          : "Delete project and local files"
                     }
                   >
-                    Delete
+                    {deletingProject ? (
+                      <>
+                        <Spinner /> Deleting…
+                      </>
+                    ) : (
+                      "Delete"
+                    )}
                   </button>
                 </div>
               </div>

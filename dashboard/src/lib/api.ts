@@ -723,13 +723,21 @@ export async function startDiscovery(projectId: string): Promise<DiscoverySessio
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}`, {
-    method: "DELETE",
-    headers: headers(),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail ?? "Failed to delete project");
+  try {
+    const res = await fetch(`${await resolvedApiUrl()}/api/projects/${projectId}`, {
+      method: "DELETE",
+      headers: headers(),
+    });
+    if (!res.ok) {
+      throw new Error(await parseApiError(res, "Failed to delete project"));
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(
+        "Could not reach the factory API. The server may be busy or unavailable — wait a moment and try again."
+      );
+    }
+    throw err;
   }
 }
 

@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +35,8 @@ from app.workspace.provisioner import normalize_repo_url
 from app.pipeline.executor import pipeline_executor
 from app.state_machine import StateMachineError, advance_project, fail_project, parse_project_state
 from app.workspace.manager import WorkspaceManager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 workspace = WorkspaceManager()
@@ -328,6 +332,13 @@ async def remove_project(project_id: UUID, db: AsyncSession = Depends(get_db)) -
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Failed to delete project %s", project_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete project — try again or stop the pipeline first",
+        ) from exc
     return {"status": "deleted", "project_id": str(project_id)}
 
 
