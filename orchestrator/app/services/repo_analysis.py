@@ -508,3 +508,25 @@ def format_repo_analysis_for_prompt(analysis: dict[str, Any] | None) -> str:
     if analysis.get("how_to_progress"):
         lines.extend(["", "### Recommended next steps", analysis["how_to_progress"]])
     return "\n".join(lines)
+
+
+def format_repo_analysis_compact(analysis: dict[str, Any] | None) -> str:
+    """Shorter repo context for focused developer / planning prompts."""
+    if not analysis or not analysis.get("has_existing_app"):
+        return ""
+    stack = ", ".join(analysis.get("stack") or []) or "unknown"
+    lines = [
+        "## Existing repo (extend — do not rebuild)",
+        (
+            f"Stack: {stack} | backend={analysis.get('has_backend')} | "
+            f"frontend={analysis.get('has_frontend')} | tests={analysis.get('has_tests')}"
+        ),
+    ]
+    if analysis.get("detected_features"):
+        lines.append("README: " + "; ".join(analysis["detected_features"][:5]))
+    if analysis.get("agent_summary"):
+        lines.append(str(analysis["agent_summary"])[:400])
+    readme = (analysis.get("readme_excerpt") or "").strip()
+    if readme:
+        lines.append(readme[:500] + ("…" if len(readme) > 500 else ""))
+    return "\n".join(lines)

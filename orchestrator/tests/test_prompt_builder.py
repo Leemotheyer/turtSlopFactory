@@ -17,8 +17,7 @@ def test_enrichment_prompt_excludes_greenfield_planning():
     )
     assert "enrichment-plan.json" in prompt
     assert "milestone" in prompt.lower()
-    assert "Product vision" in prompt
-    assert "Architect rules" in prompt
+    assert "architect" in prompt.lower()
     assert "NOT** write requirements.md" in prompt or "NOT write requirements.md" in prompt
     assert "Create project requirements and architecture" not in prompt
 
@@ -92,7 +91,7 @@ def test_enrichment_prompt_includes_improvement_backlog():
         },
     )
     assert "dark mode" in prompt.lower()
-    assert "user reviews" in prompt.lower()
+    assert "prior review" in prompt.lower()
 
 
 def test_enrichment_prompt_includes_product_qa_feedback():
@@ -114,7 +113,7 @@ def test_enrichment_prompt_includes_product_qa_feedback():
             },
         },
     )
-    assert "Product QA failures" in prompt
+    assert "Product QA" in prompt
     assert "minimal API surface" in prompt
     assert "catalog search" in prompt.lower()
 
@@ -128,3 +127,78 @@ def test_planning_architect_prompt_includes_requirements():
     assert "enrichment-plan.json" not in prompt
     assert "feature-rich" in prompt.lower()
     assert "at least 8" in prompt.lower()
+
+
+def test_role_profiles_reduce_prompt_size():
+    rich_context = {
+        "name": "App",
+        "description": "A full-stack manga reader with search, download, and library sync",
+        "original_description": "Manga app",
+        "repo_url": "https://github.com/o/r",
+        "intake": {"must_have_features": "Search\nDownload\nLibrary sync"},
+        "contract": type(
+            "C",
+            (),
+            {
+                "goal": "Build a manga reader",
+                "requirements": [
+                    type(
+                        "R",
+                        (),
+                        {
+                            "id": "R1",
+                            "priority": "must",
+                            "description": "Search catalog",
+                            "acceptance": ["GET /api/search returns results"],
+                        },
+                    )()
+                ],
+                "non_goals": [],
+            },
+        )(),
+        "project_memory": {
+            "decisions": [{"decision": "Use FastAPI", "reason": "default"}],
+            "known_issues": [],
+            "recent_failures": [],
+        },
+        "git_history": "abc123 commit\n" * 40,
+        "preview_url": "http://localhost/preview",
+        "preview_upstream": "http://preview:8080",
+        "preview_audit": {"health_ok": True, "has_html_ui": True, "issues": []},
+        "global_agent_rules": "- No dummy data",
+    }
+
+    planning = build_role_prompt(AgentRole.ARCHITECT, rich_context)
+    enrichment = build_role_prompt(
+        AgentRole.ARCHITECT, {**rich_context, "enrichment_pass": 1, "max_enrichment_passes": 4}
+    )
+    feature_dev = build_role_prompt(
+        AgentRole.DEVELOPER,
+        {
+            **rich_context,
+            "work_stream": "feature",
+            "feature_content": "Implement search API",
+        },
+    )
+    fix_dev = build_role_prompt(
+        AgentRole.DEVELOPER,
+        {
+            **rich_context,
+            "prompt_focus": "fix",
+            "fix_brief": "- Missing search API",
+            "incremental": True,
+        },
+    )
+    tester = build_role_prompt(
+        AgentRole.TESTER, {**rich_context, "test_stage": "unit"}
+    )
+    reviewer = build_role_prompt(AgentRole.REVIEWER, rich_context)
+
+    assert len(enrichment) < len(planning)
+    assert len(feature_dev) < len(planning)
+    assert len(fix_dev) < len(feature_dev)
+    assert len(tester) < len(planning)
+    assert len(reviewer) < len(planning)
+    assert "git history" not in enrichment.lower()
+    assert "git history" not in tester.lower()
+    assert "git history" not in reviewer.lower()

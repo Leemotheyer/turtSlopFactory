@@ -353,7 +353,7 @@ def test_focused_developer_prompt_is_shorter_than_full():
         {**base, "work_stream": None, "prompt_focus": None, "incremental": False, "fix_brief": None},
     )
     assert len(focused) < len(full)
-    assert "Fix previous failure" in focused
+    assert "Fix failure" in focused
     assert "git history" not in focused.lower()
 
 

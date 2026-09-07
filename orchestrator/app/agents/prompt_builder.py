@@ -17,9 +17,20 @@ from app.models import AgentRole
 from app.services.agent_rules import append_agent_rules_sections
 from app.services.memory import format_memory_for_prompt
 from app.services.product_enrichment import enrichment_pass_theme_hint
-from app.services.repo_analysis import format_repo_analysis_for_prompt
+from app.services.repo_analysis import format_repo_analysis_compact, format_repo_analysis_for_prompt
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+# Profiles control which context blocks each invocation receives.
+PROFILE_DEVELOPER_FIX = "developer_fix"
+PROFILE_DEVELOPER_FEATURE = "developer_feature"
+PROFILE_DEVELOPER_FULL = "developer_full"
+PROFILE_ARCHITECT_ENRICHMENT = "architect_enrichment"
+PROFILE_ARCHITECT_PLANNING = "architect_planning"
+PROFILE_TESTER_LIGHT = "tester_light"
+PROFILE_TESTER_FULL = "tester_full"
+PROFILE_REVIEWER = "reviewer"
+PROFILE_ADVERSARY = "adversary"
 
 
 @lru_cache(maxsize=64)
@@ -46,28 +57,6 @@ def prompt_versions() -> dict[str, str]:
     return {role.value: prompt_version_for_role(role) for role in AgentRole}
 
 
-def _contract_section(context: dict) -> str:
-    contract = context.get("contract")
-    if not contract:
-        return ""
-    lines = ["\n## Project contract (the definition of done)"]
-    goal = getattr(contract, "goal", "") or ""
-    if goal:
-        lines.append(f"Goal: {goal[:500]}")
-    for req in getattr(contract, "requirements", [])[:12]:
-        lines.append(f"- **{req.id}** ({req.priority}): {req.description}")
-        for criterion in req.acceptance[:4]:
-            lines.append(f"  - accept: {criterion}")
-    non_goals = getattr(contract, "non_goals", None) or []
-    if non_goals:
-        lines.append("Non-goals: " + "; ".join(str(n) for n in non_goals[:6]))
-    lines.append(
-        "Verification: name pytest tests `test_<req_id_lowercase>_*` so the factory "
-        "records them as evidence for the matching requirement."
-    )
-    return "\n".join(lines)
-
-
 def _is_focused_developer(context: dict) -> bool:
     return bool(
         context.get("work_stream")
@@ -77,8 +66,80 @@ def _is_focused_developer(context: dict) -> bool:
     )
 
 
-def _is_light_tester(context: dict) -> bool:
-    return context.get("test_stage") in (None, "unit", "probe", "product_qa", "user_journey")
+def _resolve_profile(role: AgentRole, context: dict) -> str:
+    if role == AgentRole.DEVELOPER:
+        if context.get("prompt_focus") == "fix" or (
+            context.get("incremental") and (context.get("fix_brief") or context.get("last_failure"))
+        ):
+            return PROFILE_DEVELOPER_FIX
+        if _is_focused_developer(context):
+            return PROFILE_DEVELOPER_FEATURE
+        return PROFILE_DEVELOPER_FULL
+    if role == AgentRole.ARCHITECT:
+        if context.get("enrichment_pass"):
+            return PROFILE_ARCHITECT_ENRICHMENT
+        return PROFILE_ARCHITECT_PLANNING
+    if role == AgentRole.TESTER:
+        if context.get("test_stage") in ("write_acceptance", "user_perspective_review"):
+            return PROFILE_TESTER_FULL
+        return PROFILE_TESTER_LIGHT
+    if role == AgentRole.REVIEWER:
+        return PROFILE_REVIEWER
+    if role == AgentRole.ADVERSARY:
+        return PROFILE_ADVERSARY
+    return "full"
+
+
+def _contract_section(context: dict, *, mode: str = "full") -> str:
+    contract = context.get("contract")
+    if not contract:
+        return ""
+    goal = getattr(contract, "goal", "") or ""
+    requirements = getattr(contract, "requirements", []) or []
+    must = [r for r in requirements if getattr(r, "priority", None) == "must"] or requirements
+
+    if mode == "summary":
+        lines = ["\n## Contract summary"]
+        if goal:
+            lines.append(goal[:300])
+        for req in must[:10]:
+            lines.append(f"- **{req.id}**: {req.description[:120]}")
+        return "\n".join(lines)
+
+    if mode == "compact":
+        lines = ["\n## Contract (definition of done)"]
+        if goal:
+            lines.append(goal[:300])
+        for req in must[:8]:
+            lines.append(f"- **{req.id}**: {req.description[:160]}")
+            criteria = getattr(req, "acceptance", None) or []
+            if criteria:
+                lines.append(f"  - accept: {criteria[0][:120]}")
+        return "\n".join(lines)
+
+    lines = ["\n## Project contract (the definition of done)"]
+    if goal:
+        lines.append(f"Goal: {goal[:500]}")
+    for req in requirements[:12]:
+        lines.append(f"- **{req.id}** ({req.priority}): {req.description}")
+        for criterion in req.acceptance[:4]:
+            lines.append(f"  - accept: {criterion}")
+    non_goals = getattr(contract, "non_goals", None) or []
+    if non_goals:
+        lines.append("Non-goals: " + "; ".join(str(n) for n in non_goals[:6]))
+    lines.append(
+        "Verification: name pytest tests `test_<req_id_lowercase>_*` for requirement evidence."
+    )
+    return "\n".join(lines)
+
+
+def _intake_capability_section(intake: dict, *, limit: int = 15) -> str:
+    from app.services.intake_contract import intake_capability_lines
+
+    lines = intake_capability_lines(intake)
+    if not lines:
+        return ""
+    return "\n## Intake capabilities\n" + "\n".join(f"- {line}" for line in lines[:limit])
 
 
 def _compact_preview_section(context: dict) -> str:
@@ -86,9 +147,9 @@ def _compact_preview_section(context: dict) -> str:
     preview_port = context.get("preview_app_port") or 8080
     return (
         f"\n## Live preview\n"
-        f"- Factory-managed — do not start servers yourself\n"
-        f"- Listen on `0.0.0.0:{preview_port}`; `GET {health_path}` → 200 `{{\"status\": \"ok\"}}`\n"
-        f"- Use relative `fetch('api/...')` URLs in the UI"
+        f"- Factory-managed — do not start servers\n"
+        f"- `0.0.0.0:{preview_port}`; `GET {health_path}` → 200 `{{\"status\": \"ok\"}}`\n"
+        f"- UI: relative `fetch('api/...')` URLs"
     )
 
 
@@ -98,371 +159,443 @@ def _full_preview_section(context: dict) -> str:
     health_path = context.get("preview_health_path") or "/health"
     preview_port = context.get("preview_app_port") or 8080
     return f"""
-## Live preview (factory-managed — do not start it yourself)
-The factory automatically deploys and refreshes a live preview container for users and pipeline testers.
-You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any other server to demo or test the app.
+## Live preview (factory-managed)
+You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or other servers.
 
-- Public demo URL: {preview_url or "(the factory will publish this after it starts the container)"}
-- Preview status: {preview_status}
-- The app MUST listen on `0.0.0.0:{preview_port}`
-- The app MUST expose `GET {health_path}` returning HTTP 200 JSON `{{"status": "ok"}}`
-- Serve the UI so it works behind the gateway path (use relative `fetch('api/...')` URLs, not `/api/...`)
-- After you finish, the factory refreshes the preview. Testers probe that container, not a process you start.
+- URL: {preview_url or "(published after deploy)"} | status: {preview_status}
+- Listen on `0.0.0.0:{preview_port}`; `GET {health_path}` → 200 `{{"status": "ok"}}`
+- Use relative `fetch('api/...')` URLs — not `/api/...`
 """
 
 
-def build_role_prompt(role: AgentRole, context: dict) -> str:
-    if role == AgentRole.ARCHITECT and context.get("repo_exploration"):
-        return context.get("repo_exploration_prompt") or "Explore the linked repository and return repo exploration JSON."
-
-    name = context.get("name", "app")
-    description = context.get("description", "")
-    original = context.get("original_description") or description
-    notes = context.get("notes", [])
-    intake = context.get("intake", {})
-    input_responses = context.get("input_responses", [])
-    health_path = context.get("preview_health_path") or "/health"
-
-    focused_dev = role == AgentRole.DEVELOPER and _is_focused_developer(context)
-    light_tester = role == AgentRole.TESTER and _is_light_tester(context)
-    light_reviewer = role == AgentRole.REVIEWER
-    architect_planning = role == AgentRole.ARCHITECT and not context.get("enrichment_pass")
-
-    sections: list[str] = [
+def _header(role: AgentRole, name: str, *, compact: bool = False) -> list[str]:
+    if compact:
+        return [f"**{role.value}** agent — project **{name}**"]
+    return [
         f"You are the **{role.value}** agent for the turtSlopFactory software pipeline.",
         f"Project: **{name}**",
         rules_for_role(role),
     ]
-    append_agent_rules_sections(sections, context)
 
-    vision = original.strip()
-    if focused_dev and description.strip() and description.strip() != original.strip():
-        sections.append(f"\n## Task context\n{description.strip()[:800]}")
-    else:
-        sections.append(f"\n## Product vision (original request)\n{vision}")
-        if description.strip() and description.strip() != original.strip():
-            sections.append(f"\n## Refined specification (after intake)\n{description.strip()}")
 
-    if not focused_dev and not light_tester and not light_reviewer:
-        contract_block = _contract_section(context)
-        if contract_block:
-            sections.append(contract_block)
+def _append_notes(sections: list[str], notes: list[dict], *, limit: int = 8) -> None:
+    if not notes:
+        return
+    sections.append("\n## Supervisor notes")
+    for note in notes[:limit]:
+        label = note.get("type", "note").replace("_", " ").title()
+        sections.append(f"- [{label}] {note.get('content', '')}")
 
-    if not focused_dev and not light_tester:
-        repo_block = format_repo_analysis_for_prompt(context.get("repo_analysis"))
-        if repo_block:
-            sections.append(f"\n{repo_block}")
 
-    if not focused_dev and not light_tester and not light_reviewer:
-        memory_block = format_memory_for_prompt(context.get("project_memory"))
-        if memory_block:
-            sections.append(memory_block)
+def _append_git_workflow(sections: list[str], context: dict) -> None:
+    if not context.get("isolate_branch") or not context.get("work_branch"):
+        return
+    base = context.get("base_branch", "main")
+    work = context["work_branch"]
+    sections.append(
+        f"\n## Git\n- Production: `{base}` (do not commit)\n- Work branch: `{work}`"
+    )
 
-    if not focused_dev and not light_tester and context.get("git_history") and context.get("repo_url"):
-        sections.append(
-            "\n## Recent git history (the why behind the code)\n```\n"
-            + str(context["git_history"])[:1200]
-            + "\n```"
-        )
 
-    if notes and not light_tester:
-        sections.append("\n## Supervisor notes (must follow)")
-        for note in notes:
-            label = note.get("type", "note").replace("_", " ").title()
-            sections.append(f"- [{label}] {note.get('content', '')}")
-
-    if intake and not light_tester:
-        if focused_dev and context.get("prompt_focus") == "fix":
-            from app.services.intake_contract import intake_capability_lines
-
-            intake_lines = intake_capability_lines(intake)
-            if intake_lines:
-                sections.append(
-                    "\n## Intake capabilities (implement on live preview)\n"
-                    + "\n".join(f"- {line}" for line in intake_lines[:15])
+def _append_developer_task(sections: list[str], context: dict, existing_note: str) -> None:
+    stream = context.get("work_stream")
+    if stream == "backend":
+        sections.append("\n" + _render(AgentRole.DEVELOPER, "backend", existing_note=existing_note))
+    elif stream == "frontend":
+        sections.append("\n" + _render(AgentRole.DEVELOPER, "frontend", existing_note=existing_note))
+    elif stream == "feature":
+        enrichment_block = ""
+        if context.get("enrichment_command"):
+            enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_developer_mode") + "\n"
+            if context.get("enrichment_require_substantial_changes"):
+                enrichment_block += (
+                    "\n## Shallow attempt rejected\n"
+                    "Implement real code (backend, frontend, tests) — not a plan or summary.\n"
                 )
-        elif not focused_dev:
-            sections.append("\n## Intake form answers")
-            for key, val in intake.items():
-                if isinstance(val, list):
-                    val = ", ".join(val)
-                sections.append(f"- {key.replace('_', ' ').title()}: {val}")
-
-    if context.get("loose_plan") and not focused_dev and not light_tester:
-        sections.append("\n## Discovery plan\nSee discovery-plan.md in artifacts.")
-
-    if input_responses and not focused_dev and not light_tester:
-        sections.append("\n## Supervisor decisions (apply these)")
-        for resp in input_responses:
-            decision = resp.get("resolved_decision") or resp.get("default_decision", "")
-            sections.append(f"- Q: {resp.get('question', '')}")
-            sections.append(f"  A: {decision}")
-
-    if context.get("isolate_branch") and context.get("work_branch"):
-        base = context.get("base_branch", "main")
-        work = context["work_branch"]
-        sections.append(
-            f"""
-## Git workflow (isolated branch)
-- **Production branch:** `{base}` — do NOT commit or push here.
-- **Your working branch:** `{work}` — all commits and pushes go here only.
-- The factory will ask before merging into `{base}`.
-"""
-        )
-
-    if focused_dev:
-        sections.append(_compact_preview_section(context))
-    elif not light_tester:
-        sections.append(_full_preview_section(context))
-
-    if role == AgentRole.ARCHITECT and context.get("last_failure"):
-        sections.append(f"\n## Previous attempt failed\n{str(context['last_failure'])[:4000]}")
-
-    enrichment_pass = context.get("enrichment_pass")
-    if enrichment_pass:
-        audit = context.get("preview_audit") or {}
-        max_features = context.get("max_features_per_pass", 8)
-        max_milestones = int(context.get("max_milestones_per_pass") or 1)
-        max_polish = max(0, int(max_features) - max_milestones)
-        if max_milestones > 1:
-            milestone_rule = (
-                f"Include **one or two** `tier: \"milestone\"` features — each a substantial "
-                "new capability or major expansion users will notice immediately."
-            )
-            milestone_count_rule = (
-                f"Propose **one or two milestones** plus up to **{max_polish}** polish features"
-            )
-        else:
-            milestone_rule = (
-                "Include **exactly one** `tier: \"milestone\"` feature — a substantial "
-                "new capability, major feature area, or meaningful product expansion users "
-                "will notice immediately."
-            )
-            milestone_count_rule = (
-                f"Propose **exactly one milestone** plus up to **{max_polish}** polish features"
-            )
-        theme_hint = enrichment_pass_theme_hint(
-            int(enrichment_pass),
-            int(context.get("improvement_cycle_number") or 1),
-        )
+            if context.get("enrichment_tier") == "milestone":
+                enrichment_block += _render(AgentRole.DEVELOPER, "enrichment_milestone_block")
+            else:
+                enrichment_block += _render(AgentRole.DEVELOPER, "enrichment_block")
         sections.append(
             "\n"
             + _render(
-                AgentRole.ARCHITECT,
-                "enrichment",
-                enrichment_pass=enrichment_pass,
-                max_passes=context.get("max_enrichment_passes", 4),
-                theme_hint=theme_hint,
-                audit_health_ok=audit.get("health_ok", False),
-                audit_has_html_ui=audit.get("has_html_ui", False),
-                audit_issues=", ".join(audit.get("issues") or []) or "none recorded",
-                max_features=max_features,
-                max_polish=max_polish,
-                milestone_rule=milestone_rule,
-                milestone_count_rule=milestone_count_rule,
+                AgentRole.DEVELOPER,
+                "feature",
+                feature_id=context.get("feature_id") or "feature",
+                content=context.get("feature_content") or context.get("work_description", ""),
+                existing_note=existing_note,
+                enrichment_block=enrichment_block,
             )
         )
-        from app.services.intake_contract import intake_capability_lines
+    else:
+        sections.append("\n" + _render(AgentRole.DEVELOPER, "full", existing_note=existing_note))
 
-        intake_lines = intake_capability_lines(intake)
-        if intake_lines:
-            sections.append(
-                "\n## Intake capabilities (always in scope — implement, do not question)\n"
-                + "\n".join(f"- {line}" for line in intake_lines[:20])
-            )
-        ux_backlog = context.get("improvement_backlog") or context.get("ux_improvement_backlog") or []
-        if ux_backlog:
-            sections.append(
-                "\n## Improvement ideas from prior user reviews (implement in this pass when in scope)\n"
-                + "\n".join(
-                    f"- [{item.get('category', 'other')}] {item.get('title', 'Improvement')}: "
-                    f"{str(item.get('description', ''))[:160]}"
-                    for item in ux_backlog[:15]
-                    if isinstance(item, dict)
-                )
-            )
-        qa_feedback = context.get("product_qa_feedback") or {}
-        qa_issues = [str(i).strip() for i in (qa_feedback.get("issues") or []) if str(i).strip()]
-        qa_suggested = [
-            str(s).strip() for s in (qa_feedback.get("suggested_features") or []) if str(s).strip()
-        ]
-        if qa_issues or qa_suggested:
-            sections.append(
-                "\n## Product QA failures (fix before other polish — highest priority)\n"
-                + "\n".join(f"- {issue}" for issue in qa_issues[:12])
-                + (
-                    "\n\nSuggested features:\n"
-                    + "\n".join(f"- {suggestion}" for suggestion in qa_suggested[:8])
-                    if qa_suggested
-                    else ""
-                )
-            )
-        if role == AgentRole.ARCHITECT:
-            sections.append(
-                """
-## Your task
-Propose the next batch of **substantial** in-scope improvements as `enrichment-plan.json`.
-Each feature should be enough work to meaningfully change what a user sees or can do in the preview.
-Base decisions on the preview audit, requirements.md, and the current codebase — not a from-scratch redesign.
-"""
-            )
 
-    elif role == AgentRole.ARCHITECT:
-        draft = context.get("requirements_draft")
-        if draft:
-            cap = 4500 if architect_planning else 6000
-            sections.append(
-                f"""
-## Requirements draft (factory-generated — refine, do not ignore)
-The factory prepared this draft from intake and repo analysis. **Update and complete it** rather than starting from scratch:
+def _append_developer_fix(sections: list[str], context: dict) -> None:
+    failure_text = context.get("fix_brief") or context.get("last_failure") or ""
+    sections.append(f"\n## Fix failure\n{str(failure_text)[:1500]}")
+    focus = context.get("fix_focus")
+    if focus and focus != "general":
+        sections.append(f"Priority: **{focus}**")
+    regression_hint = context.get("regression_test_hint")
+    if regression_hint:
+        sections.append(
+            f"Add regression test `tests/regression/{regression_hint}` — do not modify existing tests."
+        )
 
-{draft[:cap]}
-"""
+
+def _append_enrichment_architect(sections: list[str], context: dict, intake: dict) -> None:
+    enrichment_pass = context.get("enrichment_pass")
+    audit = context.get("preview_audit") or {}
+    max_features = context.get("max_features_per_pass", 8)
+    max_milestones = int(context.get("max_milestones_per_pass") or 1)
+    max_polish = max(0, int(max_features) - max_milestones)
+    if max_milestones > 1:
+        milestone_rule = (
+            'Include **one or two** `tier: "milestone"` features — substantial new capabilities.'
+        )
+        milestone_count_rule = f"Propose **one or two milestones** plus up to **{max_polish}** polish"
+    else:
+        milestone_rule = 'Include **exactly one** `tier: "milestone"` feature — a major expansion.'
+        milestone_count_rule = f"Propose **one milestone** plus up to **{max_polish}** polish"
+    theme_hint = enrichment_pass_theme_hint(
+        int(enrichment_pass),
+        int(context.get("improvement_cycle_number") or 1),
+    )
+    sections.append(
+        "\n"
+        + _render(
+            AgentRole.ARCHITECT,
+            "enrichment",
+            enrichment_pass=enrichment_pass,
+            max_passes=context.get("max_enrichment_passes", 4),
+            theme_hint=theme_hint,
+            audit_health_ok=audit.get("health_ok", False),
+            audit_has_html_ui=audit.get("has_html_ui", False),
+            audit_issues=", ".join(audit.get("issues") or []) or "none",
+            max_features=max_features,
+            max_polish=max_polish,
+            milestone_rule=milestone_rule,
+            milestone_count_rule=milestone_count_rule,
+        )
+    )
+    intake_block = _intake_capability_section(intake, limit=12)
+    if intake_block:
+        sections.append(intake_block)
+    ux_backlog = context.get("improvement_backlog") or context.get("ux_improvement_backlog") or []
+    if ux_backlog:
+        sections.append(
+            "\n## Prior review ideas\n"
+            + "\n".join(
+                f"- {item.get('title', 'Improvement')}: {str(item.get('description', ''))[:100]}"
+                for item in ux_backlog[:10]
+                if isinstance(item, dict)
             )
-        if context.get("repo_url"):
-            min_reqs = int(context.get("initial_min_requirements") or settings.initial_min_requirements)
-            sections.append(
-                "\n" + _render(AgentRole.ARCHITECT, "plan_repo", min_requirements=min_reqs)
+        )
+    qa_feedback = context.get("product_qa_feedback") or {}
+    qa_issues = [str(i).strip() for i in (qa_feedback.get("issues") or []) if str(i).strip()]
+    qa_suggested = [
+        str(s).strip() for s in (qa_feedback.get("suggested_features") or []) if str(s).strip()
+    ]
+    if qa_issues or qa_suggested:
+        sections.append(
+            "\n## Product QA (fix first)\n"
+            + "\n".join(f"- {issue}" for issue in qa_issues[:8])
+            + (
+                "\n" + "\n".join(f"- {s}" for s in qa_suggested[:6])
+                if qa_suggested
+                else ""
             )
-        else:
-            min_reqs = int(context.get("initial_min_requirements") or settings.initial_min_requirements)
-            sections.append(
-                "\n" + _render(AgentRole.ARCHITECT, "plan_no_repo", min_requirements=min_reqs)
-            )
-    elif role == AgentRole.DEVELOPER:
-        stream = context.get("work_stream")
-        existing_note = ""
-        if context.get("repo_analysis", {}).get("has_existing_app"):
-            existing_note = """
+        )
+
+
+def _build_developer_fix_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    intake = context.get("intake") or {}
+    sections = _header(AgentRole.DEVELOPER, name, compact=True)
+    append_agent_rules_sections(sections, context, compact=True)
+    if intake:
+        intake_block = _intake_capability_section(intake, limit=12)
+        if intake_block:
+            sections.append(intake_block)
+    sections.append(_compact_preview_section(context))
+    _append_developer_fix(sections, context)
+    _append_git_workflow(sections, context)
+    return "\n".join(sections).strip()
+
+
+def _build_developer_feature_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    intake = context.get("intake") or {}
+    existing_note = ""
+    if context.get("repo_analysis", {}).get("has_existing_app"):
+        existing_note = "\nExtend existing code — do not rebuild working routes/UI.\n"
+    sections = _header(AgentRole.DEVELOPER, name, compact=True)
+    append_agent_rules_sections(sections, context, compact=True)
+    repo_block = format_repo_analysis_compact(context.get("repo_analysis"))
+    if repo_block:
+        sections.append(f"\n{repo_block}")
+    if intake:
+        intake_block = _intake_capability_section(intake, limit=10)
+        if intake_block:
+            sections.append(intake_block)
+    _append_notes(sections, context.get("notes", []), limit=5)
+    sections.append(_compact_preview_section(context))
+    _append_developer_task(sections, context, existing_note)
+    if context.get("incremental") and (context.get("fix_brief") or context.get("last_failure")):
+        _append_developer_fix(sections, context)
+    _append_git_workflow(sections, context)
+    return "\n".join(sections).strip()
+
+
+def _build_developer_full_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    description = context.get("description", "")
+    original = context.get("original_description") or description
+    intake = context.get("intake") or {}
+    existing_note = ""
+    if context.get("repo_analysis", {}).get("has_existing_app"):
+        existing_note = """
 ## Existing codebase
 Extend the current implementation. **Do not rebuild** working routes, models, or UI unless this task explicitly says to replace them.
 """
-        if stream == "backend":
-            sections.append("\n" + _render(AgentRole.DEVELOPER, "backend", existing_note=existing_note))
-        elif stream == "frontend":
-            sections.append("\n" + _render(AgentRole.DEVELOPER, "frontend", existing_note=existing_note))
-        elif stream == "feature":
-            feature_id = context.get("feature_id") or "feature"
-            content = context.get("feature_content") or context.get("work_description", "")
-            enrichment_cmd = context.get("enrichment_command")
-            enrichment_block = ""
-            if enrichment_cmd:
-                enrichment_block = _render(AgentRole.DEVELOPER, "enrichment_developer_mode") + "\n"
-                if context.get("enrichment_require_substantial_changes"):
-                    enrichment_block += (
-                        "\n## Previous attempt was too shallow\n"
-                        "The last run made no meaningful code changes. Implement real files "
-                        "now — backend, frontend, and tests — not a JSON plan or chat summary.\n"
-                    )
-                if context.get("enrichment_tier") == "milestone":
-                    enrichment_block += _render(AgentRole.DEVELOPER, "enrichment_milestone_block")
-                else:
-                    enrichment_block += _render(AgentRole.DEVELOPER, "enrichment_block")
-            sections.append(
-                "\n"
-                + _render(
-                    AgentRole.DEVELOPER,
-                    "feature",
-                    feature_id=feature_id,
-                    content=content,
-                    existing_note=existing_note,
-                    enrichment_block=enrichment_block,
-                )
-            )
-        else:
-            sections.append("\n" + _render(AgentRole.DEVELOPER, "full", existing_note=existing_note))
-        if context.get("incremental") and (context.get("fix_brief") or context.get("last_failure")):
-            failure_text = context.get("fix_brief") or context.get("last_failure") or ""
-            cap = 1500 if context.get("prompt_focus") == "fix" else 4000
-            sections.append(f"\n## Fix previous failure\n{str(failure_text)[:cap]}")
-            focus = context.get("fix_focus")
-            if focus and focus != "general":
-                sections.append(f"\nFix focus: **{focus}** — address this category first.")
-            regression_hint = context.get("regression_test_hint")
-            if regression_hint:
-                sections.append(
-                    f"\nAfter fixing, add a regression test `tests/regression/{regression_hint}` "
-                    "that fails on the old behavior and passes on the fix. Do not modify existing tests."
-                )
-    elif role == AgentRole.TESTER:
-        upstream = context.get("preview_upstream") or context.get("preview_url") or ""
-        stage = context.get("test_stage", "unit")
-        if stage == "write_acceptance":
-            sections.append("\n" + _render(AgentRole.TESTER, "write_acceptance"))
-        elif stage == "product_qa":
-            audit = context.get("preview_audit") or {}
-            pass_num = context.get("enrichment_pass")
-            sections.append(
-                "\n"
-                + _render(
-                    AgentRole.TESTER,
-                    "product_qa",
-                    pass_num=pass_num or "?",
-                    upstream=upstream or "not running",
-                    health_path=health_path,
-                    audit_health_ok=audit.get("health_ok"),
-                    audit_has_html_ui=audit.get("has_html_ui"),
-                )
-            )
-        elif stage == "user_perspective_review":
-            audit = context.get("preview_audit") or {}
-            cycle_label = context.get("cycle_label") or "this cycle"
-            sections.append(
-                "\n"
-                + _render(
-                    AgentRole.TESTER,
-                    "user_perspective_review",
-                    cycle_label=cycle_label,
-                    upstream=upstream or "not running",
-                    health_path=health_path,
-                    audit_health_ok=audit.get("health_ok"),
-                    audit_has_html_ui=audit.get("has_html_ui"),
-                )
-            )
-        else:
-            sections.append(
-                "\n"
-                + _render(
-                    AgentRole.TESTER,
-                    "probe",
-                    upstream=upstream or "not running",
-                    health_path=health_path,
-                )
-            )
-    elif role == AgentRole.ADVERSARY:
-        upstream = context.get("preview_upstream") or context.get("preview_url") or ""
+    sections = _header(AgentRole.DEVELOPER, name)
+    append_agent_rules_sections(sections, context)
+    sections.append(f"\n## Product vision\n{original.strip()}")
+    if description.strip() and description.strip() != original.strip():
+        sections.append(f"\n## Refined spec\n{description.strip()}")
+    contract_block = _contract_section(context, mode="compact")
+    if contract_block:
+        sections.append(contract_block)
+    repo_block = format_repo_analysis_for_prompt(context.get("repo_analysis"))
+    if repo_block:
+        sections.append(f"\n{repo_block}")
+    memory_block = format_memory_for_prompt(context.get("project_memory"))
+    if memory_block:
+        sections.append(memory_block)
+    if intake:
+        sections.append("\n## Intake")
+        for key, val in intake.items():
+            if isinstance(val, list):
+                val = ", ".join(val)
+            sections.append(f"- {key.replace('_', ' ').title()}: {val}")
+    _append_notes(sections, context.get("notes", []))
+    sections.append(_full_preview_section(context))
+    _append_developer_task(sections, context, existing_note)
+    if context.get("incremental") and (context.get("fix_brief") or context.get("last_failure")):
+        _append_developer_fix(sections, context)
+    _append_git_workflow(sections, context)
+    return "\n".join(sections).strip()
+
+
+def _build_architect_enrichment_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    description = context.get("description", "")[:600]
+    intake = context.get("intake") or {}
+    sections = _header(AgentRole.ARCHITECT, name, compact=True)
+    append_agent_rules_sections(sections, context, compact=True)
+    if description:
+        sections.append(f"\n## Product\n{description}")
+    if context.get("last_failure"):
+        sections.append(f"\n## Previous failure\n{str(context['last_failure'])[:2000]}")
+    _append_enrichment_architect(sections, context, intake)
+    sections.append(
+        "\n## Task\nOutput `enrichment-plan.json` — substantial in-scope improvements only."
+    )
+    return "\n".join(sections).strip()
+
+
+def _build_architect_planning_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    description = context.get("description", "")
+    original = context.get("original_description") or description
+    intake = context.get("intake") or {}
+    sections = _header(AgentRole.ARCHITECT, name)
+    append_agent_rules_sections(sections, context)
+    sections.append(f"\n## Product vision\n{original.strip()}")
+    if description.strip() and description.strip() != original.strip():
+        sections.append(f"\n## Refined spec\n{description.strip()}")
+    repo_block = (
+        format_repo_analysis_compact(context.get("repo_analysis"))
+        if context.get("repo_analysis", {}).get("has_existing_app")
+        else format_repo_analysis_for_prompt(context.get("repo_analysis"))
+    )
+    if repo_block:
+        sections.append(f"\n{repo_block}")
+    memory_block = format_memory_for_prompt(context.get("project_memory"))
+    if memory_block:
+        sections.append(memory_block)
+    if context.get("git_history") and context.get("repo_url"):
+        sections.append(
+            "\n## Recent git history\n```\n" + str(context["git_history"])[:800] + "\n```"
+        )
+    if intake:
+        sections.append("\n## Intake")
+        for key, val in list(intake.items())[:12]:
+            if isinstance(val, list):
+                val = ", ".join(val)
+            sections.append(f"- {key.replace('_', ' ').title()}: {val}")
+    _append_notes(sections, context.get("notes", []))
+    if context.get("loose_plan"):
+        sections.append("\n## Discovery\nSee discovery-plan.md in artifacts.")
+    if context.get("input_responses"):
+        sections.append("\n## Supervisor decisions")
+        for resp in context.get("input_responses", [])[:8]:
+            decision = resp.get("resolved_decision") or resp.get("default_decision", "")
+            sections.append(f"- {resp.get('question', '')} → {decision}")
+    if context.get("last_failure"):
+        sections.append(f"\n## Previous failure\n{str(context['last_failure'])[:3000]}")
+    draft = context.get("requirements_draft")
+    if draft:
+        sections.append(
+            f"\n## Requirements draft (refine — do not ignore)\n{draft[:4500]}"
+        )
+    min_reqs = int(context.get("initial_min_requirements") or settings.initial_min_requirements)
+    task = "plan_repo" if context.get("repo_url") else "plan_no_repo"
+    sections.append("\n" + _render(AgentRole.ARCHITECT, task, min_requirements=min_reqs))
+    sections.append(_compact_preview_section(context))
+    return "\n".join(sections).strip()
+
+
+def _build_tester_light_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    upstream = context.get("preview_upstream") or context.get("preview_url") or ""
+    health_path = context.get("preview_health_path") or "/health"
+    stage = context.get("test_stage", "unit")
+    sections = _header(AgentRole.TESTER, name, compact=True)
+    if stage == "product_qa":
+        audit = context.get("preview_audit") or {}
         sections.append(
             "\n"
             + _render(
-                AgentRole.ADVERSARY,
-                "adversary",
+                AgentRole.TESTER,
+                "product_qa",
+                pass_num=context.get("enrichment_pass") or "?",
+                upstream=upstream or "not running",
+                health_path=health_path,
+                audit_health_ok=audit.get("health_ok"),
+                audit_has_html_ui=audit.get("has_html_ui"),
+            )
+        )
+    else:
+        sections.append(
+            "\n"
+            + _render(
+                AgentRole.TESTER,
+                "probe",
                 upstream=upstream or "not running",
                 health_path=health_path,
             )
         )
-    elif role == AgentRole.REVIEWER:
-        tests_passed = context.get("tests_passed", False)
+    return "\n".join(sections).strip()
+
+
+def _build_tester_full_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    description = context.get("description", "")
+    upstream = context.get("preview_upstream") or context.get("preview_url") or ""
+    health_path = context.get("preview_health_path") or "/health"
+    stage = context.get("test_stage")
+    sections = _header(AgentRole.TESTER, name)
+    append_agent_rules_sections(sections, context, compact=True)
+    if description:
+        sections.append(f"\n## Product\n{description[:500]}")
+    contract_block = _contract_section(context, mode="compact")
+    if contract_block:
+        sections.append(contract_block)
+    sections.append(
+        f"\n## Preview\n{upstream or 'not running'} | health: GET {health_path}"
+    )
+    if stage == "write_acceptance":
+        sections.append("\n" + _render(AgentRole.TESTER, "write_acceptance"))
+    elif stage == "user_perspective_review":
+        audit = context.get("preview_audit") or {}
         sections.append(
             "\n"
             + _render(
-                AgentRole.REVIEWER,
-                "review",
-                tests_passed=tests_passed,
-                enrichment_passes=context.get("enrichment_passes_completed", 0),
+                AgentRole.TESTER,
+                "user_perspective_review",
+                cycle_label=context.get("cycle_label") or "this cycle",
+                upstream=upstream or "not running",
+                health_path=health_path,
+                audit_health_ok=audit.get("health_ok"),
+                audit_has_html_ui=audit.get("has_html_ui"),
             )
         )
-        acceptance_report = context.get("acceptance_report")
-        if acceptance_report:
-            verified = acceptance_report.get("verified", 0)
-            total = acceptance_report.get("total", 0)
-            sections.append(
-                f"\n## Acceptance report (factory-evaluated)\n"
-                f"{verified}/{total} requirement(s) verified with evidence. "
-                "Statuses: "
-                + ", ".join(
-                    f"{rid}={entry.get('status')}"
-                    for rid, entry in (acceptance_report.get("requirements") or {}).items()
-                )
-            )
-
     return "\n".join(sections).strip()
+
+
+def _build_reviewer_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    sections = _header(AgentRole.REVIEWER, name, compact=True)
+    append_agent_rules_sections(sections, context, compact=True)
+    contract_block = _contract_section(context, mode="summary")
+    if contract_block:
+        sections.append(contract_block)
+    acceptance_report = context.get("acceptance_report")
+    if acceptance_report:
+        verified = acceptance_report.get("verified", 0)
+        total = acceptance_report.get("total", 0)
+        sections.append(
+            f"\n## Acceptance\n{verified}/{total} verified — "
+            + ", ".join(
+                f"{rid}={entry.get('status')}"
+                for rid, entry in (acceptance_report.get("requirements") or {}).items()
+            )
+        )
+    sections.append(
+        "\n"
+        + _render(
+            AgentRole.REVIEWER,
+            "review",
+            tests_passed=context.get("tests_passed", False),
+            enrichment_passes=context.get("enrichment_passes_completed", 0),
+        )
+    )
+    return "\n".join(sections).strip()
+
+
+def _build_adversary_prompt(context: dict) -> str:
+    name = context.get("name", "app")
+    upstream = context.get("preview_upstream") or context.get("preview_url") or ""
+    health_path = context.get("preview_health_path") or "/health"
+    sections = _header(AgentRole.ADVERSARY, name, compact=True)
+    contract_block = _contract_section(context, mode="compact")
+    if contract_block:
+        sections.append(contract_block)
+    sections.append(
+        "\n"
+        + _render(
+            AgentRole.ADVERSARY,
+            "adversary",
+            upstream=upstream or "not running",
+            health_path=health_path,
+        )
+    )
+    return "\n".join(sections).strip()
+
+
+def build_role_prompt(role: AgentRole, context: dict) -> str:
+    if role == AgentRole.ARCHITECT and context.get("repo_exploration"):
+        return context.get("repo_exploration_prompt") or (
+            "Explore the linked repository and return repo exploration JSON."
+        )
+
+    profile = _resolve_profile(role, context)
+    builders = {
+        PROFILE_DEVELOPER_FIX: _build_developer_fix_prompt,
+        PROFILE_DEVELOPER_FEATURE: _build_developer_feature_prompt,
+        PROFILE_DEVELOPER_FULL: _build_developer_full_prompt,
+        PROFILE_ARCHITECT_ENRICHMENT: _build_architect_enrichment_prompt,
+        PROFILE_ARCHITECT_PLANNING: _build_architect_planning_prompt,
+        PROFILE_TESTER_LIGHT: _build_tester_light_prompt,
+        PROFILE_TESTER_FULL: _build_tester_full_prompt,
+        PROFILE_REVIEWER: _build_reviewer_prompt,
+        PROFILE_ADVERSARY: _build_adversary_prompt,
+    }
+    builder = builders.get(profile)
+    if builder:
+        return builder(context)
+
+    # Fallback — should not happen for known roles
+    return _build_developer_full_prompt(context)

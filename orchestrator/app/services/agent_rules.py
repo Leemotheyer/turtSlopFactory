@@ -15,25 +15,31 @@ def normalize_agent_rules(text: str | None) -> str:
     return text.strip()[:AGENT_RULES_MAX]
 
 
-def append_agent_rules_sections(sections: list[str], context: dict) -> None:
+def append_agent_rules_sections(sections: list[str], context: dict, *, compact: bool = False) -> None:
     """Inject global and project rule blocks into a prompt section list."""
     global_rules = normalize_agent_rules(context.get("global_agent_rules"))
     project_rules = normalize_agent_rules(context.get("project_agent_rules"))
 
     if global_rules:
-        sections.append(
-            "\n## Global user rules (always apply to every project)\n"
-            "Factory-wide constraints set by the user. Follow them unless a supervisor note "
-            "explicitly overrides for this task."
-        )
+        if compact:
+            sections.append("\n## Global rules")
+        else:
+            sections.append(
+                "\n## Global user rules (always apply to every project)\n"
+                "Factory-wide constraints set by the user. Follow them unless a supervisor note "
+                "explicitly overrides for this task."
+            )
         sections.extend(_format_rule_lines(global_rules))
 
     if project_rules:
-        sections.append(
-            "\n## Project rules (always apply to this project)\n"
-            "Persistent rules for this project only. Follow them unless a supervisor note "
-            "explicitly overrides."
-        )
+        if compact:
+            sections.append("\n## Project rules")
+        else:
+            sections.append(
+                "\n## Project rules (always apply to this project)\n"
+                "Persistent rules for this project only. Follow them unless a supervisor note "
+                "explicitly overrides."
+            )
         sections.extend(_format_rule_lines(project_rules))
 
 
