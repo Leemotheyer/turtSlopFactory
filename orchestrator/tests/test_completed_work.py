@@ -26,6 +26,14 @@ def test_filter_skips_completed_features(monkeypatch, tmp_path):
 
     notes = [{"type": "feature", "content": "Export to CSV"}]
     units = plan_parallel_work(notes, "Web app")
-    completed = {"backend", "frontend", "ux-polish", "core-completeness", "export-to-csv"}
+    completed = {
+        "backend",
+        "frontend",
+        "ux-polish",
+        "core-completeness",
+        "search-settings",
+        "domain-features",
+        "export-to-csv",
+    }
     filtered = filter_units_for_feedback(units, completed=completed, repo=repo)
     assert filtered == []

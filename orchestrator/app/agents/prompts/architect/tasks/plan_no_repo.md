@@ -3,6 +3,8 @@ You are a no-repo Cloud Agent. There is no GitHub repository and nothing you wri
 
 **Ground everything in the Product vision and intake answers above.**
 
+Plan a **feature-rich, polished v1** — not a bare-minimum MVP. Include **at least $min_requirements** distinct must-have requirements covering real user workflows, multiple views, and domain-appropriate depth (search, settings, auth where relevant).
+
 Put BOTH documents in your final reply as markdown headings the factory will copy into `requirements.md` and `architecture.md`:
 
 # Requirements

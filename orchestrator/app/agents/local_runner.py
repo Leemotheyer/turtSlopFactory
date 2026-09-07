@@ -149,24 +149,27 @@ class LocalAgentRunner(AgentRunner):
 {notes_section}{intake_section}{plan_ref}
 ## Functional requirements
 1. Expose a `/health` endpoint returning JSON status
-2. Provide a REST API for item management (create, list, get)
-3. Serve a web UI for browser interaction
-4. Run in Docker with healthcheck support
+2. Provide a REST API for core entity management (create, list, get, update, delete)
+3. Serve a polished web UI with dashboard, list/detail views, and settings
+4. Search and filter across main data
+5. User authentication and session management (unless intake says no auth)
+6. Run in Docker with healthcheck support
 
 ## Exclusions
 {excluded or "None specified"}
 
 ## Non-functional requirements
 - Python 3.12 + FastAPI
-- Unit and integration test coverage
+- Unit and integration test coverage for all core flows
 - Containerized deployment on port 8080
+- Loading, empty, and error states in the UI
 """
         architecture = f"""# Architecture: {name}
 
 ## Stack
-- **Backend:** FastAPI
-- **Frontend:** Static HTML/JS served by FastAPI
-- **Storage:** In-memory (demo); swap for PostgreSQL in production
+- **Backend:** FastAPI with structured routes and validation
+- **Frontend:** Static HTML/JS served by FastAPI — multiple views (dashboard, list, detail, settings)
+- **Storage:** PostgreSQL or SQLite (persistent); avoid in-memory-only for v1
 - **Deployment:** Docker + docker-compose
 
 ## API
@@ -174,13 +177,21 @@ class LocalAgentRunner(AgentRunner):
 |--------|------|-------------|
 | GET | /health | Health check |
 | GET | /api/info | Service metadata |
-| GET | /api/items | List items |
+| GET | /api/items | List items (with search/filter params) |
 | POST | /api/items | Create item |
 | GET | /api/items/{{id}} | Get item |
+| PUT | /api/items/{{id}} | Update item |
+| DELETE | /api/items/{{id}} | Delete item |
+
+## UI views
+- Dashboard / home with summary
+- List view with search and filter
+- Detail / edit view
+- Settings or preferences page
 
 ## Testing strategy
-- Unit tests via pytest + TestClient
-- Integration tests for full API workflow
+- Unit tests via pytest + TestClient for each API route
+- Integration tests for full CRUD workflow
 - Container smoke test on /health
 """
         self.workspace.write_artifact(project_id, "requirements.md", requirements)

@@ -16,6 +16,12 @@ def test_suggests_out_of_scope_for_simple_crud():
     assert any("Payment" in s or "mobile" in s.lower() for s in analysis.suggested_out_of_scope)
 
 
+def test_suggests_initial_features_for_thin_description():
+    analysis = analyze_project_description("Todo", "Simple todo list web app")
+    assert len(analysis.mentioned_features) >= 4
+    assert any("CRUD" in f or "dashboard" in f.lower() or "search" in f.lower() for f in analysis.mentioned_features)
+
+
 def test_reference_app_extraction():
     analysis = analyze_project_description(
         "Reader",

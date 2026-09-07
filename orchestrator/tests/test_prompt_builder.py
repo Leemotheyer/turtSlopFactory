@@ -62,3 +62,5 @@ def test_planning_architect_prompt_includes_requirements():
     )
     assert "requirements.md" in prompt
     assert "enrichment-plan.json" not in prompt
+    assert "feature-rich" in prompt.lower()
+    assert "at least 10" in prompt.lower()

@@ -145,7 +145,7 @@ This looks like a **{app_label}**. The factory will {"extend your linked reposit
 ## Assumptions (until you say otherwise)
 - Self-hosted Docker deployment
 - {"Match the existing project stack where possible" if has_existing else "Python + FastAPI backend unless you specify otherwise"}
-- MVP scope: ship working core features first, defer nice-to-haves
+- Feature-rich v1: plan a complete, polished product — not a bare-minimum MVP
 """
 
 
@@ -250,15 +250,15 @@ def _core_fields(
             ),
             IntakeField(
                 id="must_have_features",
-                label="Must-have features (MVP)" if not has_existing else "New or changed features",
+                label="Core features (v1 — aim high)" if not has_existing else "New or changed features",
                 type=IntakeFieldType.TEXTAREA,
                 help=(
-                    "List features required for v1. We pre-filled any we found in your description — add or remove."
+                    "List everything v1 should include — be ambitious. We pre-filled features from your description; add more that would make this a product people want to use."
                     if not has_existing
                     else "Only list features to add or change — not capabilities already in the repo."
                 ),
                 placeholder=(
-                    "e.g.\n- User login\n- Create and list items\n- Export to CSV"
+                    "e.g.\n- User login and profile\n- Dashboard with summary stats\n- Create, edit, list, and delete items\n- Search and filter\n- Settings page\n- Export to CSV\n- Email notifications"
                     if not has_existing
                     else "e.g.\n- Add CSV export\n- Fix pagination on settings page"
                 ),
@@ -281,7 +281,7 @@ def _core_fields(
                 id="out_of_scope",
                 label="Explicitly out of scope",
                 type=IntakeFieldType.TEXTAREA,
-                help="Things we should NOT build in v1. Critical for avoiding scope creep.",
+                help="Things we should NOT build in v1. Only list genuine exclusions — don't use this to shrink scope unnecessarily.",
                 placeholder="e.g.\n- No payment processing\n- No mobile app\n- No multi-tenant",
                 required=False,
                 category="features",

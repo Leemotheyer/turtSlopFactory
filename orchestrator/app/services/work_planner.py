@@ -3,6 +3,8 @@
 import re
 from dataclasses import dataclass
 
+from app.services.intake_contract import _split_capability_lines
+
 
 @dataclass
 class WorkUnit:
@@ -87,20 +89,40 @@ def plan_parallel_work(
                     title="UX polish",
                     description=(
                         "Add loading indicators, empty states, inline validation errors, "
-                        "and responsive spacing so the app feels finished."
+                        "responsive layout, and navigation so the app feels finished."
                     ),
                     feature_id="ux-polish",
-                    feature_content="UX polish: loading, empty states, validation feedback, responsive layout",
+                    feature_content="UX polish: loading, empty states, validation feedback, responsive layout, navigation",
                 ),
                 WorkUnit(
                     stream="feature",
                     title="Core completeness",
                     description=(
-                        "Ensure full CRUD flows, edge cases, and sensible defaults so the app "
-                        "is usable without follow-up notes."
+                        "Ensure full CRUD flows, edge cases, delete confirmations, and sensible defaults "
+                        "so the app is usable without follow-up notes."
                     ),
                     feature_id="core-completeness",
                     feature_content="Complete CRUD flows, edge cases, delete confirmations, input validation",
+                ),
+                WorkUnit(
+                    stream="feature",
+                    title="Search, filter, and settings",
+                    description=(
+                        "Add search/filter on list views and a settings or preferences page. "
+                        "Implement per requirements.md — these are expected in a feature-rich v1."
+                    ),
+                    feature_id="search-settings",
+                    feature_content="Search and filter on main lists; settings or preferences page",
+                ),
+                WorkUnit(
+                    stream="feature",
+                    title="Domain features from requirements",
+                    description=(
+                        "Implement the domain-specific features listed in requirements.md and intake. "
+                        "Ship real screens, APIs, and tests — not stubs."
+                    ),
+                    feature_id="domain-features",
+                    feature_content="All domain-specific features from requirements.md and intake must-have list",
                 ),
             ]
         )
@@ -153,19 +175,25 @@ def plan_parallel_work(
         content = (note.get("content") or "").strip()
         if not content:
             continue
-        slug = _slugify(content)
-        if slug in seen_slugs:
-            slug = f"{slug}-{i}"
-        seen_slugs.add(slug)
-        units.append(
-            WorkUnit(
-                stream="feature",
-                title=f"Feature: {content[:48]}{'…' if len(content) > 48 else ''}",
-                description=content,
-                feature_id=slug,
-                feature_content=content,
+        feature_lines = _split_capability_lines(content)
+        if len(feature_lines) > 1:
+            items = feature_lines
+        else:
+            items = [content]
+        for j, item in enumerate(items):
+            slug = _slugify(item)
+            if slug in seen_slugs:
+                slug = f"{slug}-{i}-{j}"
+            seen_slugs.add(slug)
+            units.append(
+                WorkUnit(
+                    stream="feature",
+                    title=f"Feature: {item[:48]}{'…' if len(item) > 48 else ''}",
+                    description=item,
+                    feature_id=slug,
+                    feature_content=item,
+                )
             )
-        )
 
     # Heuristic: API-only specs skip dedicated frontend agent
     if api_only:

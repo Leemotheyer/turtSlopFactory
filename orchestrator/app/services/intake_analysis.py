@@ -169,6 +169,60 @@ def _extract_reference_apps(description: str) -> list[str]:
     return refs[:3]
 
 
+def _suggest_initial_features(
+    domains: list[str],
+    app_type: str,
+    auth_signal: str,
+    *,
+    has_existing: bool,
+) -> list[str]:
+    """Suggest complementary v1 features when the user's description is thin."""
+    if has_existing:
+        return []
+    suggestions: list[str] = []
+    if app_type == "fullstack_web":
+        suggestions.extend(
+            [
+                "Dashboard or home page with overview and navigation",
+                "Full CRUD for core entities (create, view, edit, delete)",
+                "Search and filter across main data",
+                "Settings or preferences page",
+                "Loading, empty, and error states throughout the UI",
+            ]
+        )
+    if auth_signal in ("simple", "unclear", "oauth") and "auth_users" not in domains:
+        suggestions.append("User accounts with login and registration")
+    if "dashboard" in domains:
+        suggestions.append("Dashboard with key metrics and summary cards")
+    if "search" in domains:
+        suggestions.append("Full-text or faceted search")
+    if "files" in domains:
+        suggestions.extend(["File upload with preview", "File list and download"])
+    if "ecommerce" in domains or "billing" in domains:
+        suggestions.extend(["Product or item catalog", "Order or transaction history"])
+    if "scheduling" in domains:
+        suggestions.extend(["Calendar or schedule view", "Create and manage appointments"])
+    if "messaging" in domains:
+        suggestions.append("In-app notifications or message inbox")
+    if "content" in domains:
+        suggestions.extend(["Content editor", "Published content list with preview"])
+    if "integration" in domains:
+        suggestions.append("External service sync or webhook handling")
+    if "monitoring" in domains:
+        suggestions.extend(["Status dashboard", "Alert history"])
+    if "rss_feeds" in domains or "scraping" in domains:
+        suggestions.extend(["Feed or source management", "Fetched items list with refresh"])
+    if app_type == "api_service":
+        suggestions.extend(
+            [
+                "REST API with pagination and filtering",
+                "Input validation with clear error responses",
+                "API documentation or OpenAPI schema",
+            ]
+        )
+    return suggestions[:12]
+
+
 def _suggest_out_of_scope(domains: list[str], desc_lower: str) -> list[str]:
     suggestions: list[str] = []
     if "billing" not in domains and "payment" not in desc_lower:
@@ -513,13 +567,22 @@ def analyze_project_description(
     desc_lower = description.lower()
     app_type = _detect_app_type(description)
     domains = _detect_domains(desc_lower)
-    features = _extract_features_from_description(description)
-    user_hint = _extract_user_hint(description)
     auth_signal = _detect_auth_signal(desc_lower)
+    has_existing = bool(repo_context.get("has_existing_app"))
+    features = _extract_features_from_description(description)
+    suggested_features = _suggest_initial_features(
+        domains, app_type, auth_signal, has_existing=has_existing
+    )
+    if len(features) < 4 and suggested_features:
+        existing_lower = {f.lower() for f in features}
+        for feat in suggested_features:
+            if feat.lower() not in existing_lower:
+                features.append(feat)
+                existing_lower.add(feat.lower())
+    user_hint = _extract_user_hint(description)
     persistence_signal = _detect_persistence_signal(desc_lower, repo_context)
     ui_signal = _detect_ui_signal(desc_lower, app_type)
     reference_apps = _extract_reference_apps(description)
-    has_existing = bool(repo_context.get("has_existing_app"))
 
     themes: list[str] = []
     if domains:

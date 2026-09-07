@@ -12,6 +12,7 @@ from pathlib import Path
 from string import Template
 
 from app.agents.rules import rules_for_role
+from app.config import settings
 from app.models import AgentRole
 from app.services.agent_rules import append_agent_rules_sections
 from app.services.memory import format_memory_for_prompt
@@ -250,9 +251,15 @@ The factory prepared this draft from intake and repo analysis. **Update and comp
 """
             )
         if context.get("repo_url"):
-            sections.append("\n" + _render(AgentRole.ARCHITECT, "plan_repo"))
+            min_reqs = int(context.get("initial_min_requirements") or settings.initial_min_requirements)
+            sections.append(
+                "\n" + _render(AgentRole.ARCHITECT, "plan_repo", min_requirements=min_reqs)
+            )
         else:
-            sections.append("\n" + _render(AgentRole.ARCHITECT, "plan_no_repo"))
+            min_reqs = int(context.get("initial_min_requirements") or settings.initial_min_requirements)
+            sections.append(
+                "\n" + _render(AgentRole.ARCHITECT, "plan_no_repo", min_requirements=min_reqs)
+            )
     elif role == AgentRole.DEVELOPER:
         stream = context.get("work_stream")
         existing_note = ""

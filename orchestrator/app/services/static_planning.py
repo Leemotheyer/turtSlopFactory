@@ -72,7 +72,7 @@ def draft_requirements_from_context(
 
     must_have = intake.get("must_have_features") or intake.get("primary_goal")
     if must_have:
-        label = "Changes requested" if repo_analysis and repo_analysis.get("has_existing_app") else "Must-have (MVP)"
+        label = "Changes requested" if repo_analysis and repo_analysis.get("has_existing_app") else "Core features (v1)"
         lines.extend([f"## {label}", str(must_have), ""])
 
     out_of_scope = intake.get("out_of_scope")
@@ -97,10 +97,15 @@ def draft_requirements_from_context(
         lines.extend(
             [
                 "## Quality bar",
+                "- Feature-rich v1 — multiple screens, full CRUD flows, search/filter where relevant",
                 "- All core flows work in the factory live preview",
                 "- pytest coverage for API behavior",
                 "- Loading, empty, and error states in the UI",
                 "- `/health` returns HTTP 200",
+                "",
+                "## Planning guidance for architect",
+                "- Expand on intake — add complementary capabilities (dashboard, settings, auth, navigation) unless out of scope",
+                "- Aim for at least 10 distinct must-have requirements in the project contract",
                 "",
             ]
         )

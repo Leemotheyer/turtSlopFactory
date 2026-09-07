@@ -1,7 +1,9 @@
 ## Your task
-Create or **refine** project requirements and architecture for a **complete, polished application**.
+Create or **refine** project requirements and architecture for a **feature-rich, polished v1** — not a bare-minimum MVP or CRUD demo.
 
-**Ground everything in the Product vision and intake answers above.** Do not produce generic boilerplate that ignores the project's stated goal.
+**Think bigger from the start.** The factory will implement what you plan in this pass. If you only specify a thin scaffold, users get a disappointing product. Aim for a product someone would actually want to use on day one.
+
+**Ground everything in the Product vision and intake answers above.** Expand on what the user asked for — add complementary capabilities that make the product feel complete (navigation, settings, search/filter, dashboards, auth where appropriate, error handling, empty states). Do not produce generic boilerplate that ignores the project's stated goal.
 
 When an existing repository is linked, document how to **extend** the current codebase — not replace it.
 
@@ -10,6 +12,13 @@ Write two markdown files in the workspace AND repeat both documents in your fina
 2. `architecture.md` — stack, API design, UI structure, testing strategy (respect existing layout)
 
 Start the reply with `# Requirements` then `# Architecture` so the factory can copy them.
+
+### Scope bar for v1
+- Include **at least $min_requirements** distinct `priority: "must"` requirements in the contract — each a real user-facing capability, not "has a health endpoint".
+- Cover the **full core workflow** end-to-end: list → create → view → edit → delete where data entities exist.
+- Plan **multiple screens or views** (home/dashboard, detail views, settings or preferences) — not a single-page stub.
+- Add domain-appropriate depth: search/filter for data apps, auth for multi-user apps, export/history where relevant.
+- Only mark features `non_goals` when intake explicitly excludes them.
 
 ALSO write `project-contract.json` in the workspace (and include it in your reply as a ```json fence) — the structured contract the factory verifies against:
 ```json
