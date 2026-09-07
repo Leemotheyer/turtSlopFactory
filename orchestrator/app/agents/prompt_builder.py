@@ -68,6 +68,49 @@ def _contract_section(context: dict) -> str:
     return "\n".join(lines)
 
 
+def _is_focused_developer(context: dict) -> bool:
+    return bool(
+        context.get("work_stream")
+        or context.get("enrichment_command")
+        or context.get("prompt_focus") == "fix"
+        or (context.get("incremental") and context.get("last_failure"))
+    )
+
+
+def _is_light_tester(context: dict) -> bool:
+    return context.get("test_stage") in (None, "unit", "probe", "product_qa", "user_journey")
+
+
+def _compact_preview_section(context: dict) -> str:
+    health_path = context.get("preview_health_path") or "/health"
+    preview_port = context.get("preview_app_port") or 8080
+    return (
+        f"\n## Live preview\n"
+        f"- Factory-managed — do not start servers yourself\n"
+        f"- Listen on `0.0.0.0:{preview_port}`; `GET {health_path}` → 200 `{{\"status\": \"ok\"}}`\n"
+        f"- Use relative `fetch('api/...')` URLs in the UI"
+    )
+
+
+def _full_preview_section(context: dict) -> str:
+    preview_url = context.get("preview_url") or ""
+    preview_status = context.get("preview_status") or "not started"
+    health_path = context.get("preview_health_path") or "/health"
+    preview_port = context.get("preview_app_port") or 8080
+    return f"""
+## Live preview (factory-managed — do not start it yourself)
+The factory automatically deploys and refreshes a live preview container for users and pipeline testers.
+You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any other server to demo or test the app.
+
+- Public demo URL: {preview_url or "(the factory will publish this after it starts the container)"}
+- Preview status: {preview_status}
+- The app MUST listen on `0.0.0.0:{preview_port}`
+- The app MUST expose `GET {health_path}` returning HTTP 200 JSON `{{"status": "ok"}}`
+- Serve the UI so it works behind the gateway path (use relative `fetch('api/...')` URLs, not `/api/...`)
+- After you finish, the factory refreshes the preview. Testers probe that container, not a process you start.
+"""
+
+
 def build_role_prompt(role: AgentRole, context: dict) -> str:
     if role == AgentRole.ARCHITECT and context.get("repo_exploration"):
         return context.get("repo_exploration_prompt") or "Explore the linked repository and return repo exploration JSON."
@@ -78,6 +121,12 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
     notes = context.get("notes", [])
     intake = context.get("intake", {})
     input_responses = context.get("input_responses", [])
+    health_path = context.get("preview_health_path") or "/health"
+
+    focused_dev = role == AgentRole.DEVELOPER and _is_focused_developer(context)
+    light_tester = role == AgentRole.TESTER and _is_light_tester(context)
+    light_reviewer = role == AgentRole.REVIEWER
+    architect_planning = role == AgentRole.ARCHITECT and not context.get("enrichment_pass")
 
     sections: list[str] = [
         f"You are the **{role.value}** agent for the turtSlopFactory software pipeline.",
@@ -85,48 +134,64 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
         rules_for_role(role),
     ]
     append_agent_rules_sections(sections, context)
-    sections.append(f"\n## Product vision (original request)\n{original.strip()}")
 
-    if description.strip() and description.strip() != original.strip():
-        sections.append(f"\n## Refined specification (after intake)\n{description.strip()}")
+    vision = original.strip()
+    if focused_dev and description.strip() and description.strip() != original.strip():
+        sections.append(f"\n## Task context\n{description.strip()[:800]}")
+    else:
+        sections.append(f"\n## Product vision (original request)\n{vision}")
+        if description.strip() and description.strip() != original.strip():
+            sections.append(f"\n## Refined specification (after intake)\n{description.strip()}")
 
-    contract_block = _contract_section(context)
-    if contract_block:
-        sections.append(contract_block)
+    if not focused_dev and not light_tester and not light_reviewer:
+        contract_block = _contract_section(context)
+        if contract_block:
+            sections.append(contract_block)
 
-    repo_block = format_repo_analysis_for_prompt(context.get("repo_analysis"))
-    if repo_block:
-        sections.append(f"\n{repo_block}")
+    if not focused_dev and not light_tester:
+        repo_block = format_repo_analysis_for_prompt(context.get("repo_analysis"))
+        if repo_block:
+            sections.append(f"\n{repo_block}")
 
-    memory_block = format_memory_for_prompt(context.get("project_memory"))
-    if memory_block:
-        sections.append(memory_block)
+    if not focused_dev and not light_tester and not light_reviewer:
+        memory_block = format_memory_for_prompt(context.get("project_memory"))
+        if memory_block:
+            sections.append(memory_block)
 
-    git_history = context.get("git_history")
-    if git_history and context.get("repo_url"):
+    if not focused_dev and not light_tester and context.get("git_history") and context.get("repo_url"):
         sections.append(
             "\n## Recent git history (the why behind the code)\n```\n"
-            + str(git_history)[:1200]
+            + str(context["git_history"])[:1200]
             + "\n```"
         )
 
-    if notes:
+    if notes and not light_tester:
         sections.append("\n## Supervisor notes (must follow)")
         for note in notes:
             label = note.get("type", "note").replace("_", " ").title()
             sections.append(f"- [{label}] {note.get('content', '')}")
 
-    if intake:
-        sections.append("\n## Intake form answers")
-        for key, val in intake.items():
-            if isinstance(val, list):
-                val = ", ".join(val)
-            sections.append(f"- {key.replace('_', ' ').title()}: {val}")
+    if intake and not light_tester:
+        if focused_dev and context.get("prompt_focus") == "fix":
+            from app.services.intake_contract import intake_capability_lines
 
-    if context.get("loose_plan"):
+            intake_lines = intake_capability_lines(intake)
+            if intake_lines:
+                sections.append(
+                    "\n## Intake capabilities (implement on live preview)\n"
+                    + "\n".join(f"- {line}" for line in intake_lines[:15])
+                )
+        elif not focused_dev:
+            sections.append("\n## Intake form answers")
+            for key, val in intake.items():
+                if isinstance(val, list):
+                    val = ", ".join(val)
+                sections.append(f"- {key.replace('_', ' ').title()}: {val}")
+
+    if context.get("loose_plan") and not focused_dev and not light_tester:
         sections.append("\n## Discovery plan\nSee discovery-plan.md in artifacts.")
 
-    if input_responses:
+    if input_responses and not focused_dev and not light_tester:
         sections.append("\n## Supervisor decisions (apply these)")
         for resp in input_responses:
             decision = resp.get("resolved_decision") or resp.get("default_decision", "")
@@ -145,24 +210,10 @@ def build_role_prompt(role: AgentRole, context: dict) -> str:
 """
         )
 
-    preview_url = context.get("preview_url") or ""
-    preview_status = context.get("preview_status") or "not started"
-    health_path = context.get("preview_health_path") or "/health"
-    preview_port = context.get("preview_app_port") or 8080
-    sections.append(
-        f"""
-## Live preview (factory-managed — do not start it yourself)
-The factory automatically deploys and refreshes a live preview container for users and pipeline testers.
-You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any other server to demo or test the app.
-
-- Public demo URL: {preview_url or "(the factory will publish this after it starts the container)"}
-- Preview status: {preview_status}
-- The app MUST listen on `0.0.0.0:{preview_port}`
-- The app MUST expose `GET {health_path}` returning HTTP 200 JSON `{{"status": "ok"}}`
-- Serve the UI so it works behind the gateway path (use relative `fetch('api/...')` URLs, not `/api/...`)
-- After you finish, the factory refreshes the preview. Testers probe that container, not a process you start.
-"""
-    )
+    if focused_dev:
+        sections.append(_compact_preview_section(context))
+    elif not light_tester:
+        sections.append(_full_preview_section(context))
 
     if role == AgentRole.ARCHITECT and context.get("last_failure"):
         sections.append(f"\n## Previous attempt failed\n{str(context['last_failure'])[:4000]}")
@@ -259,12 +310,13 @@ Base decisions on the preview audit, requirements.md, and the current codebase �
     elif role == AgentRole.ARCHITECT:
         draft = context.get("requirements_draft")
         if draft:
+            cap = 4500 if architect_planning else 6000
             sections.append(
                 f"""
 ## Requirements draft (factory-generated — refine, do not ignore)
 The factory prepared this draft from intake and repo analysis. **Update and complete it** rather than starting from scratch:
 
-{draft[:6000]}
+{draft[:cap]}
 """
             )
         if context.get("repo_url"):
@@ -319,8 +371,13 @@ Extend the current implementation. **Do not rebuild** working routes, models, or
             )
         else:
             sections.append("\n" + _render(AgentRole.DEVELOPER, "full", existing_note=existing_note))
-        if context.get("incremental") and context.get("last_failure"):
-            sections.append(f"\n## Fix previous failure\n{context['last_failure'][:4000]}")
+        if context.get("incremental") and (context.get("fix_brief") or context.get("last_failure")):
+            failure_text = context.get("fix_brief") or context.get("last_failure") or ""
+            cap = 1500 if context.get("prompt_focus") == "fix" else 4000
+            sections.append(f"\n## Fix previous failure\n{str(failure_text)[:cap]}")
+            focus = context.get("fix_focus")
+            if focus and focus != "general":
+                sections.append(f"\nFix focus: **{focus}** — address this category first.")
             regression_hint = context.get("regression_test_hint")
             if regression_hint:
                 sections.append(

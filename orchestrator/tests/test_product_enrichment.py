@@ -7,11 +7,15 @@ from app.services.product_enrichment import (
     enrichment_change_summary,
     enrichment_pass_theme_hint,
     features_to_work_units,
+    format_product_qa_fix_brief,
+    infer_product_qa_fix_focus,
     load_product_qa_feedback,
     local_enrichment_plan,
+    local_plan_covers_open_qa,
     parse_enrichment_plan,
     persist_product_qa_to_improvement_backlog,
     resolve_feature_scope,
+    should_use_local_enrichment_plan_only,
 )
 
 
@@ -290,6 +294,67 @@ def test_load_product_qa_feedback_empty_when_missing(monkeypatch, tmp_path):
 
     ws = WorkspaceManager()
     assert load_product_qa_feedback(ws, uuid4()) == {}
+
+
+def test_format_product_qa_fix_brief_structured():
+    qa = {
+        "issues": [
+            "Intake requires data/search/download flows but the live preview "
+            "only exposes a minimal API surface"
+        ],
+        "suggested_features": ["Add catalog search API"],
+    }
+    brief = format_product_qa_fix_brief(qa, intake={"must_have_features": "Search and download manga"})
+    assert "minimal API" in brief
+    assert "catalog search" in brief.lower()
+    assert len(brief) < 2000
+    assert infer_product_qa_fix_focus(qa) == "api_surface"
+
+
+def test_should_use_local_enrichment_plan_only():
+    audit = {"health_ok": True, "has_html_ui": True, "endpoints": [{"path": "/api/items", "ok": True}]}
+    local = local_enrichment_plan(audit, pass_number=1)
+    use_local, reason = should_use_local_enrichment_plan_only(local, {})
+    assert use_local is True
+    assert "feature" in reason
+
+    qa = {"issues": ["Missing search API on live preview"]}
+    assert local_plan_covers_open_qa(local, qa) is False
+    qa_plan = local_enrichment_plan(audit, 1, product_qa_feedback=qa)
+    assert local_plan_covers_open_qa(qa_plan, qa) is True
+    use_local, _ = should_use_local_enrichment_plan_only(qa_plan, qa)
+    assert use_local is True
+
+
+def test_focused_developer_prompt_is_shorter_than_full():
+    base = {
+        "name": "App",
+        "description": "A manga reader with search and download",
+        "original_description": "Manga app",
+        "repo_url": "https://github.com/o/r",
+        "intake": {"must_have_features": "Search catalog\nDownload chapters"},
+        "contract": type("C", (), {"goal": "g", "requirements": [], "non_goals": []})(),
+        "project_memory": {"decisions": [{"decision": "Use FastAPI", "reason": "default"}]},
+        "git_history": "abc123 commit message\n" * 50,
+        "preview_url": "http://localhost/preview",
+        "preview_status": "running",
+        "work_stream": "feature",
+        "feature_content": "Implement search API",
+        "incremental": True,
+        "prompt_focus": "fix",
+        "fix_brief": "- Fix missing search API",
+    }
+    from app.agents.prompt_builder import build_role_prompt
+    from app.models import AgentRole
+
+    focused = build_role_prompt(AgentRole.DEVELOPER, base)
+    full = build_role_prompt(
+        AgentRole.DEVELOPER,
+        {**base, "work_stream": None, "prompt_focus": None, "incremental": False, "fix_brief": None},
+    )
+    assert len(focused) < len(full)
+    assert "Fix previous failure" in focused
+    assert "git history" not in focused.lower()
 
 
 @pytest.mark.asyncio

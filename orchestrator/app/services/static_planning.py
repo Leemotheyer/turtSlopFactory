@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config import settings
 from app.services.agent_rules import combined_rules_text
 
 
@@ -105,7 +106,7 @@ def draft_requirements_from_context(
                 "",
                 "## Planning guidance for architect",
                 "- Expand on intake — add complementary capabilities (dashboard, settings, auth, navigation) unless out of scope",
-                "- Aim for at least 10 distinct must-have requirements in the project contract",
+                f"- Aim for at least {settings.initial_min_requirements} distinct must-have requirements in the project contract",
                 "",
             ]
         )

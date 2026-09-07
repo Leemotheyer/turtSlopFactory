@@ -80,9 +80,9 @@ async def stage_user_perspective_review(ex: "PipelineExecutor", session, project
         backend = "local"
         api_key = None
 
-    if backend != "local" and api_key and getattr(ex.runner, "_cursor_eligible", lambda *_: False)(
-        AgentRole.TESTER, review_context
-    ):
+    if backend != "local" and api_key and context.get("post_production") and improvement_cycle > 0 and getattr(
+        ex.runner, "_cursor_eligible", lambda *_: False
+    )(AgentRole.TESTER, review_context):
         run = await ex.runner.run(
             AgentRole.TESTER,
             project.id,

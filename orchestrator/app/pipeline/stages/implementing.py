@@ -31,6 +31,10 @@ async def stage_fix_from_failure(
     if not failure:
         return True
 
+    context.setdefault("prompt_focus", "fix")
+    if not context.get("fix_brief"):
+        context["fix_brief"] = str(failure)[:2000]
+
     await ex._ensure_runnable_app(project, context)
     task = await ex.create_task(
         session,

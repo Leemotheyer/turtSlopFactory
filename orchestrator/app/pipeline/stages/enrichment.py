@@ -10,11 +10,14 @@ from app.models import AgentRole
 from app.services.product_enrichment import (
     audit_live_preview,
     enrichment_change_summary,
+    format_product_qa_fix_brief,
+    infer_product_qa_fix_focus,
     load_product_qa_feedback,
     local_enrichment_plan,
     parse_enrichment_plan,
     persist_product_qa_to_improvement_backlog,
     resolve_feature_scope,
+    should_use_local_enrichment_plan_only,
 )
 from app.services.self_propelling import (
     check_token_budget,
@@ -105,12 +108,12 @@ async def _run_product_qa_with_fix_loop(
         return qa_ok, qa_output
 
     persist_product_qa_to_improvement_backlog(ex.workspace, project.id)
-    context["last_failure"] = (
-        "Product QA failed — intake capabilities must work on the live preview "
-        "before the factory can continue. Implement the APIs and UI intake requires, "
-        "then re-verify on the live preview.\n\n"
-        f"{qa_output[:3000]}"
-    )
+    qa_feedback = load_product_qa_feedback(ex.workspace, project.id)
+    context["product_qa_feedback"] = qa_feedback
+    context["fix_focus"] = infer_product_qa_fix_focus(qa_feedback)
+    context["fix_brief"] = format_product_qa_fix_brief(qa_feedback, intake=context.get("intake"))
+    context["last_failure"] = context["fix_brief"]
+    context["prompt_focus"] = "fix"
     context["incremental"] = True
     context["enrichment_require_substantial_changes"] = True
 
@@ -134,10 +137,15 @@ async def _run_product_qa_with_fix_loop(
         context["product_qa_passed"] = qa_ok
         if qa_ok:
             context.pop("last_failure", None)
+            context.pop("fix_brief", None)
+            context.pop("prompt_focus", None)
+            context.pop("fix_focus", None)
             return True, qa_output
-        context["last_failure"] = (
-            "Product QA still failing after a fix attempt.\n\n" f"{qa_output[:3000]}"
-        )
+        qa_feedback = load_product_qa_feedback(ex.workspace, project.id)
+        context["product_qa_feedback"] = qa_feedback
+        context["fix_focus"] = infer_product_qa_fix_focus(qa_feedback)
+        context["fix_brief"] = format_product_qa_fix_brief(qa_feedback, intake=context.get("intake"))
+        context["last_failure"] = context["fix_brief"]
 
     return False, qa_output
 
@@ -203,6 +211,11 @@ async def run_enrichment_passes(
         if product_qa_feedback:
             context["product_qa_feedback"] = product_qa_feedback
         context.pop("enrichment_require_substantial_changes", None)
+        if context.get("product_qa_passed"):
+            context.pop("last_failure", None)
+            context.pop("fix_brief", None)
+            context.pop("prompt_focus", None)
+            context.pop("fix_focus", None)
         ex._save_pipeline_substage(
             project.id,
             {
@@ -274,11 +287,13 @@ async def run_enrichment_passes(
             cycle_number=cycle_number,
             product_qa_feedback=product_qa_feedback,
         )
-        skip_architect = (
-            log_prefix != "post-production"
-            and skip_unchanged_audit
-            and should_skip_architect(project.id, audit, ex.workspace)
-            and bool(local_plan.get("features"))
+        audit_unchanged = skip_unchanged_audit and should_skip_architect(project.id, audit, ex.workspace)
+        use_local_only, local_reason = should_use_local_enrichment_plan_only(
+            local_plan,
+            product_qa_feedback,
+        )
+        skip_architect = use_local_only or (
+            audit_unchanged and bool(local_plan.get("features"))
         )
         if skip_architect:
             plan = local_plan
@@ -289,7 +304,7 @@ async def run_enrichment_passes(
             )
             used_fallback = True
             ideation_output = (
-                f"[factory] Skipped architect — preview audit unchanged; "
+                f"[factory] Skipped architect — {local_reason}; "
                 f"using local plan ({len(plan.get('features') or [])} feature(s))."
             )
             await ex.complete_task(session, task, True, ideation_output)
@@ -569,6 +584,8 @@ async def stage_autonomous_enrichment(ex: "PipelineExecutor", session, project, 
         max_passes=max_passes,
         completion_key="enrichment_complete",
         log_prefix="enrichment",
+        token_budget=True,
+        skip_unchanged_audit=True,
     )
     if ok:
         context["enrichment_complete"] = True
@@ -584,6 +601,7 @@ async def stage_post_smoke_enrichment(ex: "PipelineExecutor", session, project, 
         max_passes=1,
         completion_key="post_smoke_enrichment_complete",
         log_prefix="pre-review",
+        skip_unchanged_audit=True,
     )
     if ok:
         context["post_smoke_enrichment_complete"] = True

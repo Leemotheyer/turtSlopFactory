@@ -431,6 +431,95 @@ def persist_product_qa_to_improvement_backlog(workspace, project_id) -> None:
     )
 
 
+_FIX_FOCUS_HINTS: dict[str, str] = {
+    "api_surface": (
+        "Implement the REST API routes intake requires under /api/ (search, list, download, "
+        "catalog, etc.). Add pytest coverage for each new route."
+    ),
+    "ui": (
+        "Build or repair the HTML UI at / with navigation, forms, and relative fetch() calls "
+        "to api/.... Include empty, loading, and error states."
+    ),
+    "mobile": "Add viewport meta and responsive CSS so the UI works on mobile widths.",
+    "health": 'Fix GET /health to return HTTP 200 JSON {"status": "ok"}.',
+}
+
+
+def infer_product_qa_fix_focus(qa_feedback: dict | None) -> str:
+    """Classify Product QA failures for a targeted fix pass."""
+    blob = " ".join(str(i).lower() for i in (qa_feedback or {}).get("issues") or [])
+    if any(kw in blob for kw in ("minimal api", "api surface", "search", "download", "catalog")):
+        return "api_surface"
+    if "html ui" in blob or "no html" in blob or "usable product ui" in blob:
+        return "ui"
+    if "mobile" in blob:
+        return "mobile"
+    if "health" in blob:
+        return "health"
+    return "general"
+
+
+def format_product_qa_fix_brief(
+    qa_feedback: dict | None = None,
+    *,
+    intake: dict | None = None,
+) -> str:
+    """Compact structured fix brief for developer agents (not raw QA dump)."""
+    from app.services.intake_contract import intake_capability_lines
+
+    qa = qa_feedback or {}
+    issues = [str(i).strip() for i in (qa.get("issues") or []) if str(i).strip()]
+    suggested = [str(s).strip() for s in (qa.get("suggested_features") or []) if str(s).strip()]
+    if not issues and not suggested:
+        return "Product QA failed — implement missing intake API/UI on the live preview."
+
+    focus = infer_product_qa_fix_focus(qa)
+    lines = ["Product QA failed — fix on the live preview before continuing:"]
+    for issue in issues[:8]:
+        lines.append(f"- {issue}")
+    if suggested:
+        lines.append("\nSuggested:")
+        for text in suggested[:6]:
+            lines.append(f"- {text}")
+    hint = _FIX_FOCUS_HINTS.get(focus)
+    if hint:
+        lines.append(f"\nPrimary focus ({focus}): {hint}")
+    intake_lines = intake_capability_lines(intake)
+    if intake_lines:
+        lines.append("\nIntake capabilities (must work end-to-end):")
+        lines.extend(f"- {line}" for line in intake_lines[:12])
+    return "\n".join(lines)[:2000]
+
+
+def local_plan_covers_open_qa(local_plan: dict, qa_feedback: dict | None) -> bool:
+    """True when the deterministic plan already targets open Product QA issues."""
+    issues = [str(i).strip() for i in (qa_feedback or {}).get("issues") or [] if str(i).strip()]
+    if not issues:
+        return True
+    blob = " ".join(
+        f"{f.get('title', '')} {f.get('description', '')}"
+        for f in (local_plan.get("features") or [])
+        if isinstance(f, dict)
+    ).lower()
+    if "product qa" in blob or "fix product qa" in blob:
+        return True
+    return any(issue[:48].lower() in blob for issue in issues)
+
+
+def should_use_local_enrichment_plan_only(
+    local_plan: dict,
+    product_qa_feedback: dict | None,
+) -> tuple[bool, str]:
+    """Local-first enrichment: skip LLM architect when the deterministic plan is sufficient."""
+    features = [f for f in (local_plan.get("features") or []) if isinstance(f, dict)]
+    if not features:
+        return False, "local plan empty"
+    open_qa = [str(i) for i in (product_qa_feedback or {}).get("issues") or [] if str(i).strip()]
+    if open_qa and not local_plan_covers_open_qa(local_plan, product_qa_feedback):
+        return False, "open product QA not covered by local plan"
+    return True, f"{len(features)} feature(s) from audit/backlog/QA"
+
+
 def local_enrichment_plan(
     audit: dict,
     pass_number: int,
