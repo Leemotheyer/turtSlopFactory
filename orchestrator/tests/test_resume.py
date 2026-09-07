@@ -1,5 +1,9 @@
 """Tests for pipeline resume helpers and failure-handling fixes."""
 
+from uuid import uuid4
+
+import pytest
+
 from app.models import ProjectState
 from app.pipeline.resume import (
     clear_completion_from_gate,
@@ -18,6 +22,11 @@ from app.pipeline.stages import (
     SUBSTAGE_USER_JOURNEY,
 )
 from app.pipeline.stages.acceptance import format_acceptance_fix_brief
+from app.pipeline.stages.enrichment import (
+    _clear_enrichment_retry_plan,
+    _load_enrichment_retry_plan,
+    _stash_enrichment_retry_plan,
+)
 from app.services.diagnosis import diagnose_failure
 
 
@@ -142,3 +151,25 @@ def test_format_acceptance_fix_brief_structured():
     assert "test_fix_abc.py" in brief
     assert "R2" not in brief
     assert len(brief) < 2000
+
+
+@pytest.mark.asyncio
+async def test_enrichment_retry_plan_persists_in_metadata(workspace):
+    from app.pipeline.executor import PipelineExecutor
+
+    executor = PipelineExecutor()
+    executor.workspace = workspace
+    project_id = uuid4()
+    context: dict = {}
+    plan = {"features": [{"title": "Search", "description": "Add search"}]}
+
+    _stash_enrichment_retry_plan(executor, project_id, context, 1, plan)
+    assert context["enrichment_retry_plan"]["pass_number"] == 1
+
+    reloaded: dict = {}
+    loaded = _load_enrichment_retry_plan(executor, project_id, reloaded)
+    assert loaded is not None
+    assert loaded["plan"]["features"][0]["title"] == "Search"
+
+    _clear_enrichment_retry_plan(executor, project_id, context)
+    assert _load_enrichment_retry_plan(executor, project_id, {}) is None

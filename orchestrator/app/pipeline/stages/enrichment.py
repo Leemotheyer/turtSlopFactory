@@ -30,9 +30,41 @@ if TYPE_CHECKING:
     from app.pipeline.executor import PipelineExecutor
 
 
-def _stash_enrichment_retry_plan(context: dict, pass_number: int, plan: dict) -> None:
+def _stash_enrichment_retry_plan(
+    ex: "PipelineExecutor",
+    project_id,
+    context: dict,
+    pass_number: int,
+    plan: dict,
+) -> None:
     """Keep the current pass plan so a fix loop can retry without re-ideation."""
-    context["enrichment_retry_plan"] = {"pass_number": pass_number, "plan": plan}
+    payload = {"pass_number": pass_number, "plan": plan}
+    context["enrichment_retry_plan"] = payload
+    meta = ex.workspace.load_metadata(project_id)
+    meta["enrichment_retry_plan"] = payload
+    ex.workspace.save_metadata(project_id, meta)
+
+
+def _load_enrichment_retry_plan(
+    ex: "PipelineExecutor", project_id, context: dict
+) -> dict | None:
+    retry = context.get("enrichment_retry_plan")
+    if retry:
+        return retry
+    meta = ex.workspace.load_metadata(project_id)
+    retry = meta.get("enrichment_retry_plan")
+    if retry:
+        context["enrichment_retry_plan"] = retry
+    return retry
+
+
+def _clear_enrichment_retry_plan(
+    ex: "PipelineExecutor", project_id, context: dict
+) -> None:
+    context.pop("enrichment_retry_plan", None)
+    meta = ex.workspace.load_metadata(project_id)
+    meta.pop("enrichment_retry_plan", None)
+    ex.workspace.save_metadata(project_id, meta)
 
 
 def _persist_completed_slugs(
@@ -169,7 +201,7 @@ async def run_enrichment_passes(
     token_budget: bool = False,
     skip_unchanged_audit: bool = False,
 ) -> bool:
-    from app.pipeline.stages.implementing import run_developer_units, stage_fix_from_failure
+    from app.pipeline.stages.implementing import run_developer_units
 
     if context.get(completion_key):
         return True
@@ -270,7 +302,7 @@ async def run_enrichment_passes(
             "Audit the live preview and propose substantial improvements",
             AgentRole.ARCHITECT,
         )
-        retry_plan = context.pop("enrichment_retry_plan", None)
+        retry_plan = _load_enrichment_retry_plan(ex, project.id, context)
         if retry_plan and int(retry_plan.get("pass_number", 0)) == pass_number:
             plan = retry_plan["plan"]
             used_fallback = True
@@ -456,7 +488,7 @@ async def run_enrichment_passes(
             from app.services.intake_contract import intake_has_product_scope
 
             if not qa_ok and intake_has_product_scope(context.get("intake")):
-                _stash_enrichment_retry_plan(context, pass_number, plan)
+                _stash_enrichment_retry_plan(ex, project.id, context, pass_number, plan)
                 return False
             break
 
@@ -499,19 +531,8 @@ async def run_enrichment_passes(
             context["last_failure"] = output
             if "No meaningful code changes" in output:
                 context["enrichment_require_substantial_changes"] = True
-            for _ in range(settings.enrichment_fix_attempts_per_pass):
-                fixed = await stage_fix_from_failure(ex, session, project, context)
-                if not fixed:
-                    return False
-                success, output = await run_developer_units(
-                    ex, session, project, context, units, command="enrichment_fix"
-                )
-                if success:
-                    break
-            if not success:
-                context["last_failure"] = output
-                _stash_enrichment_retry_plan(context, pass_number, plan)
-                return False
+            _stash_enrichment_retry_plan(ex, project.id, context, pass_number, plan)
+            return False
 
         test_task = await ex.create_task(
             session,
@@ -526,7 +547,7 @@ async def run_enrichment_passes(
         await ex.complete_task(session, test_task, test_ok, test_output)
         if not test_ok:
             context["last_failure"] = test_output
-            _stash_enrichment_retry_plan(context, pass_number, plan)
+            _stash_enrichment_retry_plan(ex, project.id, context, pass_number, plan)
             return False
 
         await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
@@ -545,8 +566,10 @@ async def run_enrichment_passes(
         from app.services.intake_contract import intake_has_product_scope
 
         if not qa_ok and intake_has_product_scope(context.get("intake")):
-            _stash_enrichment_retry_plan(context, pass_number, plan)
+            _stash_enrichment_retry_plan(ex, project.id, context, pass_number, plan)
             return False
+
+        _clear_enrichment_retry_plan(ex, project.id, context)
 
         passes_done += 1
         context[passes_completed_key] = passes_done
