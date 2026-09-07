@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # Verification & measurement
     adversary_enabled: bool = True  # Adversarial verification stage before acceptance
     user_journey_testing_enabled: bool = True  # Simulated user session before production review
+    user_perspective_review_enabled: bool = True  # End-of-cycle user review for next improvement cycle
     agent_tester_enabled: bool = True  # LLM tester writes tests/acceptance/ when a backend is available
     deploy_observation_seconds: int = 30  # Post-deploy health observation window
     deploy_observation_polls: int = 3  # Health checks spread across the window

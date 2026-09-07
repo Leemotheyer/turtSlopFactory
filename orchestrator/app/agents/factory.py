@@ -62,7 +62,10 @@ class FactoryAgentRunner(LocalAgentRunner):
             return True
         # The tester runs deterministically except when asked to author
         # acceptance tests from the contract (needs an LLM + repo).
-        if role == AgentRole.TESTER and context.get("test_stage") == "write_acceptance":
+        if role == AgentRole.TESTER and context.get("test_stage") in (
+            "write_acceptance",
+            "user_perspective_review",
+        ):
             return True
         return False
 

@@ -218,13 +218,14 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
                 "\n## Intake capabilities (always in scope — implement, do not question)\n"
                 + "\n".join(f"- {line}" for line in intake_lines[:20])
             )
-        ux_backlog = context.get("ux_improvement_backlog") or []
+        ux_backlog = context.get("improvement_backlog") or context.get("ux_improvement_backlog") or []
         if ux_backlog:
             sections.append(
-                "\n## UX improvements from user-journey testing (polish — not blocking)\n"
+                "\n## Improvement ideas from prior user reviews (implement in this pass when in scope)\n"
                 + "\n".join(
-                    f"- {item.get('title', 'Improvement')}: {str(item.get('description', ''))[:160]}"
-                    for item in ux_backlog[:12]
+                    f"- [{item.get('category', 'other')}] {item.get('title', 'Improvement')}: "
+                    f"{str(item.get('description', ''))[:160]}"
+                    for item in ux_backlog[:15]
                     if isinstance(item, dict)
                 )
             )
@@ -317,6 +318,21 @@ Extend the current implementation. **Do not rebuild** working routes, models, or
                     AgentRole.TESTER,
                     "product_qa",
                     pass_num=pass_num or "?",
+                    upstream=upstream or "not running",
+                    health_path=health_path,
+                    audit_health_ok=audit.get("health_ok"),
+                    audit_has_html_ui=audit.get("has_html_ui"),
+                )
+            )
+        elif stage == "user_perspective_review":
+            audit = context.get("preview_audit") or {}
+            cycle_label = context.get("cycle_label") or "this cycle"
+            sections.append(
+                "\n"
+                + _render(
+                    AgentRole.TESTER,
+                    "user_perspective_review",
+                    cycle_label=cycle_label,
                     upstream=upstream or "not running",
                     health_path=health_path,
                     audit_health_ok=audit.get("health_ok"),

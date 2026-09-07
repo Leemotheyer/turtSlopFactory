@@ -1062,7 +1062,13 @@ export default function DashboardPage() {
     detail?.effective_user_journey_enabled ??
     detail?.factory_defaults?.user_journey_testing_enabled ??
     true;
+  const userPerspectiveReviewEnabled =
+    detail?.effective_user_perspective_review_enabled ??
+    detail?.factory_defaults?.user_perspective_review_enabled ??
+    true;
   const hasUserJourneyReport = detail?.artifacts.includes("user-journey-report.json") ?? false;
+  const hasUserPerspectiveReport =
+    detail?.artifacts.includes("user-perspective-review.json") ?? false;
 
   async function viewArtifact(name: string) {
     if (!selectedId) return;
@@ -2537,6 +2543,10 @@ export default function DashboardPage() {
                       title="Improvement cycle"
                       steps={POST_PRODUCTION_SUBSTAGES}
                       activeStep={postProductionActiveStep}
+                      stepEnabled={(step) => {
+                        if (step.id === "user_perspective_review") return userPerspectiveReviewEnabled;
+                        return true;
+                      }}
                       stepMeta={(step) => {
                         if (
                           step.id === "enrichment" &&
@@ -2544,6 +2554,9 @@ export default function DashboardPage() {
                           pipelineSubstage?.max_passes != null
                         ) {
                           return `Pass ${pipelineSubstage.current_pass ?? 0}/${pipelineSubstage.max_passes}`;
+                        }
+                        if (step.id === "user_perspective_review" && hasUserPerspectiveReport) {
+                          return "Suggestions saved";
                         }
                         return null;
                       }}
@@ -2580,6 +2593,7 @@ export default function DashboardPage() {
                       stepEnabled={(step) => {
                         if (step.id === "adversary") return adversaryEnabled;
                         if (step.id === "user_journey") return userJourneyEnabled;
+                        if (step.id === "user_perspective_review") return userPerspectiveReviewEnabled;
                         return true;
                       }}
                       stepMeta={(step) => {
@@ -2592,6 +2606,9 @@ export default function DashboardPage() {
                         }
                         if (step.id === "user_journey" && hasUserJourneyReport) {
                           return "Report ready";
+                        }
+                        if (step.id === "user_perspective_review" && hasUserPerspectiveReport) {
+                          return "Suggestions saved";
                         }
                         return null;
                       }}

@@ -405,6 +405,8 @@ class LocalAgentRunner(AgentRunner):
             return await self._run_mobile_check(project_id, context)
         if stage == "user_journey":
             return await self._run_user_journey(project_id, context)
+        if stage == "user_perspective_review":
+            return await self._run_user_perspective_review(project_id, context)
         return False, f"Unknown test stage: {stage}"
 
     async def _run_pytest(
@@ -621,6 +623,29 @@ class LocalAgentRunner(AgentRunner):
             )
             return True, summary
         return False, format_blocking_failure(report)
+
+    async def _run_user_perspective_review(self, project_id: UUID, context: dict) -> tuple[bool, str]:
+        from app.services.user_perspective_review import (
+            persist_user_perspective_review,
+            run_local_user_perspective_review,
+        )
+
+        cycle_number = int(context.get("improvement_cycle_number") or 0)
+        report = await run_local_user_perspective_review(self.workspace, project_id, context)
+        await persist_user_perspective_review(
+            self.workspace, project_id, report, cycle_number=cycle_number
+        )
+        context["user_perspective_review_report"] = report.model_dump()
+        self.workspace.append_log(
+            project_id,
+            "pipeline.log",
+            f"[tester] User perspective review — {len(report.suggestions)} suggestion(s) for next cycle",
+        )
+        summary = (
+            f"User perspective: {len(report.suggestions)} suggestion(s) — "
+            + ", ".join(s.title[:36] for s in report.suggestions[:4])
+        )
+        return True, summary
 
     async def _reviewer(
         self, project_id: UUID, context: dict, task_id: UUID, agent_id: str

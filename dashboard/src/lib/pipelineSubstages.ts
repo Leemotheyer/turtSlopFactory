@@ -17,12 +17,14 @@ export const VERIFICATION_SUBSTAGES: SubstageStep[] = [
   { id: "adversary", label: "Adversary", enabled: true },
   { id: "acceptance", label: "Acceptance" },
   { id: "user_journey", label: "User journey", enabled: true },
+  { id: "user_perspective_review", label: "User review", enabled: true },
   { id: "review", label: "Code review" },
 ];
 
 export const POST_PRODUCTION_SUBSTAGES: SubstageStep[] = [
   { id: "enrichment", label: "Improve" },
   { id: "testing", label: "Test" },
+  { id: "user_perspective_review", label: "User review", enabled: true },
   { id: "redeploy", label: "Redeploy" },
 ];
 

@@ -22,3 +22,8 @@ class TestRunner:
 
     async def run_mobile_check(self, project_id, context: dict):
         return await self.agent._tester(project_id, {**context, "test_stage": "mobile_check"})
+
+    async def run_user_perspective_review(self, project_id, context: dict):
+        return await self.agent._tester(
+            project_id, {**context, "test_stage": "user_perspective_review"}
+        )

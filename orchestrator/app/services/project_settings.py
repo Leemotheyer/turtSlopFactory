@@ -68,6 +68,7 @@ def project_settings_payload(project: "ProjectRow", *, review_ever_approved: boo
         "effective_max_fix_attempts": resolve_max_fix_attempts(project),
         "effective_adversary_enabled": resolve_adversary_enabled(project),
         "effective_user_journey_enabled": settings.user_journey_testing_enabled,
+        "effective_user_perspective_review_enabled": settings.user_perspective_review_enabled,
         "change_budget_enforced": enforced,
         "factory_defaults": {
             "change_budget_unlimited": not settings.enforce_change_budget,
@@ -76,6 +77,7 @@ def project_settings_payload(project: "ProjectRow", *, review_ever_approved: boo
             "max_fix_attempts": settings.max_fix_attempts,
             "adversary_enabled": settings.adversary_enabled,
             "user_journey_testing_enabled": settings.user_journey_testing_enabled,
+            "user_perspective_review_enabled": settings.user_perspective_review_enabled,
             "enforce_change_budget": settings.enforce_change_budget,
         },
     }
@@ -86,3 +88,4 @@ def apply_project_settings_to_context(project: "ProjectRow", context: dict) -> N
     payload = project_settings_payload(project, review_ever_approved=review_ever_approved)
     context.update(payload)
     context["effective_user_journey_enabled"] = settings.user_journey_testing_enabled
+    context["effective_user_perspective_review_enabled"] = settings.user_perspective_review_enabled
