@@ -10,8 +10,10 @@ from app.models import AgentRole
 from app.services.product_enrichment import (
     audit_live_preview,
     enrichment_change_summary,
+    load_product_qa_feedback,
     local_enrichment_plan,
     parse_enrichment_plan,
+    persist_product_qa_to_improvement_backlog,
     resolve_feature_scope,
 )
 from app.services.self_propelling import (
@@ -72,6 +74,74 @@ async def _ensure_enrichment_preview(
     await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
 
 
+async def _run_product_qa_with_fix_loop(
+    ex: "PipelineExecutor",
+    session,
+    project,
+    context: dict,
+    *,
+    pass_number: int,
+    log_prefix: str,
+) -> tuple[bool, str]:
+    """Run product QA; on intake failures, dispatch developer fixes and retry."""
+    from app.pipeline.stages.implementing import stage_fix_from_failure
+    from app.services.intake_contract import intake_has_product_scope
+
+    qa_task = await ex.create_task(
+        session,
+        project.id,
+        f"Product QA (pass {pass_number})",
+        "Evaluate live preview quality",
+        AgentRole.TESTER,
+    )
+    qa_ok, qa_output = await ex.runner._tester(
+        project.id, {**context, "test_stage": "product_qa"}
+    )
+    await ex.complete_task(session, qa_task, qa_ok, qa_output)
+    context["product_qa"] = qa_output
+    context["product_qa_passed"] = qa_ok
+
+    if qa_ok or not intake_has_product_scope(context.get("intake")):
+        return qa_ok, qa_output
+
+    persist_product_qa_to_improvement_backlog(ex.workspace, project.id)
+    context["last_failure"] = (
+        "Product QA failed — intake capabilities must work on the live preview "
+        "before the factory can continue. Implement the APIs and UI intake requires, "
+        "then re-verify on the live preview.\n\n"
+        f"{qa_output[:3000]}"
+    )
+    context["incremental"] = True
+    context["enrichment_require_substantial_changes"] = True
+
+    for fix_attempt in range(settings.enrichment_fix_attempts_per_pass):
+        ex.workspace.append_log(
+            project.id,
+            "pipeline.log",
+            f"[{log_prefix}] Product QA fix attempt "
+            f"{fix_attempt + 1}/{settings.enrichment_fix_attempts_per_pass}",
+        )
+        fixed = await stage_fix_from_failure(ex, session, project, context)
+        if not fixed:
+            return False, qa_output
+        await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
+        audit = await audit_live_preview(context)
+        context["preview_audit"] = audit
+        qa_ok, qa_output = await ex.runner._tester(
+            project.id, {**context, "test_stage": "product_qa"}
+        )
+        context["product_qa"] = qa_output
+        context["product_qa_passed"] = qa_ok
+        if qa_ok:
+            context.pop("last_failure", None)
+            return True, qa_output
+        context["last_failure"] = (
+            "Product QA still failing after a fix attempt.\n\n" f"{qa_output[:3000]}"
+        )
+
+    return False, qa_output
+
+
 async def run_enrichment_passes(
     ex: "PipelineExecutor",
     session,
@@ -129,6 +199,9 @@ async def run_enrichment_passes(
 
         context["enrichment_pass"] = pass_number
         cycle_number = int(context.get("improvement_cycle_number") or 1)
+        product_qa_feedback = load_product_qa_feedback(ex.workspace, project.id)
+        if product_qa_feedback:
+            context["product_qa_feedback"] = product_qa_feedback
         context.pop("enrichment_require_substantial_changes", None)
         ex._save_pipeline_substage(
             project.id,
@@ -185,6 +258,7 @@ async def run_enrichment_passes(
             "improvement_cycle_number": cycle_number,
             "incremental": True,
             "max_milestones_per_pass": context.get("max_milestones_per_pass", 1),
+            "product_qa_feedback": product_qa_feedback,
         }
         plan_raw = None
         used_fallback = False
@@ -198,6 +272,7 @@ async def run_enrichment_passes(
             intake=context.get("intake"),
             ux_backlog=context.get("ux_improvement_backlog"),
             cycle_number=cycle_number,
+            product_qa_feedback=product_qa_feedback,
         )
         skip_architect = (
             log_prefix != "post-production"
@@ -250,6 +325,7 @@ async def run_enrichment_passes(
                     intake=context.get("intake"),
                     ux_backlog=context.get("ux_improvement_backlog"),
                     cycle_number=cycle_number,
+                    product_qa_feedback=product_qa_feedback,
                 )
                 ex.workspace.write_artifact(
                     project.id,
@@ -338,27 +414,17 @@ async def run_enrichment_passes(
                 await ex._deploy_live_preview(session, project, context, preview_type="dev", notify=False)
             audit = await audit_live_preview(context)
             context["preview_audit"] = audit
-            qa_task = await ex.create_task(
+            qa_ok, _qa_output = await _run_product_qa_with_fix_loop(
+                ex,
                 session,
-                project.id,
-                f"Product QA (pass {pass_number})",
-                "Evaluate live preview quality",
-                AgentRole.TESTER,
+                project,
+                context,
+                pass_number=pass_number,
+                log_prefix=log_prefix,
             )
-            qa_ok, qa_output = await ex.runner._tester(
-                project.id, {**context, "test_stage": "product_qa"}
-            )
-            await ex.complete_task(session, qa_task, qa_ok, qa_output)
-            context["product_qa"] = qa_output
-            context["product_qa_passed"] = qa_ok
             from app.services.intake_contract import intake_has_product_scope
 
             if not qa_ok and intake_has_product_scope(context.get("intake")):
-                context["last_failure"] = (
-                    "Product QA failed — intake capabilities must work on the live preview "
-                    "before the factory can continue.\n\n"
-                    f"{qa_output[:3000]}"
-                )
                 return False
             break
 
@@ -433,28 +499,18 @@ async def run_enrichment_passes(
         audit = await audit_live_preview(context)
         context["preview_audit"] = audit
 
-        qa_task = await ex.create_task(
+        qa_ok, _qa_output = await _run_product_qa_with_fix_loop(
+            ex,
             session,
-            project.id,
-            f"Product QA (pass {pass_number})",
-            "Evaluate live preview quality",
-            AgentRole.TESTER,
+            project,
+            context,
+            pass_number=pass_number,
+            log_prefix=log_prefix,
         )
-        qa_ok, qa_output = await ex.runner._tester(
-            project.id, {**context, "test_stage": "product_qa"}
-        )
-        await ex.complete_task(session, qa_task, qa_ok, qa_output)
-        context["product_qa"] = qa_output
-        context["product_qa_passed"] = qa_ok
 
         from app.services.intake_contract import intake_has_product_scope
 
         if not qa_ok and intake_has_product_scope(context.get("intake")):
-            context["last_failure"] = (
-                "Product QA failed — intake capabilities must work on the live preview "
-                "before the factory can continue.\n\n"
-                f"{qa_output[:3000]}"
-            )
             return False
 
         passes_done += 1

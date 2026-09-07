@@ -7,8 +7,10 @@ from app.services.product_enrichment import (
     enrichment_change_summary,
     enrichment_pass_theme_hint,
     features_to_work_units,
+    load_product_qa_feedback,
     local_enrichment_plan,
     parse_enrichment_plan,
+    persist_product_qa_to_improvement_backlog,
     resolve_feature_scope,
 )
 
@@ -221,6 +223,73 @@ def test_local_enrichment_plan_suggests_ui_polish():
     audit = {"health_ok": True, "has_html_ui": True, "endpoints": [{"method": "GET", "path": "/api/items", "ok": True}]}
     plan = local_enrichment_plan(audit, pass_number=1)
     assert plan["features"]
+
+
+def test_local_enrichment_plan_prioritizes_product_qa_issues():
+    audit = {
+        "health_ok": True,
+        "has_html_ui": True,
+        "endpoints": [{"method": "GET", "path": "/api/items", "ok": True}],
+    }
+    qa_feedback = {
+        "issues": [
+            "Intake requires data/search/download flows but the live preview "
+            "only exposes a minimal API surface"
+        ],
+        "suggested_features": ["Add search and download API endpoints"],
+    }
+    plan = local_enrichment_plan(
+        audit,
+        pass_number=1,
+        product_qa_feedback=qa_feedback,
+    )
+    titles = " ".join(f["title"] for f in plan["features"]).lower()
+    assert "product qa" in titles or "search" in titles
+    assert plan["features"][0].get("tier") == "milestone"
+
+
+def test_persist_product_qa_to_improvement_backlog(monkeypatch, tmp_path):
+    import json
+    from uuid import uuid4
+
+    ws_root = tmp_path / "ws"
+    ws_root.mkdir()
+    monkeypatch.setattr("app.config.settings.workspace_root", str(ws_root))
+    from app.workspace.manager import WorkspaceManager
+
+    ws = WorkspaceManager()
+    project_id = uuid4()
+    ws.write_artifact(
+        project_id,
+        "product-qa.json",
+        json.dumps(
+            {
+                "passed": False,
+                "issues": [
+                    "Intake requires data/search/download flows but the live preview "
+                    "only exposes a minimal API surface"
+                ],
+                "suggested_features": ["Implement catalog search API"],
+            }
+        ),
+    )
+    persist_product_qa_to_improvement_backlog(ws, project_id)
+    backlog = json.loads(ws.read_artifact(project_id, "cycle-improvement-backlog.json"))
+    titles = " ".join(item.get("title", "") for item in backlog.get("items") or []).lower()
+    assert "minimal api" in titles or "search" in titles
+    assert load_product_qa_feedback(ws, project_id)["issues"]
+
+
+def test_load_product_qa_feedback_empty_when_missing(monkeypatch, tmp_path):
+    from uuid import uuid4
+
+    ws_root = tmp_path / "ws"
+    ws_root.mkdir()
+    monkeypatch.setattr("app.config.settings.workspace_root", str(ws_root))
+    from app.workspace.manager import WorkspaceManager
+
+    ws = WorkspaceManager()
+    assert load_product_qa_feedback(ws, uuid4()) == {}
 
 
 @pytest.mark.asyncio

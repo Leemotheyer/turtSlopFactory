@@ -230,6 +230,22 @@ You must NOT run `docker`, `docker compose`, `docker run`, `uvicorn`, or any oth
                     if isinstance(item, dict)
                 )
             )
+        qa_feedback = context.get("product_qa_feedback") or {}
+        qa_issues = [str(i).strip() for i in (qa_feedback.get("issues") or []) if str(i).strip()]
+        qa_suggested = [
+            str(s).strip() for s in (qa_feedback.get("suggested_features") or []) if str(s).strip()
+        ]
+        if qa_issues or qa_suggested:
+            sections.append(
+                "\n## Product QA failures (fix before other polish — highest priority)\n"
+                + "\n".join(f"- {issue}" for issue in qa_issues[:12])
+                + (
+                    "\n\nSuggested features:\n"
+                    + "\n".join(f"- {suggestion}" for suggestion in qa_suggested[:8])
+                    if qa_suggested
+                    else ""
+                )
+            )
         if role == AgentRole.ARCHITECT:
             sections.append(
                 """

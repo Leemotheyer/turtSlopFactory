@@ -25,6 +25,7 @@ from app.models import AgentRole, EventType, FactoryEvent, NotificationType, Pro
 from app.pipeline.stages import (
     BUILD_STAGES,
     POST_PRODUCTION_STAGES,
+    SUBSTAGE_ENRICHMENT,
     SUBSTAGE_IMPLEMENTING,
     SUBSTAGE_REVIEW,
     SUBSTAGE_UNIT_TESTING,
@@ -980,7 +981,7 @@ class PipelineExecutor:
                             preview_type=preview_type_for_context(context),
                             notify=False,
                         )
-                    if failed_substage == SUBSTAGE_UNIT_TESTING:
+                    if failed_substage in (SUBSTAGE_UNIT_TESTING, SUBSTAGE_ENRICHMENT):
                         await self._ensure_runnable_app(project, context)
                         await self._stage_fix_from_failure(session, project, context)
                         await self._deploy_live_preview(
@@ -989,7 +990,8 @@ class PipelineExecutor:
                             context,
                             preview_type=preview_type_for_context(context),
                         )
-                        context["implementation_complete"] = True
+                        if failed_substage == SUBSTAGE_UNIT_TESTING:
+                            context["implementation_complete"] = True
                     self.workspace.append_log(
                         project_id,
                         "pipeline.log",
@@ -1276,6 +1278,10 @@ class PipelineExecutor:
 
         if failed_substage == SUBSTAGE_UNIT_TESTING:
             context.pop("implementation_complete", None)
+        elif failed_substage == SUBSTAGE_ENRICHMENT:
+            context.pop("enrichment_complete", None)
+            context.pop("post_smoke_enrichment_complete", None)
+            context.pop("post_production_enrichment_complete", None)
         elif failed_at == ProjectState.PLANNING:
             context.pop("implementation_complete", None)
 
@@ -1406,6 +1412,24 @@ class PipelineExecutor:
                 )
                 return
             context["implementation_complete"] = True
+        elif failed_substage == SUBSTAGE_ENRICHMENT:
+            fixed = await self._stage_fix_from_failure(session, project, context)
+            if not fixed:
+                await self._handle_failure(
+                    session,
+                    project,
+                    context,
+                    failed_at=failed_at,
+                    failed_substage=failed_substage,
+                )
+                return
+            await self._deploy_live_preview(
+                session,
+                project,
+                context,
+                preview_type=preview_type_for_context(context),
+                notify=False,
+            )
         elif failed_at == ProjectState.SMOKE_TESTING and failed_substage is None:
             fixed = await self._stage_fix_from_failure(session, project, context)
             if not fixed:

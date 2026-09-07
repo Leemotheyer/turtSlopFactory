@@ -377,6 +377,60 @@ def features_to_work_units(
     return units
 
 
+def load_product_qa_feedback(workspace, project_id) -> dict[str, Any]:
+    """Read the latest product-qa.json artifact (issues + suggested features)."""
+    if "product-qa.json" not in workspace.list_artifacts(project_id):
+        return {}
+    try:
+        raw = workspace.read_artifact(project_id, "product-qa.json") or "{}"
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def persist_product_qa_to_improvement_backlog(workspace, project_id) -> None:
+    """Merge open product QA issues into the cycle improvement backlog for the next pass."""
+    from app.artifacts.schemas import CycleImprovementSuggestion
+    from app.services.user_perspective_review import merge_cycle_improvement_backlog
+
+    qa = load_product_qa_feedback(workspace, project_id)
+    issues = [str(i).strip() for i in (qa.get("issues") or []) if str(i).strip()]
+    suggested = [str(s).strip() for s in (qa.get("suggested_features") or []) if str(s).strip()]
+    if not issues and not suggested:
+        return
+
+    suggestions: list[CycleImprovementSuggestion] = []
+    for text in issues:
+        suggestions.append(
+            CycleImprovementSuggestion(
+                title=text[:72],
+                description=text[:500],
+                category="bug_fix",
+                priority="high",
+            )
+        )
+    for text in suggested:
+        suggestions.append(
+            CycleImprovementSuggestion(
+                title=text[:72],
+                description=text[:500],
+                category="feature",
+                priority="medium",
+            )
+        )
+
+    existing = None
+    if "cycle-improvement-backlog.json" in workspace.list_artifacts(project_id):
+        existing = workspace.read_artifact(project_id, "cycle-improvement-backlog.json")
+    backlog = merge_cycle_improvement_backlog(existing, suggestions, cycle_number=0)
+    workspace.write_artifact(
+        project_id,
+        "cycle-improvement-backlog.json",
+        json.dumps(backlog, indent=2),
+    )
+
+
 def local_enrichment_plan(
     audit: dict,
     pass_number: int,
@@ -387,6 +441,7 @@ def local_enrichment_plan(
     intake: dict | None = None,
     ux_backlog: list[dict] | None = None,
     cycle_number: int = 1,
+    product_qa_feedback: dict | None = None,
 ) -> dict:
     """Deterministic fallback when Cursor architect is unavailable."""
     notes = notes or []
@@ -400,6 +455,45 @@ def local_enrichment_plan(
         ((pass_number - 1) % max(_ENRICHMENT_PASS_THEMES)) + 1, []
     )
     features: list[dict] = []
+
+    qa = product_qa_feedback or {}
+    for issue in qa.get("issues") or []:
+        text = str(issue).strip()
+        if len(text) < 8:
+            continue
+        slug = _slugify(text[:48])
+        if slug in completed_slugs:
+            continue
+        features.append(
+            {
+                "id": slug,
+                "title": f"Fix product QA: {text[:60]}",
+                "description": (
+                    f"Product QA failed: {text}. Implement the missing intake API/UI "
+                    "surface and verify on the live preview."
+                ),
+                "scope": "in_scope",
+                "priority": "high",
+                "tier": "milestone",
+            }
+        )
+    for suggestion in qa.get("suggested_features") or []:
+        text = str(suggestion).strip()
+        if len(text) < 8:
+            continue
+        slug = _slugify(text[:48])
+        if slug in completed_slugs:
+            continue
+        features.append(
+            {
+                "id": slug,
+                "title": text[:72],
+                "description": f"Product QA suggested: {text}",
+                "scope": "in_scope",
+                "priority": "high",
+                "tier": "milestone",
+            }
+        )
 
     for index, (fid, title, desc) in enumerate(theme):
         if fid in completed_slugs:

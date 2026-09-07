@@ -95,6 +95,30 @@ def test_enrichment_prompt_includes_improvement_backlog():
     assert "user reviews" in prompt.lower()
 
 
+def test_enrichment_prompt_includes_product_qa_feedback():
+    prompt = build_role_prompt(
+        AgentRole.ARCHITECT,
+        {
+            "name": "Manga app",
+            "description": "Search and download manga",
+            "enrichment_pass": 2,
+            "max_enrichment_passes": 4,
+            "max_features_per_pass": 8,
+            "preview_audit": {"health_ok": True, "has_html_ui": True, "issues": []},
+            "product_qa_feedback": {
+                "issues": [
+                    "Intake requires data/search/download flows but the live preview "
+                    "only exposes a minimal API surface"
+                ],
+                "suggested_features": ["Add catalog search and chapter download APIs"],
+            },
+        },
+    )
+    assert "Product QA failures" in prompt
+    assert "minimal API surface" in prompt
+    assert "catalog search" in prompt.lower()
+
+
 def test_planning_architect_prompt_includes_requirements():
     prompt = build_role_prompt(
         AgentRole.ARCHITECT,
